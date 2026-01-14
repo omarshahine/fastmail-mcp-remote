@@ -40,7 +40,7 @@ app.get("/authorize", async (c) => {
 		csrfToken,
 		server: {
 			description: "Remote MCP server for Fastmail email, contacts, and calendar access. Uses GitHub for authentication.",
-			logo: "https://www.fastmail.com/assets/images/logo-fastmail.svg",
+			logo: "https://logo.clearbit.com/fastmail.com",
 			name: "Fastmail MCP Remote Server",
 		},
 		setCookie,
