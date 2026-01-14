@@ -1,0 +1,27 @@
+{
+	"name": "fastmail-mcp-remote",
+	"version": "1.0.0",
+	"description": "Remote MCP server for Fastmail on Cloudflare Workers with GitHub OAuth",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"cf-typegen": "wrangler types",
+		"type-check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@cloudflare/workers-oauth-provider": "^0.2.2",
+		"agents": "^0.3.1",
+		"hono": "^4.11.3",
+		"just-pick": "^4.2.0",
+		"octokit": "^5.0.5",
+		"zod": "^4.2.1"
+	},
+	"devDependencies": {
+		"@types/node": "^25.0.8",
+		"prettier": "^3.7.4",
+		"typescript": "5.9.3",
+		"wrangler": "^4.59.1"
+	}
+}
