@@ -132,6 +132,32 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Props> {
 		);
 
 		this.server.tool(
+			"create_draft",
+			"Create an email draft in the Drafts folder without sending it",
+			{
+				to: z.array(z.string()).describe("Recipient email addresses"),
+				cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
+				bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
+				from: z.string().optional().describe("Sender email address (optional, defaults to account primary email)"),
+				subject: z.string().describe("Email subject"),
+				textBody: z.string().optional().describe("Plain text body (optional)"),
+				htmlBody: z.string().optional().describe("HTML body (optional)"),
+			},
+			async ({ to, cc, bcc, from, subject, textBody, htmlBody }) => {
+				if (!textBody && !htmlBody) {
+					return {
+						content: [{ text: "Error: Either textBody or htmlBody is required", type: "text" }],
+					};
+				}
+				const client = this.getJmapClient();
+				const draftId = await client.createDraft({ to, cc, bcc, from, subject, textBody, htmlBody });
+				return {
+					content: [{ text: `Draft created successfully in Drafts folder. Draft ID: ${draftId}`, type: "text" }],
+				};
+			},
+		);
+
+		this.server.tool(
 			"search_emails",
 			"Search emails by subject or content",
 			{
@@ -534,8 +560,8 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Props> {
 					email: {
 						available: true,
 						functions: [
-							'list_mailboxes', 'list_emails', 'get_email', 'send_email', 'search_emails',
-							'get_recent_emails', 'mark_email_read', 'delete_email', 'move_email',
+							'list_mailboxes', 'list_emails', 'get_email', 'send_email', 'create_draft',
+							'search_emails', 'get_recent_emails', 'mark_email_read', 'delete_email', 'move_email',
 							'get_email_attachments', 'download_attachment', 'advanced_search', 'get_thread',
 							'get_mailbox_stats', 'get_account_summary', 'bulk_mark_read', 'bulk_move', 'bulk_delete'
 						]
