@@ -150,3 +150,90 @@ Empty set allows all authenticated GitHub users.
 - `wrangler.jsonc` - Cloudflare Worker configuration (bindings, KV, Durable Objects)
 - `.dev.vars` - Local development secrets (not committed)
 - `.dev.vars.example` - Template for local secrets
+
+## Protecting with Cloudflare Zero Trust Access
+
+You can add an additional layer of security using Cloudflare Zero Trust Access with Service Tokens. This restricts access to the Worker to only clients that have the service token credentials.
+
+### Option 1: One-Click Access (Email-based)
+
+1. Go to **Workers & Pages** → select `fastmail-mcp-remote`
+2. Go to **Settings** → **Domains & Routes**
+3. For `workers.dev`, click **Enable Cloudflare Access**
+4. Click **Manage Cloudflare Access** to configure allowed email addresses
+
+### Option 2: Service Token Authentication (Machine-to-Machine)
+
+For programmatic access (like MCP clients), use a Service Token:
+
+#### 1. Create a Service Token
+
+1. Go to [Cloudflare Zero Trust](https://one.dash.cloudflare.com/)
+2. Navigate to **Access** → **Service Auth** → **Service Tokens**
+3. Click **Create Service Token**
+4. Name it (e.g., `fastmail-mcp-client`)
+5. Set duration (recommend: 1 year or non-expiring for personal use)
+6. Click **Generate token**
+7. **Save the Client ID and Client Secret immediately** - the secret is only shown once!
+
+```
+CF-Access-Client-Id: <CLIENT_ID>.access
+CF-Access-Client-Secret: <CLIENT_SECRET>
+```
+
+#### 2. Create an Access Application
+
+1. In Zero Trust, go to **Access** → **Applications**
+2. Click **Add an application** → **Self-hosted**
+3. Configure:
+   - **Name**: `Fastmail MCP Remote`
+   - **Session Duration**: 24 hours (or preferred)
+   - **Application domain**: `fastmail-mcp-remote.shahine.workers.dev`
+4. Click **Next**
+
+#### 3. Add a Service Auth Policy
+
+1. In the application's **Policies** tab, click **Add a policy**
+2. Configure:
+   - **Policy name**: `Service Token Access`
+   - **Action**: **Service Auth** (not Allow!)
+   - **Include rule**:
+     - Selector: **Service Token**
+     - Value: Select your service token
+3. Save the policy
+
+#### 4. Client Authentication
+
+Clients must include these headers on every request:
+
+```bash
+curl -H "CF-Access-Client-Id: <CLIENT_ID>" \
+     -H "CF-Access-Client-Secret: <CLIENT_SECRET>" \
+     https://fastmail-mcp-remote.shahine.workers.dev/sse
+```
+
+Or as a single JSON header (if configured):
+```bash
+curl -H 'Authorization: {"cf-access-client-id": "<CLIENT_ID>", "cf-access-client-secret": "<CLIENT_SECRET>"}' \
+     https://fastmail-mcp-remote.shahine.workers.dev/sse
+```
+
+### Combining GitHub OAuth + Access Service Token
+
+With both enabled:
+1. Service Token authenticates the client to Cloudflare Access (outer layer)
+2. GitHub OAuth authenticates the user within the MCP server (inner layer)
+
+This provides defense-in-depth: even if someone discovers the Worker URL, they cannot access it without both the service token AND valid GitHub credentials.
+
+### Validate Access JWT in Worker (Optional)
+
+For additional security, validate the Access JWT in your Worker code:
+
+```typescript
+// The JWT is in the Cf-Access-Jwt-Assertion header
+const jwt = request.headers.get('Cf-Access-Jwt-Assertion');
+// Validate against your Access application's AUD tag and JWKs URL
+```
+
+See: https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/
