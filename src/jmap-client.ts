@@ -18,6 +18,17 @@ export interface JmapResponse {
   sessionState: string;
 }
 
+export interface AttachmentContent {
+  filename: string;
+  mimeType: string;
+  size: number;
+  blobId: string;
+  content: string; // Base64-encoded
+}
+
+// Maximum attachment size we'll fetch (10 MB)
+const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+
 export class JmapClient {
   private auth: FastmailAuth;
   private session: JmapSession | null = null;
@@ -580,6 +591,99 @@ export class JmapClient {
       .replace('{name}', encodeURIComponent(attachment.name || 'attachment'));
 
     return url;
+  }
+
+  async fetchAttachmentContent(emailId: string, attachmentId: string): Promise<AttachmentContent> {
+    const session = await this.getSession();
+
+    // First, get the email with attachment metadata
+    const request: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/get', {
+          accountId: session.accountId,
+          ids: [emailId],
+          properties: ['attachments'],
+          bodyProperties: ['partId', 'blobId', 'size', 'name', 'type']
+        }, 'getEmail']
+      ]
+    };
+
+    const response = await this.makeRequest(request);
+    const result = response.methodResponses[0][1];
+
+    if (result.notFound && result.notFound.includes(emailId)) {
+      throw new Error(`Email with ID '${emailId}' not found`);
+    }
+
+    const email = result.list[0];
+    if (!email) {
+      throw new Error(`Email with ID '${emailId}' not found or not accessible`);
+    }
+
+    // Find the attachment by partId, blobId, or index
+    let attachment = email.attachments?.find((att: any) =>
+      att.partId === attachmentId || att.blobId === attachmentId
+    );
+
+    if (!attachment && !isNaN(parseInt(attachmentId))) {
+      const index = parseInt(attachmentId);
+      attachment = email.attachments?.[index];
+    }
+
+    if (!attachment) {
+      throw new Error(`Attachment '${attachmentId}' not found in email. Use get_email_attachments to see available attachments.`);
+    }
+
+    // Check size limit
+    if (attachment.size > MAX_ATTACHMENT_SIZE) {
+      throw new Error(
+        `Attachment is too large (${Math.round(attachment.size / 1024 / 1024)}MB). ` +
+        `Maximum size is ${MAX_ATTACHMENT_SIZE / 1024 / 1024}MB. ` +
+        `Use urlOnly=true to get the download URL instead.`
+      );
+    }
+
+    // Build the download URL from session template
+    const downloadUrl = session.downloadUrl;
+    if (!downloadUrl) {
+      throw new Error('Download capability not available in session');
+    }
+
+    const url = downloadUrl
+      .replace('{accountId}', session.accountId)
+      .replace('{blobId}', attachment.blobId)
+      .replace('{type}', encodeURIComponent(attachment.type || 'application/octet-stream'))
+      .replace('{name}', encodeURIComponent(attachment.name || 'attachment'));
+
+    // Fetch the actual blob content using the same auth token
+    const blobResponse = await fetch(url, {
+      method: 'GET',
+      headers: this.auth.getAuthHeaders()
+    });
+
+    if (!blobResponse.ok) {
+      throw new Error(`Failed to download attachment: HTTP ${blobResponse.status} ${blobResponse.statusText}`);
+    }
+
+    // Convert to base64
+    const arrayBuffer = await blobResponse.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+
+    // Convert to base64 using btoa with binary string
+    let binaryString = '';
+    for (let i = 0; i < uint8Array.length; i++) {
+      binaryString += String.fromCharCode(uint8Array[i]);
+    }
+    const base64Content = btoa(binaryString);
+
+    return {
+      filename: attachment.name || 'attachment',
+      mimeType: attachment.type || 'application/octet-stream',
+      size: attachment.size,
+      blobId: attachment.blobId,
+      content: base64Content
+    };
   }
 
   async advancedSearch(filters: {
