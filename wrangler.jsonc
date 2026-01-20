@@ -20,10 +20,9 @@
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
 	 *
 	 * Commands to set secrets:
-	 * npx wrangler secret put GITHUB_CLIENT_ID
-	 * npx wrangler secret put GITHUB_CLIENT_SECRET
-	 * npx wrangler secret put COOKIE_ENCRYPTION_KEY
-	 * npx wrangler secret put FASTMAIL_API_TOKEN
+	 * npx wrangler secret put ACCESS_CLIENT_ID       # Cloudflare Access client ID (same as travel-hub MCP)
+	 * npx wrangler secret put ACCESS_CLIENT_SECRET   # Cloudflare Access client secret (same as travel-hub MCP)
+	 * npx wrangler secret put FASTMAIL_API_TOKEN     # Fastmail API token
 	 */
 	"migrations": [
 		{
