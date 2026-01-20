@@ -238,17 +238,28 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 			{
 				emailId: z.string().describe("ID of the email"),
 				attachmentId: z.string().describe("ID of the attachment"),
+				urlOnly: z.boolean().default(false).describe("If true, returns only the download URL instead of the actual content. Use this for large files (>10MB)."),
 			},
-			async ({ emailId, attachmentId }) => {
+			async ({ emailId, attachmentId, urlOnly }) => {
 				const client = this.getJmapClient();
 				try {
-					const downloadUrl = await client.downloadAttachment(emailId, attachmentId);
+					if (urlOnly) {
+						// Return just the URL (legacy behavior)
+						const downloadUrl = await client.downloadAttachment(emailId, attachmentId);
+						return {
+							content: [{ text: `Download URL: ${downloadUrl}`, type: "text" }],
+						};
+					}
+
+					// Fetch actual content (default behavior)
+					const attachmentContent = await client.fetchAttachmentContent(emailId, attachmentId);
 					return {
-						content: [{ text: `Download URL: ${downloadUrl}`, type: "text" }],
+						content: [{ text: JSON.stringify(attachmentContent, null, 2), type: "text" }],
 					};
 				} catch (error) {
+					const errorMessage = error instanceof Error ? error.message : String(error);
 					return {
-						content: [{ text: "Attachment download failed. Verify emailId and attachmentId and try again.", type: "text" }],
+						content: [{ text: `Attachment download failed: ${errorMessage}`, type: "text" }],
 					};
 				}
 			},
