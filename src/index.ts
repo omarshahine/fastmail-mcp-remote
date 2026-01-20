@@ -1,28 +1,20 @@
-import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
+import { Hono } from "hono";
 import { z } from "zod";
-import { GitHubHandler } from "./github-handler";
 import { FastmailAuth } from "./fastmail-auth";
 import { JmapClient } from "./jmap-client";
 import { ContactsCalendarClient } from "./contacts-calendar";
+import {
+	handleOAuthDiscovery,
+	handleAuthorize,
+	handleCallback,
+	handleToken,
+	handleRegister,
+} from "./oauth-handler";
+import { validateAccessToken } from "./oauth-utils";
 
-// Context from the auth process, encrypted & stored in the auth token
-// and provided to the DurableMCP as this.props
-type Props = {
-	login: string;
-	name: string;
-	email: string;
-	accessToken: string;
-};
-
-// Add GitHub usernames of users who should have access
-const ALLOWED_USERNAMES = new Set<string>([
-	'omarshahine',
-	// Add more GitHub usernames here
-]);
-
-export class FastmailMCP extends McpAgent<Env, Record<string, never>, Props> {
+export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<string, never>> {
 	server = new McpServer({
 		name: "Fastmail MCP Remote",
 		version: "1.0.0",
@@ -43,19 +35,8 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Props> {
 	}
 
 	async init() {
-		// Check if user is allowed (optional - remove this block to allow all GitHub users)
-		if (ALLOWED_USERNAMES.size > 0 && !ALLOWED_USERNAMES.has(this.props!.login)) {
-			// User not in allowed list - only provide limited tools
-			this.server.tool(
-				"unauthorized",
-				"You are not authorized to use this MCP server",
-				{},
-				async () => ({
-					content: [{ text: `User ${this.props!.login} is not authorized to access this Fastmail MCP server.`, type: "text" }],
-				}),
-			);
-			return;
-		}
+		// Authorization is handled in OAuth callback (oauth-handler.ts)
+		// Only users in ALLOWED_USERS can obtain a valid access token
 
 		// =====================
 		// EMAIL TOOLS
@@ -585,7 +566,7 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Props> {
 							'Calendar access not available - may require enabling in Fastmail account settings',
 					},
 					capabilities: Object.keys(session.capabilities),
-					authenticatedUser: this.props!.login,
+					authenticatedUser: 'authenticated via OAuth',
 				};
 
 				return {
@@ -596,13 +577,94 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Props> {
 	}
 }
 
-export default new OAuthProvider({
-	apiHandlers: {
-		"/sse": FastmailMCP.serveSSE("/sse"),
-		"/mcp": FastmailMCP.serve("/mcp"),
-	},
-	authorizeEndpoint: "/authorize",
-	clientRegistrationEndpoint: "/register",
-	defaultHandler: GitHubHandler as any,
-	tokenEndpoint: "/token",
+// Create Hono app for routing
+const app = new Hono<{ Bindings: Env }>();
+
+// OAuth Discovery endpoint
+app.get('/.well-known/oauth-authorization-server', (c) => {
+	return handleOAuthDiscovery(new URL(c.req.url));
 });
+
+// OAuth endpoints
+app.get('/mcp/authorize', async (c) => {
+	return handleAuthorize(c.req.raw, c.env, new URL(c.req.url));
+});
+
+app.get('/mcp/callback', async (c) => {
+	return handleCallback(c.req.raw, c.env, new URL(c.req.url));
+});
+
+app.post('/mcp/token', async (c) => {
+	return handleToken(c.req.raw, c.env);
+});
+
+app.post('/mcp/register', async (c) => {
+	return handleRegister(c.req.raw, c.env);
+});
+
+// Helper to create 401 response with proper WWW-Authenticate header for MCP OAuth
+function unauthorizedResponse(c: { req: { url: string } }, error: string, description: string): Response {
+	const url = new URL(c.req.url);
+	const resourceMetadata = `${url.origin}/.well-known/oauth-authorization-server`;
+	return new Response(
+		JSON.stringify({ error, error_description: description }),
+		{
+			status: 401,
+			headers: {
+				'Content-Type': 'application/json',
+				'WWW-Authenticate': `Bearer resource_metadata="${resourceMetadata}"`,
+			},
+		}
+	);
+}
+
+// MCP endpoints (require Bearer token)
+app.all('/mcp', async (c) => {
+	// Validate Bearer token
+	const authHeader = c.req.header('Authorization');
+	if (!authHeader?.startsWith('Bearer ')) {
+		return unauthorizedResponse(c, 'unauthorized', 'Missing or invalid Authorization header');
+	}
+
+	const token = authHeader.substring(7);
+	const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token);
+	if (!tokenInfo) {
+		return unauthorizedResponse(c, 'invalid_token', 'Invalid or expired access token');
+	}
+
+	// Handle MCP request - user is already authorized via OAuth
+	return FastmailMCP.serve('/mcp').fetch(c.req.raw, c.env, c.executionCtx);
+});
+
+app.all('/sse', async (c) => {
+	// Validate Bearer token
+	const authHeader = c.req.header('Authorization');
+	if (!authHeader?.startsWith('Bearer ')) {
+		return unauthorizedResponse(c, 'unauthorized', 'Missing or invalid Authorization header');
+	}
+
+	const token = authHeader.substring(7);
+	const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token);
+	if (!tokenInfo) {
+		return unauthorizedResponse(c, 'invalid_token', 'Invalid or expired access token');
+	}
+
+	// Handle SSE MCP request - user is already authorized via OAuth
+	return FastmailMCP.serveSSE('/sse').fetch(c.req.raw, c.env, c.executionCtx);
+});
+
+// Root endpoint
+app.get('/', (c) => {
+	return c.json({
+		name: 'Fastmail MCP Remote',
+		version: '1.0.0',
+		description: 'Remote MCP server for Fastmail email, contacts, and calendar access',
+		oauth_discovery: '/.well-known/oauth-authorization-server',
+		endpoints: {
+			mcp: '/mcp',
+			sse: '/sse',
+		},
+	});
+});
+
+export default app;

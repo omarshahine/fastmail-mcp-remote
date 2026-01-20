@@ -1,3 +1,6 @@
-GITHUB_CLIENT_ID=<your github client id>
-GITHUB_CLIENT_SECRET=<your github client secret>
-COOKIE_ENCRYPTION_KEY=<your cookie cookie encryption key>
+# Cloudflare Access OAuth credentials (same as travel-hub MCP)
+ACCESS_CLIENT_ID=<your cloudflare access client id>
+ACCESS_CLIENT_SECRET=<your cloudflare access client secret>
+
+# Fastmail API token (get from https://www.fastmail.com/settings/security/tokens)
+FASTMAIL_API_TOKEN=<your fastmail api token>

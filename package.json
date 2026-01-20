@@ -11,11 +11,9 @@
 		"type-check": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@cloudflare/workers-oauth-provider": "^0.2.2",
 		"agents": "^0.3.1",
 		"hono": "^4.11.3",
 		"just-pick": "^4.2.0",
-		"octokit": "^5.0.5",
 		"zod": "^4.2.1"
 	},
 	"devDependencies": {
