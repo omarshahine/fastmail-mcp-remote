@@ -26,6 +26,14 @@ export interface AttachmentContent {
   content: string; // Base64-encoded
 }
 
+export interface AttachmentMetadata {
+  filename: string;
+  mimeType: string;
+  size: number;
+  blobId: string;
+  downloadUrl: string;
+}
+
 // Maximum attachment size we'll fetch (10 MB)
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 
@@ -591,6 +599,66 @@ export class JmapClient {
       .replace('{name}', encodeURIComponent(attachment.name || 'attachment'));
 
     return url;
+  }
+
+  async getAttachmentMetadata(emailId: string, attachmentId: string): Promise<AttachmentMetadata> {
+    const session = await this.getSession();
+
+    const request: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/get', {
+          accountId: session.accountId,
+          ids: [emailId],
+          properties: ['attachments'],
+          bodyProperties: ['partId', 'blobId', 'size', 'name', 'type']
+        }, 'getEmail']
+      ]
+    };
+
+    const response = await this.makeRequest(request);
+    const result = response.methodResponses[0][1];
+
+    if (result.notFound && result.notFound.includes(emailId)) {
+      throw new Error(`Email with ID '${emailId}' not found`);
+    }
+
+    const email = result.list[0];
+    if (!email) {
+      throw new Error(`Email with ID '${emailId}' not found or not accessible`);
+    }
+
+    let attachment = email.attachments?.find((att: any) =>
+      att.partId === attachmentId || att.blobId === attachmentId
+    );
+
+    if (!attachment && !isNaN(parseInt(attachmentId))) {
+      const index = parseInt(attachmentId);
+      attachment = email.attachments?.[index];
+    }
+
+    if (!attachment) {
+      throw new Error(`Attachment '${attachmentId}' not found in email. Use get_email_attachments to see available attachments.`);
+    }
+
+    const downloadUrlTemplate = session.downloadUrl;
+    if (!downloadUrlTemplate) {
+      throw new Error('Download capability not available in session');
+    }
+
+    const downloadUrl = downloadUrlTemplate
+      .replace('{accountId}', session.accountId)
+      .replace('{blobId}', attachment.blobId)
+      .replace('{type}', encodeURIComponent(attachment.type || 'application/octet-stream'))
+      .replace('{name}', encodeURIComponent(attachment.name || 'attachment'));
+
+    return {
+      filename: attachment.name || 'attachment',
+      mimeType: attachment.type || 'application/octet-stream',
+      size: attachment.size,
+      blobId: attachment.blobId,
+      downloadUrl
+    };
   }
 
   async fetchAttachmentContent(emailId: string, attachmentId: string): Promise<AttachmentContent> {
