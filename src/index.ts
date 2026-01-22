@@ -234,27 +234,61 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 
 		this.server.tool(
 			"download_attachment",
-			"Download an email attachment",
+			"Download an email attachment. Returns a temporary download URL that can be used with curl (no auth required). The URL is single-use and expires after 5 minutes.",
 			{
 				emailId: z.string().describe("ID of the email"),
 				attachmentId: z.string().describe("ID of the attachment"),
-				urlOnly: z.boolean().default(false).describe("If true, returns only the download URL instead of the actual content. Use this for large files (>10MB)."),
+				inline: z.boolean().default(false).describe("If true, returns base64-encoded content inline instead of a download URL. Only for small files (<1MB)."),
 			},
-			async ({ emailId, attachmentId, urlOnly }) => {
+			async ({ emailId, attachmentId, inline }) => {
 				const client = this.getJmapClient();
 				try {
-					if (urlOnly) {
-						// Return just the URL (legacy behavior)
-						const downloadUrl = await client.downloadAttachment(emailId, attachmentId);
+					// Get attachment metadata
+					const metadata = await client.getAttachmentMetadata(emailId, attachmentId);
+
+					if (inline) {
+						// Return base64 content for small files
+						if (metadata.size > 1024 * 1024) {
+							return {
+								content: [{ text: `Attachment is too large for inline (${Math.round(metadata.size / 1024)}KB). Use the default download URL instead.`, type: "text" }],
+							};
+						}
+						const attachmentContent = await client.fetchAttachmentContent(emailId, attachmentId);
 						return {
-							content: [{ text: `Download URL: ${downloadUrl}`, type: "text" }],
+							content: [{ text: JSON.stringify(attachmentContent, null, 2), type: "text" }],
 						};
 					}
 
-					// Fetch actual content (default behavior)
-					const attachmentContent = await client.fetchAttachmentContent(emailId, attachmentId);
+					// Generate a single-use download token
+					const token = crypto.randomUUID();
+
+					// Store metadata in KV with 5-minute TTL
+					await this.env.OAUTH_KV.put(
+						`download:${token}`,
+						JSON.stringify({
+							downloadUrl: metadata.downloadUrl,
+							filename: metadata.filename,
+							mimeType: metadata.mimeType,
+							size: metadata.size,
+						}),
+						{ expirationTtl: 300 } // 5 minutes
+					);
+
+					// Build the proxy URL
+					const proxyUrl = `https://fastmail-mcp-remote.your-subdomain.workers.dev/download/${token}`;
+
 					return {
-						content: [{ text: JSON.stringify(attachmentContent, null, 2), type: "text" }],
+						content: [{
+							text: JSON.stringify({
+								filename: metadata.filename,
+								mimeType: metadata.mimeType,
+								size: metadata.size,
+								downloadUrl: proxyUrl,
+								curl: `curl -o "${metadata.filename}" "${proxyUrl}"`,
+								note: "URL is single-use and expires in 5 minutes"
+							}, null, 2),
+							type: "text"
+						}],
 					};
 				} catch (error) {
 					const errorMessage = error instanceof Error ? error.message : String(error);
@@ -664,6 +698,48 @@ app.all('/sse', async (c) => {
 	return FastmailMCP.serveSSE('/sse').fetch(c.req.raw, c.env, c.executionCtx);
 });
 
+// Attachment download proxy endpoint (no auth required - uses single-use token)
+app.get('/download/:token', async (c) => {
+	const token = c.req.param('token');
+
+	// Look up token in KV
+	const tokenData = await c.env.OAUTH_KV.get(`download:${token}`, 'json') as {
+		downloadUrl: string;
+		filename: string;
+		mimeType: string;
+		size: number;
+	} | null;
+
+	if (!tokenData) {
+		return c.json({ error: 'Invalid or expired download token' }, 404);
+	}
+
+	// Delete token immediately (single-use)
+	await c.env.OAUTH_KV.delete(`download:${token}`);
+
+	// Fetch from Fastmail using the API token
+	const response = await fetch(tokenData.downloadUrl, {
+		method: 'GET',
+		headers: {
+			'Authorization': `Bearer ${c.env.FASTMAIL_API_TOKEN}`,
+		},
+	});
+
+	if (!response.ok) {
+		return c.json({ error: `Failed to fetch attachment: ${response.status}` }, 502);
+	}
+
+	// Stream the response back with proper headers
+	return new Response(response.body, {
+		status: 200,
+		headers: {
+			'Content-Type': tokenData.mimeType,
+			'Content-Disposition': `attachment; filename="${tokenData.filename}"`,
+			'Content-Length': tokenData.size.toString(),
+		},
+	});
+});
+
 // Root endpoint
 app.get('/', (c) => {
 	return c.json({
@@ -674,6 +750,7 @@ app.get('/', (c) => {
 		endpoints: {
 			mcp: '/mcp',
 			sse: '/sse',
+			download: '/download/:token (temporary, single-use)',
 		},
 	});
 });
