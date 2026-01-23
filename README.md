@@ -212,3 +212,7 @@ Empty set would allow all authenticated users (not recommended).
 - Verify FASTMAIL_API_TOKEN is set as a secret
 - Check token has correct permissions in Fastmail settings
 - Test token manually with curl first
+
+## Acknowledgments
+
+This project is based on [fastmail-mcp](https://github.com/MadLlama25/fastmail-mcp) by MadLlama25. The original project provided the foundation for the Fastmail JMAP integration and MCP tool implementations.
