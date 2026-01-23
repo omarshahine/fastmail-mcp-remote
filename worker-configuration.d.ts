@@ -11,6 +11,7 @@ declare namespace Cloudflare {
 		ACCESS_CLIENT_ID: string;
 		ACCESS_CLIENT_SECRET: string;
 		FASTMAIL_API_TOKEN: string;
+		WORKER_URL: string;
 		MCP_OBJECT: DurableObjectNamespace<import("./src/index").FastmailMCP>;
 	}
 }

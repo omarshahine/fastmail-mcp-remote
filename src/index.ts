@@ -274,8 +274,9 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 						{ expirationTtl: 300 } // 5 minutes
 					);
 
-					// Build the proxy URL
-					const proxyUrl = `https://fastmail-mcp-remote.your-subdomain.workers.dev/download/${token}`;
+					// Build the proxy URL using configured worker URL
+					const baseUrl = this.env.WORKER_URL || 'http://localhost:8788';
+					const proxyUrl = `${baseUrl}/download/${token}`;
 
 					return {
 						content: [{
