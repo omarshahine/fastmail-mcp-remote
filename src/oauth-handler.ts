@@ -16,7 +16,7 @@ import {
 	CODE_TTL_SECONDS,
 	TOKEN_TTL_SECONDS,
 	DEFAULT_SCOPE,
-	ACCESS_BASE_URL,
+	getAccessBaseUrl,
 	type OAuthStateData,
 	type OAuthCodeData,
 	type OAuthTokenData,
@@ -111,7 +111,11 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 	});
 
 	// Build Cloudflare Access OAuth URL
-	const accessAuthUrl = `${ACCESS_BASE_URL}/${env.ACCESS_CLIENT_ID}/authorization`;
+	if (!env.ACCESS_TEAM_NAME) {
+		return new Response('ACCESS_TEAM_NAME not configured', { status: 500 });
+	}
+	const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME);
+	const accessAuthUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/authorization`;
 	const accessParams = new URLSearchParams({
 		client_id: env.ACCESS_CLIENT_ID,
 		redirect_uri: `${url.origin}/mcp/callback`,
@@ -171,7 +175,8 @@ export async function handleCallback(request: Request, env: Env, url: URL): Prom
 
 	try {
 		// Exchange code for tokens with Cloudflare Access
-		const tokenUrl = `${ACCESS_BASE_URL}/${env.ACCESS_CLIENT_ID}/token`;
+		const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME!);
+		const tokenUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/token`;
 		const tokenResponse = await fetch(tokenUrl, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
