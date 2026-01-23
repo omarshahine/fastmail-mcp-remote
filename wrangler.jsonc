@@ -71,7 +71,9 @@
 	 */
 	// Set WORKER_URL via: npx wrangler secret put WORKER_URL
 	// Value should be your deployed worker URL (e.g., https://fastmail-mcp-remote.your-subdomain.workers.dev)
-	"vars": {}
+	"vars": {
+		"ACCESS_TEAM_NAME": "REDACTED_TEAM_NAME"
+	}
 	/**
 	 * Static Assets
 	 * https://developers.cloudflare.com/workers/static-assets/binding/

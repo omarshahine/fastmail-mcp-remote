@@ -84,24 +84,31 @@ Create a Cloudflare Access SaaS application for OAuth:
 5. Configure access policy to allow your users (e.g., email domain or specific emails)
 6. Copy the **Client ID** and generate a **Client Secret**
 
-### 3. Update OAuth Configuration
+### 3. Configure Cloudflare Access Team Name
 
-Edit `src/oauth-utils.ts`:
-```typescript
-// Add your allowed user emails (lowercase)
-export const ALLOWED_USERS = new Set(['user@example.com']);
-
-// Set your Cloudflare Access team name
-export const ACCESS_BASE_URL = 'https://your-team.cloudflareaccess.com/cdn-cgi/access/sso/oidc';
+Edit `wrangler.jsonc` to set your Cloudflare Zero Trust team name:
+```jsonc
+"vars": {
+  "ACCESS_TEAM_NAME": "your-team-name"
+}
 ```
 
-### 4. Get Fastmail API Token
+This is the subdomain before `.cloudflareaccess.com` (e.g., if your login URL is `mycompany.cloudflareaccess.com`, use `mycompany`).
+
+### 4. Update Allowed Users
+
+Edit `src/oauth-utils.ts` to add your allowed user emails:
+```typescript
+export const ALLOWED_USERS = new Set(['user@example.com']);
+```
+
+### 5. Get Fastmail API Token
 
 1. Go to https://www.fastmail.com/settings/security/tokens
 2. Create a new API token with the scopes you need (Email, Contacts, Calendars)
 3. Copy the token
 
-### 5. Configure Local Secrets
+### 6. Configure Local Secrets
 
 Create `.dev.vars` with your local development credentials:
 ```bash
@@ -111,7 +118,9 @@ FASTMAIL_API_TOKEN="your-fastmail-api-token"
 WORKER_URL="http://localhost:8788"
 ```
 
-### 6. Test Locally
+Note: `ACCESS_TEAM_NAME` is configured in `wrangler.jsonc` vars, not in `.dev.vars`.
+
+### 7. Test Locally
 
 ```bash
 npm start
@@ -129,13 +138,13 @@ npx @modelcontextprotocol/inspector@latest
 # Click "Connect" → "List Tools"
 ```
 
-### 7. Deploy to Cloudflare
+### 8. Deploy to Cloudflare
 
 ```bash
 npx wrangler deploy
 ```
 
-### 8. Set Production Secrets
+### 9. Set Production Secrets
 
 ```bash
 npx wrangler secret put ACCESS_CLIENT_ID
@@ -148,16 +157,15 @@ npx wrangler secret put FASTMAIL_API_TOKEN
 # Paste your Fastmail API token
 ```
 
-### 9. Update WORKER_URL
+### 10. Set WORKER_URL Secret
 
-Edit `wrangler.jsonc` to set your production worker URL:
-```jsonc
-"vars": {
-  "WORKER_URL": "https://your-worker-name.your-subdomain.workers.dev"
-}
+Set the worker URL for download links:
+```bash
+npx wrangler secret put WORKER_URL
+# Paste: https://your-worker-name.your-subdomain.workers.dev
 ```
 
-### 10. Add as Claude Custom Connector
+### 11. Add as Claude Custom Connector
 
 1. Go to https://claude.ai/settings/connectors
 2. Click **Add custom connector**
@@ -197,7 +205,7 @@ Empty set would allow all authenticated users (not recommended).
 - Verify Cloudflare Access redirect URI matches your worker URL exactly
 - Check that ACCESS_CLIENT_ID and ACCESS_CLIENT_SECRET are set correctly
 - Ensure KV namespace is created and bound
-- Verify ACCESS_BASE_URL matches your Zero Trust team name
+- Verify ACCESS_TEAM_NAME in `wrangler.jsonc` matches your Zero Trust team name
 
 **Tools not appearing**
 - Check worker logs: Cloudflare Dashboard → Workers → Logs
