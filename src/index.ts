@@ -648,6 +648,11 @@ app.post('/mcp/register', async (c) => {
 	return handleRegister(c.req.raw, c.env);
 });
 
+// Also handle /register for MCP spec compliance
+app.post('/register', async (c) => {
+	return handleRegister(c.req.raw, c.env);
+});
+
 // Helper to create 401 response with proper WWW-Authenticate header for MCP OAuth
 function unauthorizedResponse(c: { req: { url: string } }, error: string, description: string): Response {
 	const url = new URL(c.req.url);

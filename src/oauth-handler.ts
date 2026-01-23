@@ -29,7 +29,7 @@ export function handleOAuthDiscovery(url: URL): Response {
 		issuer: url.origin,
 		authorization_endpoint: `${url.origin}/mcp/authorize`,
 		token_endpoint: `${url.origin}/mcp/token`,
-		registration_endpoint: `${url.origin}/mcp/register`,
+		registration_endpoint: `${url.origin}/register`,
 		scopes_supported: ['mcp:read', 'mcp:write'],
 		response_types_supported: ['code'],
 		response_modes_supported: ['query'],
