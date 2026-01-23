@@ -207,7 +207,7 @@ export async function handleCallback(request: Request, env: Env, url: URL): Prom
 		const userInfo = { sub: payload.sub, email: payload.email, name: payload.name };
 
 		// Check if user is allowed
-		if (!isUserAllowed(userInfo.email)) {
+		if (!isUserAllowed(userInfo.email, env.ALLOWED_USERS || '')) {
 			const redirectUrl = new URL(stateResult.redirect_uri);
 			redirectUrl.searchParams.set('error', 'access_denied');
 			redirectUrl.searchParams.set('error_description', `User ${userInfo.email} is not authorized`);

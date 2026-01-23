@@ -5,7 +5,8 @@
 
 // Configuration
 // Add allowed user emails here (lowercase)
-export const ALLOWED_USERS = new Set(['user@example.com']);
+// ALLOWED_USERS is now configured via environment variable
+// Set ALLOWED_USERS in wrangler.jsonc as comma-separated emails
 export const STATE_TTL_SECONDS = 600; // 10 minutes
 export const CODE_TTL_SECONDS = 60; // 1 minute
 export const TOKEN_TTL_SECONDS = 86400 * 30; // 30 days
@@ -60,8 +61,11 @@ export function isExpired(expiresAt: string): boolean {
 }
 
 // Check if user is allowed (by email)
-export function isUserAllowed(email: string): boolean {
-	return ALLOWED_USERS.has(email.toLowerCase());
+// allowedUsers is a comma-separated string from env var
+export function isUserAllowed(email: string, allowedUsers: string): boolean {
+	if (!allowedUsers) return false;
+	const allowed = new Set(allowedUsers.split(',').map(e => e.trim().toLowerCase()));
+	return allowed.has(email.toLowerCase());
 }
 
 // PKCE: Generate code challenge from verifier

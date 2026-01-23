@@ -84,31 +84,26 @@ Create a Cloudflare Access SaaS application for OAuth:
 5. Configure access policy to allow your users (e.g., email domain or specific emails)
 6. Copy the **Client ID** and generate a **Client Secret**
 
-### 3. Configure Cloudflare Access Team Name
+### 3. Configure Environment Variables
 
-Edit `wrangler.jsonc` to set your Cloudflare Zero Trust team name:
+Edit `wrangler.jsonc` to set your configuration:
 ```jsonc
 "vars": {
-  "ACCESS_TEAM_NAME": "your-team-name"
+  "ACCESS_TEAM_NAME": "your-team-name",
+  "ALLOWED_USERS": "user1@example.com,user2@example.com"
 }
 ```
 
-This is the subdomain before `.cloudflareaccess.com` (e.g., if your login URL is `mycompany.cloudflareaccess.com`, use `mycompany`).
+- **ACCESS_TEAM_NAME**: Your Cloudflare Zero Trust team name (the subdomain before `.cloudflareaccess.com`)
+- **ALLOWED_USERS**: Comma-separated list of email addresses allowed to access the server
 
-### 4. Update Allowed Users
-
-Edit `src/oauth-utils.ts` to add your allowed user emails:
-```typescript
-export const ALLOWED_USERS = new Set(['user@example.com']);
-```
-
-### 5. Get Fastmail API Token
+### 4. Get Fastmail API Token
 
 1. Go to https://www.fastmail.com/settings/security/tokens
 2. Create a new API token with the scopes you need (Email, Contacts, Calendars)
 3. Copy the token
 
-### 6. Configure Local Secrets
+### 5. Configure Local Secrets
 
 Create `.dev.vars` with your local development credentials:
 ```bash
@@ -118,9 +113,9 @@ FASTMAIL_API_TOKEN="your-fastmail-api-token"
 WORKER_URL="http://localhost:8788"
 ```
 
-Note: `ACCESS_TEAM_NAME` is configured in `wrangler.jsonc` vars, not in `.dev.vars`.
+Note: `ACCESS_TEAM_NAME` and `ALLOWED_USERS` are configured in `wrangler.jsonc` vars, not in `.dev.vars`.
 
-### 7. Test Locally
+### 6. Test Locally
 
 ```bash
 npm start
@@ -138,13 +133,13 @@ npx @modelcontextprotocol/inspector@latest
 # Click "Connect" → "List Tools"
 ```
 
-### 8. Deploy to Cloudflare
+### 7. Deploy to Cloudflare
 
 ```bash
 npx wrangler deploy
 ```
 
-### 9. Set Production Secrets
+### 8. Set Production Secrets
 
 ```bash
 npx wrangler secret put ACCESS_CLIENT_ID
@@ -157,7 +152,7 @@ npx wrangler secret put FASTMAIL_API_TOKEN
 # Paste your Fastmail API token
 ```
 
-### 10. Set WORKER_URL Secret
+### 9. Set WORKER_URL Secret
 
 Set the worker URL for download links:
 ```bash
@@ -165,7 +160,9 @@ npx wrangler secret put WORKER_URL
 # Paste: https://your-worker-name.your-subdomain.workers.dev
 ```
 
-### 11. Add as Claude Custom Connector
+### 10. Add to MCP Client
+
+#### Claude.ai
 
 1. Go to https://claude.ai/settings/connectors
 2. Click **Add custom connector**
@@ -176,20 +173,48 @@ npx wrangler secret put WORKER_URL
 4. Click **Add**
 5. Click **Connect** and authenticate via Cloudflare Access
 
-Or add to Claude Code:
+#### Claude Code
+
 ```bash
 claude mcp add --scope user --transport http fastmail "https://your-worker-name.your-subdomain.workers.dev/mcp"
 ```
 
+Then run `/mcp` in Claude Code to complete the OAuth flow.
+
+#### GitHub Copilot CLI
+
+GitHub Copilot CLI doesn't support automatic OAuth client registration, so you need to register a client first:
+
+1. **Register an OAuth client:**
+   ```bash
+   curl -X POST "https://your-worker-name.your-subdomain.workers.dev/register" \
+     -H "Content-Type: application/json" \
+     -d '{"client_name": "github-copilot", "redirect_uris": ["http://localhost", "http://127.0.0.1"]}'
+   ```
+
+   Save the returned `client_id`.
+
+2. **Add the MCP server:**
+   ```bash
+   copilot mcp add fastmail --url "https://your-worker-name.your-subdomain.workers.dev/mcp"
+   ```
+
+3. **When prompted for OAuth credentials:**
+   - **Client ID**: Paste the `client_id` from step 1
+   - **Client Type**: Select `[1] Public (no secret)`
+   - Press `Ctrl+S` to save and authenticate
+
 ## User Access Control
 
-Edit `ALLOWED_USERS` in `src/oauth-utils.ts` to control which email addresses can access:
+Allowed users are configured via the `ALLOWED_USERS` environment variable in `wrangler.jsonc`:
 
-```typescript
-export const ALLOWED_USERS = new Set(['user@example.com']);
+```jsonc
+"vars": {
+  "ALLOWED_USERS": "user1@example.com,user2@example.com"
+}
 ```
 
-Empty set would allow all authenticated users (not recommended).
+This is a comma-separated list of email addresses. Users not in this list will be denied access after authenticating via Cloudflare Access.
 
 ## Security Notes
 
