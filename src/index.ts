@@ -626,7 +626,22 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 // Create Hono app for routing
 const app = new Hono<{ Bindings: Env }>();
 
-// OAuth Discovery endpoint
+// Protected Resource Metadata (RFC 9728) - tells clients where to find auth server
+app.get('/.well-known/oauth-protected-resource', (c) => {
+	const url = new URL(c.req.url);
+	return new Response(JSON.stringify({
+		resource: `${url.origin}/mcp`,
+		authorization_servers: [url.origin],
+		scopes_supported: ['mcp:read', 'mcp:write'],
+	}), {
+		headers: {
+			'Content-Type': 'application/json',
+			'Cache-Control': 'public, max-age=3600',
+		},
+	});
+});
+
+// OAuth Authorization Server Metadata
 app.get('/.well-known/oauth-authorization-server', (c) => {
 	return handleOAuthDiscovery(new URL(c.req.url));
 });
@@ -656,7 +671,7 @@ app.post('/register', async (c) => {
 // Helper to create 401 response with proper WWW-Authenticate header for MCP OAuth
 function unauthorizedResponse(c: { req: { url: string } }, error: string, description: string): Response {
 	const url = new URL(c.req.url);
-	const resourceMetadata = `${url.origin}/.well-known/oauth-authorization-server`;
+	const resourceMetadata = `${url.origin}/.well-known/oauth-protected-resource`;
 	return new Response(
 		JSON.stringify({ error, error_description: description }),
 		{
