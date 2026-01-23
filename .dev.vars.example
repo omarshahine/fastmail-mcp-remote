@@ -4,3 +4,6 @@ ACCESS_CLIENT_SECRET=<your cloudflare access client secret>
 
 # Fastmail API token (get from https://www.fastmail.com/settings/security/tokens)
 FASTMAIL_API_TOKEN=<your fastmail api token>
+
+# Worker URL (for local dev, use http://localhost:8788)
+WORKER_URL=http://localhost:8788

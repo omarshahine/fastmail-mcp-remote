@@ -61,11 +61,10 @@ src/
    # Update wrangler.jsonc with the returned ID
    ```
 
-3. **Configure Cloudflare Access Application** (reuse "Travel Hub MCP" app):
+3. **Configure Cloudflare Access Application**:
    - Go to Zero Trust Dashboard → Access → Applications
-   - Edit "Travel Hub MCP" application
-   - Add redirect URL: `https://fastmail-mcp-remote.your-subdomain.workers.dev/mcp/callback`
-   - Keep existing travel-hub callback URL
+   - Create or edit your Access application
+   - Add redirect URL: `https://your-worker-name.your-subdomain.workers.dev/mcp/callback`
 
 4. **Get Fastmail API Token** at https://www.fastmail.com/settings/security/tokens
 
@@ -90,11 +89,11 @@ npm run deploy
 ### Verify Deployment
 
 ```bash
-# Check discovery endpoint
-curl https://fastmail-mcp-remote.your-subdomain.workers.dev/.well-known/oauth-authorization-server
+# Check discovery endpoint (replace with your worker URL)
+curl https://your-worker-name.your-subdomain.workers.dev/.well-known/oauth-authorization-server
 
 # Check root endpoint
-curl https://fastmail-mcp-remote.your-subdomain.workers.dev/
+curl https://your-worker-name.your-subdomain.workers.dev/
 ```
 
 ## Local Development
@@ -171,9 +170,9 @@ Empty set would allow all authenticated users (not recommended).
 
 ## Claude Code Integration
 
-Add to Claude Code:
+Add to Claude Code (replace with your worker URL):
 ```bash
-claude mcp add --scope user --transport http fastmail "https://fastmail-mcp-remote.your-subdomain.workers.dev/mcp"
+claude mcp add --scope user --transport http fastmail "https://your-worker-name.your-subdomain.workers.dev/mcp"
 ```
 
 Complete OAuth via `/mcp` in Claude Code when prompted.

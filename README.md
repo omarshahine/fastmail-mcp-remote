@@ -162,7 +162,7 @@ By default, only users in the `ALLOWED_USERNAMES` set in `src/index.ts` can acce
 
 ```typescript
 const ALLOWED_USERNAMES = new Set<string>([
-  'your-username',
+  'your-github-username',
   // Add more GitHub usernames here
 ]);
 ```
