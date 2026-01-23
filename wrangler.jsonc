@@ -51,7 +51,7 @@
 	},
 	"dev": {
 		"port": 8788
-	}
+	},
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
@@ -69,10 +69,9 @@
 	 * Note: Use secrets to store sensitive data.
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
 	 */
-	"vars": {
-		// Set this to your deployed worker URL (used for download proxy URLs)
-		"WORKER_URL": "https://your-worker-name.your-subdomain.workers.dev"
-	}
+	// Set WORKER_URL via: npx wrangler secret put WORKER_URL
+	// Value should be your deployed worker URL (e.g., https://fastmail-mcp-remote.your-subdomain.workers.dev)
+	"vars": {}
 	/**
 	 * Static Assets
 	 * https://developers.cloudflare.com/workers/static-assets/binding/
