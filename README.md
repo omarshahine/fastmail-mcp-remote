@@ -1,13 +1,13 @@
 # Fastmail MCP Remote Server
 
-A remote MCP (Model Context Protocol) server for Fastmail email, contacts, and calendar access, deployed on Cloudflare Workers with GitHub OAuth authentication.
+A remote MCP (Model Context Protocol) server for Fastmail email, contacts, and calendar access, deployed on Cloudflare Workers with Cloudflare Access OAuth authentication.
 
 ## Architecture
 
 ```
-┌─────────────┐      OAuth       ┌──────────────────────┐      API Token      ┌──────────────┐
-│  Claude.ai  │  ─────────────►  │  Cloudflare Worker   │  ────────────────►  │   Fastmail   │
-│ (MCP Client)│  (GitHub login)  │  (Remote MCP Server) │  (stored as secret) │     API      │
+┌─────────────┐     OAuth        ┌──────────────────────┐      API Token      ┌──────────────┐
+│  Claude.ai  │  ───────────►    │  Cloudflare Worker   │  ────────────────►  │   Fastmail   │
+│ (MCP Client)│  (CF Access)     │  (Remote MCP Server) │  (stored as secret) │     API      │
 └─────────────┘                  └──────────────────────┘                     └──────────────┘
 ```
 
@@ -69,43 +69,49 @@ Copy the output ID and update `wrangler.jsonc`:
 ]
 ```
 
-### 2. Create GitHub OAuth Apps
+### 2. Configure Cloudflare Access
 
-#### For Local Development
-1. Go to https://github.com/settings/developers
-2. Click **New OAuth App**
-3. Fill in:
-   - **Application name:** `Fastmail MCP (local)`
-   - **Homepage URL:** `http://localhost:8788`
-   - **Authorization callback URL:** `http://localhost:8788/callback`
-4. Copy the **Client ID** and generate a **Client Secret**
+Create a Cloudflare Access SaaS application for OAuth:
 
-#### For Production
-1. Go to https://github.com/settings/developers
-2. Click **New OAuth App**
+1. Go to Cloudflare Zero Trust Dashboard → Access → Applications
+2. Click **Add an application** → **SaaS**
 3. Fill in:
    - **Application name:** `Fastmail MCP`
-   - **Homepage URL:** `https://fastmail-mcp-remote.<your-subdomain>.workers.dev`
-   - **Authorization callback URL:** `https://fastmail-mcp-remote.<your-subdomain>.workers.dev/callback`
-4. Copy the **Client ID** and generate a **Client Secret**
+   - **Application type:** Custom
+4. Configure OIDC settings:
+   - **Auth Type:** OIDC
+   - **Redirect URI:** `https://your-worker-name.your-subdomain.workers.dev/mcp/callback`
+5. Configure access policy to allow your users (e.g., email domain or specific emails)
+6. Copy the **Client ID** and generate a **Client Secret**
 
-### 3. Get Fastmail API Token
+### 3. Update OAuth Configuration
+
+Edit `src/oauth-utils.ts`:
+```typescript
+// Add your allowed user emails (lowercase)
+export const ALLOWED_USERS = new Set(['user@example.com']);
+
+// Set your Cloudflare Access team name
+export const ACCESS_BASE_URL = 'https://your-team.cloudflareaccess.com/cdn-cgi/access/sso/oidc';
+```
+
+### 4. Get Fastmail API Token
 
 1. Go to https://www.fastmail.com/settings/security/tokens
 2. Create a new API token with the scopes you need (Email, Contacts, Calendars)
 3. Copy the token
 
-### 4. Configure Local Secrets
+### 5. Configure Local Secrets
 
-Edit `.dev.vars` with your local development credentials:
+Create `.dev.vars` with your local development credentials:
 ```bash
-GITHUB_CLIENT_ID="your-local-github-client-id"
-GITHUB_CLIENT_SECRET="your-local-github-client-secret"
+ACCESS_CLIENT_ID="your-cloudflare-access-client-id"
+ACCESS_CLIENT_SECRET="your-cloudflare-access-client-secret"
 FASTMAIL_API_TOKEN="your-fastmail-api-token"
-COOKIE_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+WORKER_URL="http://localhost:8788"
 ```
 
-### 5. Test Locally
+### 6. Test Locally
 
 ```bash
 npm start
@@ -119,82 +125,88 @@ npx @modelcontextprotocol/inspector@latest
 # Open http://localhost:5173
 # Enter http://localhost:8788/sse
 # Click "Open OAuth Settings" → "Quick OAuth Flow"
-# Authenticate with GitHub
+# Authenticate via Cloudflare Access
 # Click "Connect" → "List Tools"
 ```
 
-### 6. Deploy to Cloudflare
+### 7. Deploy to Cloudflare
 
 ```bash
 npx wrangler deploy
 ```
 
-### 7. Set Production Secrets
+### 8. Set Production Secrets
 
 ```bash
-npx wrangler secret put GITHUB_CLIENT_ID
-# Paste your production GitHub client ID
+npx wrangler secret put ACCESS_CLIENT_ID
+# Paste your Cloudflare Access client ID
 
-npx wrangler secret put GITHUB_CLIENT_SECRET
-# Paste your production GitHub client secret
+npx wrangler secret put ACCESS_CLIENT_SECRET
+# Paste your Cloudflare Access client secret
 
 npx wrangler secret put FASTMAIL_API_TOKEN
 # Paste your Fastmail API token
-
-npx wrangler secret put COOKIE_ENCRYPTION_KEY
-# Paste output of: openssl rand -hex 32
 ```
 
-### 8. Add as Claude Custom Connector
+### 9. Update WORKER_URL
+
+Edit `wrangler.jsonc` to set your production worker URL:
+```jsonc
+"vars": {
+  "WORKER_URL": "https://your-worker-name.your-subdomain.workers.dev"
+}
+```
+
+### 10. Add as Claude Custom Connector
 
 1. Go to https://claude.ai/settings/connectors
 2. Click **Add custom connector**
 3. Enter your MCP server URL:
    ```
-   https://fastmail-mcp-remote.<your-subdomain>.workers.dev/sse
+   https://your-worker-name.your-subdomain.workers.dev/sse
    ```
 4. Click **Add**
-5. Click **Connect** and authenticate with GitHub
+5. Click **Connect** and authenticate via Cloudflare Access
+
+Or add to Claude Code:
+```bash
+claude mcp add --scope user --transport http fastmail "https://your-worker-name.your-subdomain.workers.dev/mcp"
+```
 
 ## User Access Control
 
-By default, only users in the `ALLOWED_USERNAMES` set in `src/index.ts` can access the tools. Edit this to add your GitHub username:
+Edit `ALLOWED_USERS` in `src/oauth-utils.ts` to control which email addresses can access:
 
 ```typescript
-const ALLOWED_USERNAMES = new Set<string>([
-  'your-github-username',
-  // Add more GitHub usernames here
-]);
+export const ALLOWED_USERS = new Set(['user@example.com']);
 ```
 
-To allow all GitHub users, leave the set empty:
-```typescript
-const ALLOWED_USERNAMES = new Set<string>([]);
-```
+Empty set would allow all authenticated users (not recommended).
 
 ## Security Notes
 
-- Only GitHub-authenticated users can access the MCP server
+- Authentication via Cloudflare Access (supports GitHub, email OTP, and other identity providers)
 - Fastmail API token stored encrypted in Cloudflare secrets
-- OAuth tokens managed by Cloudflare's framework
+- OAuth tokens stored in Cloudflare KV with TTL expiration
 - All traffic over HTTPS
-- Add GitHub username allowlist for personal use
+- Email-based allowlist for access control
 
 ## Troubleshooting
 
 **"OAuth error" when connecting**
-- Verify GitHub OAuth callback URL matches your worker URL exactly
-- Check that GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET are set correctly
+- Verify Cloudflare Access redirect URI matches your worker URL exactly
+- Check that ACCESS_CLIENT_ID and ACCESS_CLIENT_SECRET are set correctly
 - Ensure KV namespace is created and bound
+- Verify ACCESS_BASE_URL matches your Zero Trust team name
 
 **Tools not appearing**
 - Check worker logs: Cloudflare Dashboard → Workers → Logs
 - Verify tools are registered in the `init()` method
 - Test with MCP Inspector first
 
-**"Unauthorized" after GitHub login**
-- If you added user restrictions, verify your GitHub username is in the allowed list
-- Check the COOKIE_ENCRYPTION_KEY is set
+**"Unauthorized" after login**
+- Verify your email is in the ALLOWED_USERS set in `src/oauth-utils.ts`
+- Check the user email matches exactly (case-insensitive)
 
 **Fastmail API errors**
 - Verify FASTMAIL_API_TOKEN is set as a secret
