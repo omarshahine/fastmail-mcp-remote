@@ -9,9 +9,12 @@ export const ALLOWED_USERS = new Set(['user@example.com']);
 export const STATE_TTL_SECONDS = 600; // 10 minutes
 export const CODE_TTL_SECONDS = 60; // 1 minute
 export const TOKEN_TTL_SECONDS = 86400 * 30; // 30 days
-// Replace with your Cloudflare Access team name (the subdomain before .cloudflareaccess.com)
-export const ACCESS_BASE_URL = 'https://your-team.cloudflareaccess.com/cdn-cgi/access/sso/oidc';
 export const DEFAULT_SCOPE = 'mcp:read mcp:write';
+
+// Build Access base URL from team name (set via ACCESS_TEAM_NAME env var)
+export function getAccessBaseUrl(teamName: string): string {
+	return `https://${teamName}.cloudflareaccess.com/cdn-cgi/access/sso/oidc`;
+}
 
 // Generate cryptographically secure random string
 export function generateRandomString(length: number): string {
