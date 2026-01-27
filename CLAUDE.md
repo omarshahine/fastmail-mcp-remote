@@ -176,3 +176,22 @@ claude mcp add --scope user --transport http fastmail "https://your-worker-name.
 ```
 
 Complete OAuth via `/mcp` in Claude Code when prompted.
+
+## Known Limitations
+
+### No JMAP Sieve/Rules API (as of January 2026)
+
+Fastmail does **not** expose `urn:ietf:params:jmap:sieve` in their production JMAP API, despite authoring [RFC 9661 - JMAP for Sieve Scripts](https://datatracker.ietf.org/doc/rfc9661/). This means email rules/filters cannot be created or managed programmatically via this MCP server.
+
+**Available capabilities** (verified January 2026):
+- `urn:ietf:params:jmap:core`
+- `urn:ietf:params:jmap:mail`
+- `urn:ietf:params:jmap:submission`
+- `https://www.fastmail.com/dev/maskedemail`
+
+**Workarounds for rule management:**
+- Use Fastmail's web UI: Settings → Filters & Rules
+- Import/export Sieve scripts as JSON via the UI
+- Edit custom Sieve code directly in Settings → Filters & Rules → "Edit custom Sieve code"
+
+This limitation may change in a future Fastmail update. Monitor their [API documentation](https://www.fastmail.com/dev/) for capability additions.
