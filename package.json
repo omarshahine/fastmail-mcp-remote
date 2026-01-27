@@ -8,7 +8,9 @@
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"cf-typegen": "wrangler types",
-		"type-check": "tsc --noEmit"
+		"type-check": "tsc --noEmit",
+		"test": "vitest run",
+		"test:watch": "vitest"
 	},
 	"dependencies": {
 		"agents": "^0.3.6",
@@ -17,9 +19,11 @@
 		"zod": "^4.2.1"
 	},
 	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.12.6",
 		"@types/node": "^25.0.8",
 		"prettier": "^3.7.4",
 		"typescript": "5.9.3",
+		"vitest": "^4.0.18",
 		"wrangler": "^4.59.1"
 	}
 }
