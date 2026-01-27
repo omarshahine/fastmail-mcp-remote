@@ -88,7 +88,7 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 
 		this.server.tool(
 			"send_email",
-			"Send an email",
+			"Send an email. Supports file attachments via base64-encoded content.",
 			{
 				to: z.array(z.string()).describe("Recipient email addresses"),
 				cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
@@ -97,24 +97,38 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				subject: z.string().describe("Email subject"),
 				textBody: z.string().optional().describe("Plain text body (optional)"),
 				htmlBody: z.string().optional().describe("HTML body (optional)"),
+				attachments: z.array(z.object({
+					filename: z.string().describe("Filename for the attachment (e.g., 'report.pdf')"),
+					mimeType: z.string().describe("MIME type (e.g., 'application/pdf', 'image/png')"),
+					content: z.string().describe("Base64-encoded file content"),
+				})).optional().describe("File attachments (optional). Each attachment needs filename, mimeType, and base64 content. Max 25MB per file."),
 			},
-			async ({ to, cc, bcc, from, subject, textBody, htmlBody }) => {
+			async ({ to, cc, bcc, from, subject, textBody, htmlBody, attachments }) => {
 				if (!textBody && !htmlBody) {
 					return {
 						content: [{ text: "Error: Either textBody or htmlBody is required", type: "text" }],
 					};
 				}
-				const client = this.getJmapClient();
-				const submissionId = await client.sendEmail({ to, cc, bcc, from, subject, textBody, htmlBody });
-				return {
-					content: [{ text: `Email sent successfully. Submission ID: ${submissionId}`, type: "text" }],
-				};
+				try {
+					const client = this.getJmapClient();
+					const submissionId = await client.sendEmail({ to, cc, bcc, from, subject, textBody, htmlBody, attachments });
+					const attachmentCount = attachments?.length || 0;
+					const attachmentNote = attachmentCount > 0 ? ` with ${attachmentCount} attachment(s)` : '';
+					return {
+						content: [{ text: `Email sent successfully${attachmentNote}. Submission ID: ${submissionId}`, type: "text" }],
+					};
+				} catch (error) {
+					const errorMessage = error instanceof Error ? error.message : String(error);
+					return {
+						content: [{ text: `Failed to send email: ${errorMessage}`, type: "text" }],
+					};
+				}
 			},
 		);
 
 		this.server.tool(
 			"create_draft",
-			"Create an email draft in the Drafts folder without sending it",
+			"Create an email draft in the Drafts folder without sending it. Supports file attachments via base64-encoded content.",
 			{
 				to: z.array(z.string()).describe("Recipient email addresses"),
 				cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
@@ -123,18 +137,32 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				subject: z.string().describe("Email subject"),
 				textBody: z.string().optional().describe("Plain text body (optional)"),
 				htmlBody: z.string().optional().describe("HTML body (optional)"),
+				attachments: z.array(z.object({
+					filename: z.string().describe("Filename for the attachment (e.g., 'report.pdf')"),
+					mimeType: z.string().describe("MIME type (e.g., 'application/pdf', 'image/png')"),
+					content: z.string().describe("Base64-encoded file content"),
+				})).optional().describe("File attachments (optional). Each attachment needs filename, mimeType, and base64 content. Max 25MB per file."),
 			},
-			async ({ to, cc, bcc, from, subject, textBody, htmlBody }) => {
+			async ({ to, cc, bcc, from, subject, textBody, htmlBody, attachments }) => {
 				if (!textBody && !htmlBody) {
 					return {
 						content: [{ text: "Error: Either textBody or htmlBody is required", type: "text" }],
 					};
 				}
-				const client = this.getJmapClient();
-				const draftId = await client.createDraft({ to, cc, bcc, from, subject, textBody, htmlBody });
-				return {
-					content: [{ text: `Draft created successfully in Drafts folder. Draft ID: ${draftId}`, type: "text" }],
-				};
+				try {
+					const client = this.getJmapClient();
+					const draftId = await client.createDraft({ to, cc, bcc, from, subject, textBody, htmlBody, attachments });
+					const attachmentCount = attachments?.length || 0;
+					const attachmentNote = attachmentCount > 0 ? ` with ${attachmentCount} attachment(s)` : '';
+					return {
+						content: [{ text: `Draft created successfully${attachmentNote} in Drafts folder. Draft ID: ${draftId}`, type: "text" }],
+					};
+				} catch (error) {
+					const errorMessage = error instanceof Error ? error.message : String(error);
+					return {
+						content: [{ text: `Failed to create draft: ${errorMessage}`, type: "text" }],
+					};
+				}
 			},
 		);
 
