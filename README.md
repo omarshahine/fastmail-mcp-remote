@@ -17,7 +17,8 @@ A remote MCP (Model Context Protocol) server for Fastmail email, contacts, and c
 - `list_mailboxes` - List all mailboxes
 - `list_emails` - List emails from a mailbox
 - `get_email` - Get a specific email by ID
-- `send_email` - Send an email
+- `send_email` - Send an email (supports attachments)
+- `create_draft` - Create a draft email (supports attachments)
 - `search_emails` - Search emails
 - `get_recent_emails` - Get most recent emails
 - `mark_email_read` - Mark email as read/unread
@@ -32,6 +33,34 @@ A remote MCP (Model Context Protocol) server for Fastmail email, contacts, and c
 - `bulk_mark_read` - Mark multiple emails read/unread
 - `bulk_move` - Move multiple emails
 - `bulk_delete` - Delete multiple emails
+
+### Sending Emails with Attachments
+
+Both `send_email` and `create_draft` support file attachments. Attachments are passed as an array of objects with base64-encoded content:
+
+```json
+{
+  "to": ["recipient@example.com"],
+  "subject": "Document attached",
+  "textBody": "Please see the attached file.",
+  "attachments": [
+    {
+      "filename": "report.pdf",
+      "mimeType": "application/pdf",
+      "content": "<base64-encoded-file-content>"
+    }
+  ]
+}
+```
+
+**Attachment limits:**
+- Maximum file size: 25MB per attachment
+- Supported: Any file type (PDF, images, documents, etc.)
+
+**Validation:**
+- Filenames are validated to prevent path traversal attacks
+- MIME types must be in valid `type/subtype` format
+- Base64 content is validated before upload
 
 ### Identity
 - `list_identities` - List sending identities
