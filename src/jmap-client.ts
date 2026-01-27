@@ -37,6 +37,21 @@ export interface AttachmentMetadata {
 // Maximum attachment size we'll fetch (10 MB)
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 
+// Maximum attachment size for upload (25 MB)
+const MAX_UPLOAD_SIZE = 25 * 1024 * 1024;
+
+export interface UploadedBlob {
+  blobId: string;
+  type: string;
+  size: number;
+}
+
+export interface AttachmentInput {
+  filename: string;
+  mimeType: string;
+  content: string; // Base64-encoded content
+}
+
 export class JmapClient {
   private auth: FastmailAuth;
   private session: JmapSession | null = null;
@@ -95,6 +110,57 @@ export class JmapClient {
     }
 
     return await response.json() as JmapResponse;
+  }
+
+  async uploadBlob(content: string, mimeType: string): Promise<UploadedBlob> {
+    const session = await this.getSession();
+
+    if (!session.uploadUrl) {
+      throw new Error('Upload capability not available in session');
+    }
+
+    // Decode base64 content to binary
+    const binaryString = atob(content);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    if (bytes.length > MAX_UPLOAD_SIZE) {
+      throw new Error(
+        `Attachment is too large (${Math.round(bytes.length / 1024 / 1024)}MB). ` +
+        `Maximum upload size is ${MAX_UPLOAD_SIZE / 1024 / 1024}MB.`
+      );
+    }
+
+    // Build upload URL with accountId
+    const uploadUrl = session.uploadUrl.replace('{accountId}', session.accountId);
+
+    const response = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: {
+        ...this.auth.getAuthHeaders(),
+        'Content-Type': mimeType
+      },
+      body: bytes
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to upload blob: ${response.status} ${response.statusText}`);
+    }
+
+    const result = await response.json() as {
+      accountId: string;
+      blobId: string;
+      type: string;
+      size: number;
+    };
+
+    return {
+      blobId: result.blobId,
+      type: result.type,
+      size: result.size
+    };
   }
 
   async getMailboxes(): Promise<any[]> {
@@ -198,6 +264,7 @@ export class JmapClient {
     textBody?: string;
     htmlBody?: string;
     from?: string;
+    attachments?: AttachmentInput[];
   }): Promise<string> {
     const session = await this.getSession();
 
@@ -231,10 +298,30 @@ export class JmapClient {
       throw new Error('Either textBody or htmlBody must be provided');
     }
 
+    // Upload attachments first if any
+    const uploadedAttachments: Array<{
+      blobId: string;
+      type: string;
+      name: string;
+      size: number;
+    }> = [];
+
+    if (email.attachments && email.attachments.length > 0) {
+      for (const attachment of email.attachments) {
+        const uploaded = await this.uploadBlob(attachment.content, attachment.mimeType);
+        uploadedAttachments.push({
+          blobId: uploaded.blobId,
+          type: attachment.mimeType,
+          name: attachment.filename,
+          size: uploaded.size
+        });
+      }
+    }
+
     const draftsMailboxIds: Record<string, boolean> = {};
     draftsMailboxIds[draftsMailbox.id] = true;
 
-    const emailObject = {
+    const emailObject: Record<string, any> = {
       mailboxIds: draftsMailboxIds,
       keywords: { $draft: true },
       from: [{ email: fromEmail }],
@@ -249,6 +336,17 @@ export class JmapClient {
         ...(email.htmlBody && { html: { value: email.htmlBody } })
       }
     };
+
+    // Add attachments if any were uploaded
+    if (uploadedAttachments.length > 0) {
+      emailObject.attachments = uploadedAttachments.map(att => ({
+        blobId: att.blobId,
+        type: att.type,
+        name: att.name,
+        size: att.size,
+        disposition: 'attachment'
+      }));
+    }
 
     // Only Email/set - no EmailSubmission/set (that's what makes it a draft)
     const request: JmapRequest = {
@@ -265,7 +363,8 @@ export class JmapClient {
 
     const emailResult = response.methodResponses[0][1];
     if (emailResult.notCreated && emailResult.notCreated.draft) {
-      throw new Error('Failed to create draft. Please check inputs and try again.');
+      const error = emailResult.notCreated.draft;
+      throw new Error(`Failed to create draft: ${error.type || 'unknown error'}. ${error.description || ''}`);
     }
 
     return emailResult.created?.draft?.id || 'unknown';
@@ -280,6 +379,7 @@ export class JmapClient {
     htmlBody?: string;
     from?: string;
     mailboxId?: string;
+    attachments?: AttachmentInput[];
   }): Promise<string> {
     const session = await this.getSession();
 
@@ -319,13 +419,33 @@ export class JmapClient {
       throw new Error('Either textBody or htmlBody must be provided');
     }
 
+    // Upload attachments first if any
+    const uploadedAttachments: Array<{
+      blobId: string;
+      type: string;
+      name: string;
+      size: number;
+    }> = [];
+
+    if (email.attachments && email.attachments.length > 0) {
+      for (const attachment of email.attachments) {
+        const uploaded = await this.uploadBlob(attachment.content, attachment.mimeType);
+        uploadedAttachments.push({
+          blobId: uploaded.blobId,
+          type: attachment.mimeType,
+          name: attachment.filename,
+          size: uploaded.size
+        });
+      }
+    }
+
     const initialMailboxIds: Record<string, boolean> = {};
     initialMailboxIds[initialMailboxId] = true;
 
     const sentMailboxIds: Record<string, boolean> = {};
     sentMailboxIds[sentMailbox.id] = true;
 
-    const emailObject = {
+    const emailObject: Record<string, any> = {
       mailboxIds: initialMailboxIds,
       keywords: { $draft: true },
       from: [{ email: fromEmail }],
@@ -340,6 +460,17 @@ export class JmapClient {
         ...(email.htmlBody && { html: { value: email.htmlBody } })
       }
     };
+
+    // Add attachments if any were uploaded
+    if (uploadedAttachments.length > 0) {
+      emailObject.attachments = uploadedAttachments.map(att => ({
+        blobId: att.blobId,
+        type: att.type,
+        name: att.name,
+        size: att.size,
+        disposition: 'attachment'
+      }));
+    }
 
     const request: JmapRequest = {
       using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission'],
@@ -374,12 +505,14 @@ export class JmapClient {
 
     const emailResult = response.methodResponses[0][1];
     if (emailResult.notCreated && emailResult.notCreated.draft) {
-      throw new Error('Failed to create email. Please check inputs and try again.');
+      const error = emailResult.notCreated.draft;
+      throw new Error(`Failed to create email: ${error.type || 'unknown error'}. ${error.description || ''}`);
     }
 
     const submissionResult = response.methodResponses[1][1];
     if (submissionResult.notCreated && submissionResult.notCreated.submission) {
-      throw new Error('Failed to submit email. Please try again later.');
+      const error = submissionResult.notCreated.submission;
+      throw new Error(`Failed to submit email: ${error.type || 'unknown error'}. ${error.description || ''}`);
     }
 
     return submissionResult.created?.submission?.id || 'unknown';
