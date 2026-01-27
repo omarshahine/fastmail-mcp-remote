@@ -40,6 +40,16 @@ const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 // Maximum attachment size for upload (25 MB)
 const MAX_UPLOAD_SIZE = 25 * 1024 * 1024;
 
+// MIME type validation regex (type/subtype format)
+const MIME_TYPE_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9!#$&\-^_.+]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-^_.+]*$/;
+
+// Dangerous filename patterns to reject
+const DANGEROUS_FILENAME_PATTERNS = [
+  /\.\./,           // Path traversal
+  /^\/|^\\/,        // Absolute paths
+  /[<>:"|?*\x00-\x1f]/, // Invalid filename chars
+];
+
 export interface UploadedBlob {
   blobId: string;
   type: string;
@@ -50,6 +60,108 @@ export interface AttachmentInput {
   filename: string;
   mimeType: string;
   content: string; // Base64-encoded content
+}
+
+/** Uploaded attachment ready for inclusion in email */
+export interface UploadedAttachment {
+  blobId: string;
+  type: string;
+  name: string;
+  size: number;
+}
+
+/** JMAP Email attachment object */
+export interface JmapEmailAttachment {
+  blobId: string;
+  type: string;
+  name: string;
+  size: number;
+  disposition: 'attachment' | 'inline';
+}
+
+/** JMAP Email body part reference */
+export interface JmapBodyPart {
+  partId: string;
+  type: string;
+}
+
+/** JMAP Email address object */
+export interface JmapEmailAddress {
+  email: string;
+  name?: string;
+}
+
+/** JMAP Email object for creation */
+export interface JmapEmailObject {
+  mailboxIds: Record<string, boolean>;
+  keywords: Record<string, boolean>;
+  from: JmapEmailAddress[];
+  to: JmapEmailAddress[];
+  cc: JmapEmailAddress[];
+  bcc: JmapEmailAddress[];
+  subject: string;
+  textBody?: JmapBodyPart[];
+  htmlBody?: JmapBodyPart[];
+  bodyValues: Record<string, { value: string }>;
+  attachments?: JmapEmailAttachment[];
+}
+
+/**
+ * Validates a filename for safety
+ * @throws Error if filename is invalid or potentially dangerous
+ */
+export function validateFilename(filename: string): void {
+  if (!filename || typeof filename !== 'string') {
+    throw new Error('Filename is required and must be a string');
+  }
+
+  if (filename.length === 0 || filename.length > 255) {
+    throw new Error('Filename must be between 1 and 255 characters');
+  }
+
+  for (const pattern of DANGEROUS_FILENAME_PATTERNS) {
+    if (pattern.test(filename)) {
+      throw new Error(`Invalid filename: "${filename}" contains disallowed characters or patterns`);
+    }
+  }
+}
+
+/**
+ * Validates a MIME type format
+ * @throws Error if MIME type is invalid
+ */
+export function validateMimeType(mimeType: string): void {
+  if (!mimeType || typeof mimeType !== 'string') {
+    throw new Error('MIME type is required and must be a string');
+  }
+
+  if (!MIME_TYPE_REGEX.test(mimeType)) {
+    throw new Error(`Invalid MIME type format: "${mimeType}". Expected format: type/subtype (e.g., "application/pdf")`);
+  }
+}
+
+/**
+ * Decodes base64 content to Uint8Array with validation
+ * @throws Error if content is not valid base64
+ */
+export function decodeBase64(content: string): Uint8Array {
+  if (!content || typeof content !== 'string') {
+    throw new Error('Content is required and must be a string');
+  }
+
+  let binaryString: string;
+  try {
+    binaryString = atob(content);
+  } catch (e) {
+    throw new Error('Invalid base64 content. Ensure the attachment is properly base64-encoded.');
+  }
+
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+
+  return bytes;
 }
 
 export class JmapClient {
@@ -119,12 +231,11 @@ export class JmapClient {
       throw new Error('Upload capability not available in session');
     }
 
-    // Decode base64 content to binary
-    const binaryString = atob(content);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
+    // Validate MIME type
+    validateMimeType(mimeType);
+
+    // Decode and validate base64 content
+    const bytes = decodeBase64(content);
 
     if (bytes.length > MAX_UPLOAD_SIZE) {
       throw new Error(
@@ -161,6 +272,48 @@ export class JmapClient {
       type: result.type,
       size: result.size
     };
+  }
+
+  /**
+   * Validates and uploads multiple attachments in parallel
+   * @returns Array of uploaded attachment metadata
+   */
+  private async uploadAttachments(attachments?: AttachmentInput[]): Promise<UploadedAttachment[]> {
+    if (!attachments || attachments.length === 0) {
+      return [];
+    }
+
+    // Validate all attachments first before uploading
+    for (const attachment of attachments) {
+      validateFilename(attachment.filename);
+      validateMimeType(attachment.mimeType);
+    }
+
+    // Upload in parallel for better performance
+    const uploadPromises = attachments.map(async (attachment) => {
+      const uploaded = await this.uploadBlob(attachment.content, attachment.mimeType);
+      return {
+        blobId: uploaded.blobId,
+        type: attachment.mimeType,
+        name: attachment.filename,
+        size: uploaded.size
+      };
+    });
+
+    return Promise.all(uploadPromises);
+  }
+
+  /**
+   * Converts uploaded attachments to JMAP email attachment format
+   */
+  private toJmapAttachments(uploadedAttachments: UploadedAttachment[]): JmapEmailAttachment[] {
+    return uploadedAttachments.map(att => ({
+      blobId: att.blobId,
+      type: att.type,
+      name: att.name,
+      size: att.size,
+      disposition: 'attachment' as const
+    }));
   }
 
   async getMailboxes(): Promise<any[]> {
@@ -298,30 +451,13 @@ export class JmapClient {
       throw new Error('Either textBody or htmlBody must be provided');
     }
 
-    // Upload attachments first if any
-    const uploadedAttachments: Array<{
-      blobId: string;
-      type: string;
-      name: string;
-      size: number;
-    }> = [];
-
-    if (email.attachments && email.attachments.length > 0) {
-      for (const attachment of email.attachments) {
-        const uploaded = await this.uploadBlob(attachment.content, attachment.mimeType);
-        uploadedAttachments.push({
-          blobId: uploaded.blobId,
-          type: attachment.mimeType,
-          name: attachment.filename,
-          size: uploaded.size
-        });
-      }
-    }
+    // Upload attachments (validates and uploads in parallel)
+    const uploadedAttachments = await this.uploadAttachments(email.attachments);
 
     const draftsMailboxIds: Record<string, boolean> = {};
     draftsMailboxIds[draftsMailbox.id] = true;
 
-    const emailObject: Record<string, any> = {
+    const emailObject: JmapEmailObject = {
       mailboxIds: draftsMailboxIds,
       keywords: { $draft: true },
       from: [{ email: fromEmail }],
@@ -339,13 +475,7 @@ export class JmapClient {
 
     // Add attachments if any were uploaded
     if (uploadedAttachments.length > 0) {
-      emailObject.attachments = uploadedAttachments.map(att => ({
-        blobId: att.blobId,
-        type: att.type,
-        name: att.name,
-        size: att.size,
-        disposition: 'attachment'
-      }));
+      emailObject.attachments = this.toJmapAttachments(uploadedAttachments);
     }
 
     // Only Email/set - no EmailSubmission/set (that's what makes it a draft)
@@ -419,25 +549,8 @@ export class JmapClient {
       throw new Error('Either textBody or htmlBody must be provided');
     }
 
-    // Upload attachments first if any
-    const uploadedAttachments: Array<{
-      blobId: string;
-      type: string;
-      name: string;
-      size: number;
-    }> = [];
-
-    if (email.attachments && email.attachments.length > 0) {
-      for (const attachment of email.attachments) {
-        const uploaded = await this.uploadBlob(attachment.content, attachment.mimeType);
-        uploadedAttachments.push({
-          blobId: uploaded.blobId,
-          type: attachment.mimeType,
-          name: attachment.filename,
-          size: uploaded.size
-        });
-      }
-    }
+    // Upload attachments (validates and uploads in parallel)
+    const uploadedAttachments = await this.uploadAttachments(email.attachments);
 
     const initialMailboxIds: Record<string, boolean> = {};
     initialMailboxIds[initialMailboxId] = true;
@@ -445,7 +558,7 @@ export class JmapClient {
     const sentMailboxIds: Record<string, boolean> = {};
     sentMailboxIds[sentMailbox.id] = true;
 
-    const emailObject: Record<string, any> = {
+    const emailObject: JmapEmailObject = {
       mailboxIds: initialMailboxIds,
       keywords: { $draft: true },
       from: [{ email: fromEmail }],
@@ -463,13 +576,7 @@ export class JmapClient {
 
     // Add attachments if any were uploaded
     if (uploadedAttachments.length > 0) {
-      emailObject.attachments = uploadedAttachments.map(att => ({
-        blobId: att.blobId,
-        type: att.type,
-        name: att.name,
-        size: att.size,
-        disposition: 'attachment'
-      }));
+      emailObject.attachments = this.toJmapAttachments(uploadedAttachments);
     }
 
     const request: JmapRequest = {
