@@ -16,9 +16,10 @@ A remote MCP (Model Context Protocol) server for Fastmail email, contacts, and c
 ### Email
 - `list_mailboxes` - List all mailboxes
 - `list_emails` - List emails from a mailbox
-- `get_email` - Get a specific email by ID
-- `send_email` - Send an email (supports attachments)
-- `create_draft` - Create a draft email (supports attachments)
+- `get_email` - Get a specific email by ID (includes threading: messageId, inReplyTo, references, threadId)
+- `send_email` - Send an email (supports attachments and reply threading)
+- `create_draft` - Create a draft email (supports attachments and reply threading)
+- `reply_to_email` - **NEW:** Reply to an email with automatic threading and quoting (like Fastmail's reply button)
 - `search_emails` - Search emails
 - `get_recent_emails` - Get most recent emails
 - `mark_email_read` - Mark email as read/unread
@@ -63,6 +64,55 @@ Both `send_email` and `create_draft` support file attachments. Attachments are p
 - Filenames are validated to prevent path traversal attacks
 - MIME types must be in valid `type/subtype` format
 - Base64 content is validated before upload
+
+### Replying to Emails
+
+The `reply_to_email` tool provides a convenient way to reply to emails with proper threading and quoting, just like Fastmail's reply button:
+
+```json
+{
+  "emailId": "abc123",
+  "body": "Thanks for the information!",
+  "replyAll": false,
+  "sendImmediately": false
+}
+```
+
+**Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `emailId` | string | required | ID of the email to reply to |
+| `body` | string | required | Your reply message (plain text) |
+| `htmlBody` | string | optional | Your reply message (HTML) |
+| `replyAll` | boolean | `false` | Reply to all recipients (sender + CC) |
+| `sendImmediately` | boolean | `false` | Send immediately vs create draft |
+| `excludeQuote` | boolean | `false` | Skip quoting the original message |
+
+**What it handles automatically:**
+- **Recipients**: Uses `replyTo` or `from` address; `replyAll` includes CC recipients
+- **Subject**: Adds "Re:" prefix if not already present
+- **Threading**: Sets `inReplyTo` and `references` headers for proper threading
+- **Quoting**: Formats quoted original in Fastmail style with attribution line
+
+### Email Threading (Low-Level)
+
+For manual control over threading, `send_email` and `create_draft` support `inReplyTo` and `references` parameters, and `get_email` returns threading properties:
+
+```json
+{
+  "to": ["sender@example.com"],
+  "subject": "Re: Original subject",
+  "textBody": "My reply...",
+  "inReplyTo": ["<original-message-id@example.com>"],
+  "references": ["<earlier-message@example.com>", "<original-message-id@example.com>"]
+}
+```
+
+**Threading properties returned by `get_email`:**
+- `messageId` - The email's Message-ID header
+- `inReplyTo` - Message-IDs this email replies to
+- `references` - Full thread chain of Message-IDs
+- `threadId` - JMAP's internal thread identifier
 
 ### Identity
 - `list_identities` - List sending identities
