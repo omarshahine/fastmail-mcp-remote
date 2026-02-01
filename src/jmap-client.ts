@@ -710,6 +710,70 @@ export class JmapClient {
     }
   }
 
+  async flagEmail(emailId: string, flagged: boolean = true): Promise<void> {
+    const session = await this.getSession();
+
+    // Use JMAP PatchObject path syntax to update keyword without fetching first
+    const request: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/set', {
+          accountId: session.accountId,
+          update: {
+            [emailId]: {
+              ['keywords/$flagged']: flagged ? true : null
+            }
+          }
+        }, 'flagEmail']
+      ]
+    };
+
+    const response = await this.makeRequest(request);
+    const result = response.methodResponses[0][1];
+
+    if (result.notUpdated && result.notUpdated[emailId]) {
+      const error = result.notUpdated[emailId];
+      if (error.type === 'notFound') {
+        throw new Error(`Email with ID '${emailId}' not found`);
+      }
+      throw new Error(`Failed to ${flagged ? 'flag' : 'unflag'} email: ${error.description || error.type}`);
+    }
+  }
+
+  async bulkFlag(emailIds: string[], flagged: boolean = true): Promise<{ processed: number; failed: Array<{ id: string; error: string }> }> {
+    const session = await this.getSession();
+
+    // Use JMAP PatchObject path syntax to update keywords in single request
+    const updates: Record<string, any> = {};
+    emailIds.forEach(id => {
+      updates[id] = { ['keywords/$flagged']: flagged ? true : null };
+    });
+
+    const request: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/set', {
+          accountId: session.accountId,
+          update: updates
+        }, 'bulkFlag']
+      ]
+    };
+
+    const response = await this.makeRequest(request);
+    const result = response.methodResponses[0][1];
+
+    // Extract all failures from notUpdated response
+    const failed: Array<{ id: string; error: string }> = [];
+    if (result.notUpdated) {
+      for (const [id, error] of Object.entries(result.notUpdated as Record<string, any>)) {
+        failed.push({ id, error: error.type || 'unknown' });
+      }
+    }
+
+    const processedCount = emailIds.length - failed.length;
+    return { processed: processedCount, failed };
+  }
+
   async deleteEmail(emailId: string): Promise<void> {
     const session = await this.getSession();
 

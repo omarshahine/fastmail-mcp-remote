@@ -215,6 +215,22 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 		);
 
 		this.server.tool(
+			"flag_email",
+			"Flag or unflag an email (starred/important marker)",
+			{
+				emailId: z.string().describe("ID of the email to flag/unflag"),
+				flagged: z.boolean().default(true).describe("true to flag, false to unflag"),
+			},
+			async ({ emailId, flagged }) => {
+				const client = this.getJmapClient();
+				await client.flagEmail(emailId, flagged);
+				return {
+					content: [{ text: `Email ${flagged ? 'flagged' : 'unflagged'} successfully`, type: "text" }],
+				};
+			},
+		);
+
+		this.server.tool(
 			"delete_email",
 			"Delete an email (move to trash)",
 			{
@@ -452,6 +468,28 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 			},
 		);
 
+		this.server.tool(
+			"bulk_flag",
+			"Flag or unflag multiple emails",
+			{
+				emailIds: z.array(z.string()).describe("Array of email IDs to flag/unflag"),
+				flagged: z.boolean().default(true).describe("true to flag, false to unflag"),
+			},
+			async ({ emailIds, flagged }) => {
+				const client = this.getJmapClient();
+				const result = await client.bulkFlag(emailIds, flagged);
+				const action = flagged ? 'flagged' : 'unflagged';
+				let message = `${result.processed} email(s) ${action} successfully`;
+				if (result.failed.length > 0) {
+					const failureDetails = result.failed.map(f => `${f.id} (${f.error})`).join(', ');
+					message += `. ${result.failed.length} failed: ${failureDetails}`;
+				}
+				return {
+					content: [{ text: message, type: "text" }],
+				};
+			},
+		);
+
 		// =====================
 		// IDENTITY TOOLS
 		// =====================
@@ -616,9 +654,9 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 						available: true,
 						functions: [
 							'list_mailboxes', 'list_emails', 'get_email', 'send_email', 'create_draft',
-							'search_emails', 'get_recent_emails', 'mark_email_read', 'delete_email', 'move_email',
+							'search_emails', 'get_recent_emails', 'mark_email_read', 'flag_email', 'delete_email', 'move_email',
 							'get_email_attachments', 'download_attachment', 'advanced_search', 'get_thread',
-							'get_mailbox_stats', 'get_account_summary', 'bulk_mark_read', 'bulk_move', 'bulk_delete'
+							'get_mailbox_stats', 'get_account_summary', 'bulk_mark_read', 'bulk_move', 'bulk_delete', 'bulk_flag'
 						]
 					},
 					identity: {
