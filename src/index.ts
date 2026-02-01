@@ -198,10 +198,16 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 
 					// Determine recipients
 					// Reply goes to: replyTo if present, otherwise from
-					const replyToAddrs = original.replyTo || original.from;
+					const replyToAddrs = original.replyTo || original.from || [];
+					if (replyToAddrs.length === 0) {
+						return {
+							content: [{ text: `Error: Cannot reply - email has no sender address`, type: "text" }],
+						};
+					}
 					const toRecipients = replyToAddrs.map((addr: any) => addr.email);
+					const toRecipientsLower = toRecipients.map((e: string) => e.toLowerCase());
 
-					// For reply-all, include CC recipients (excluding self)
+					// For reply-all, include CC recipients (excluding self and To recipients)
 					let ccRecipients: string[] = [];
 					if (replyAll) {
 						const userEmail = await client.getUserEmail();
@@ -213,7 +219,7 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 							.map((addr: any) => addr.email)
 							.filter((email: string) =>
 								email.toLowerCase() !== userEmail.toLowerCase() &&
-								!toRecipients.includes(email)
+								!toRecipientsLower.includes(email.toLowerCase())
 							);
 					}
 
