@@ -173,6 +173,162 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 		);
 
 		this.server.tool(
+			"reply_to_email",
+			"Reply to an email with proper threading and quoting, just like Fastmail's reply button. Automatically handles recipients, subject, threading headers, and quotes the original message.",
+			{
+				emailId: z.string().describe("ID of the email to reply to"),
+				body: z.string().describe("Your reply message (plain text)"),
+				htmlBody: z.string().optional().describe("Your reply message (HTML, optional). If not provided, plain text body is used."),
+				replyAll: z.boolean().default(false).describe("If true, reply to all recipients (sender + CC). Default is reply to sender only."),
+				sendImmediately: z.boolean().default(false).describe("If true, send the reply immediately. If false (default), create a draft."),
+				excludeQuote: z.boolean().default(false).describe("If true, don't include quoted original message. Default includes quote."),
+			},
+			async ({ emailId, body, htmlBody, replyAll, sendImmediately, excludeQuote }) => {
+				try {
+					const client = this.getJmapClient();
+
+					// Fetch the original email with all needed properties
+					const original = await client.getEmailById(emailId);
+
+					if (!original) {
+						return {
+							content: [{ text: `Error: Email with ID '${emailId}' not found`, type: "text" }],
+						};
+					}
+
+					// Determine recipients
+					// Reply goes to: replyTo if present, otherwise from
+					const replyToAddrs = original.replyTo || original.from;
+					const toRecipients = replyToAddrs.map((addr: any) => addr.email);
+
+					// For reply-all, include CC recipients (excluding self)
+					let ccRecipients: string[] = [];
+					if (replyAll) {
+						const userEmail = await client.getUserEmail();
+						const allOriginalRecipients = [
+							...(original.to || []),
+							...(original.cc || [])
+						];
+						ccRecipients = allOriginalRecipients
+							.map((addr: any) => addr.email)
+							.filter((email: string) =>
+								email.toLowerCase() !== userEmail.toLowerCase() &&
+								!toRecipients.includes(email)
+							);
+					}
+
+					// Build subject with Re: prefix if not already present
+					let subject = original.subject || '';
+					if (!subject.match(/^Re:/i)) {
+						subject = `Re: ${subject}`;
+					}
+
+					// Build threading headers
+					const inReplyTo = original.messageId || [];
+					const references = [
+						...(original.references || []),
+						...(original.messageId || [])
+					];
+
+					// Format the quoted original message
+					let quotedText = '';
+					let quotedHtml = '';
+
+					if (!excludeQuote) {
+						// Get original sender info for attribution
+						const originalFrom = original.from?.[0];
+						const senderName = originalFrom?.name || originalFrom?.email || 'Unknown';
+						const senderEmail = originalFrom?.email || '';
+
+						// Format date like Fastmail: "Feb 1, 2026, at 10:51 AM"
+						const receivedDate = new Date(original.receivedAt);
+						const dateStr = receivedDate.toLocaleDateString('en-US', {
+							month: 'short',
+							day: 'numeric',
+							year: 'numeric'
+						});
+						const timeStr = receivedDate.toLocaleTimeString('en-US', {
+							hour: 'numeric',
+							minute: '2-digit',
+							hour12: true
+						});
+
+						// Get original body content
+						const bodyValues = original.bodyValues as Record<string, { value: string }> | undefined;
+						const originalTextBody = bodyValues?.text?.value ||
+							bodyValues?.['1']?.value ||
+							bodyValues?.['1.1']?.value ||
+							(bodyValues ? Object.values(bodyValues)[0]?.value : '') || '';
+
+						// Plain text quote format (Fastmail style)
+						const quotedLines = originalTextBody.split('\n').map((line: string) => `> ${line}`).join('\n');
+						quotedText = `\n\nOn ${dateStr}, at ${timeStr}, ${senderName} <${senderEmail}> wrote:\n\n${quotedLines}`;
+
+						// HTML quote format (Fastmail style)
+						const originalHtmlBody = bodyValues?.html?.value ||
+							bodyValues?.['1.2']?.value || '';
+
+						const quotedContent = originalHtmlBody ||
+							`<pre style="white-space: pre-wrap; font-family: inherit;">${originalTextBody.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+
+						quotedHtml = `
+<br><br>
+<div style="color: #666;">On ${dateStr}, at ${timeStr}, ${senderName} &lt;${senderEmail}&gt; wrote:</div>
+<blockquote type="cite" style="margin: 10px 0 0 0; padding: 0 0 0 10px; border-left: 2px solid #ccc;">
+${quotedContent}
+</blockquote>`;
+					}
+
+					// Compose final body
+					const finalTextBody = body + quotedText;
+					const finalHtmlBody = htmlBody
+						? `<div>${htmlBody}</div>${quotedHtml}`
+						: `<div style="white-space: pre-wrap;">${body.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>${quotedHtml}`;
+
+					// Send or create draft
+					if (sendImmediately) {
+						const submissionId = await client.sendEmail({
+							to: toRecipients,
+							cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+							subject,
+							textBody: finalTextBody,
+							htmlBody: finalHtmlBody,
+							inReplyTo,
+							references,
+						});
+						return {
+							content: [{
+								text: `Reply sent successfully. Submission ID: ${submissionId}\nTo: ${toRecipients.join(', ')}${ccRecipients.length > 0 ? `\nCC: ${ccRecipients.join(', ')}` : ''}`,
+								type: "text"
+							}],
+						};
+					} else {
+						const draftId = await client.createDraft({
+							to: toRecipients,
+							cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+							subject,
+							textBody: finalTextBody,
+							htmlBody: finalHtmlBody,
+							inReplyTo,
+							references,
+						});
+						return {
+							content: [{
+								text: `Reply draft created successfully. Draft ID: ${draftId}\nTo: ${toRecipients.join(', ')}${ccRecipients.length > 0 ? `\nCC: ${ccRecipients.join(', ')}` : ''}\nSubject: ${subject}`,
+								type: "text"
+							}],
+						};
+					}
+				} catch (error) {
+					const errorMessage = error instanceof Error ? error.message : String(error);
+					return {
+						content: [{ text: `Failed to create reply: ${errorMessage}`, type: "text" }],
+					};
+				}
+			},
+		);
+
+		this.server.tool(
 			"search_emails",
 			"Search emails by subject or content",
 			{
