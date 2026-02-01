@@ -33,6 +33,8 @@ A remote MCP (Model Context Protocol) server for Fastmail email, contacts, and c
 - `bulk_mark_read` - Mark multiple emails read/unread
 - `bulk_move` - Move multiple emails
 - `bulk_delete` - Delete multiple emails
+- `flag_email` - Flag or unflag an email
+- `bulk_flag` - Flag or unflag multiple emails
 
 ### Sending Emails with Attachments
 
