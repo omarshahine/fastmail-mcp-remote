@@ -104,6 +104,9 @@ export interface JmapEmailObject {
   htmlBody?: JmapBodyPart[];
   bodyValues: Record<string, { value: string }>;
   attachments?: JmapEmailAttachment[];
+  messageId?: string[];
+  inReplyTo?: string[];
+  references?: string[];
 }
 
 /**
@@ -365,7 +368,7 @@ export class JmapClient {
         ['Email/get', {
           accountId: session.accountId,
           ids: [id],
-          properties: ['id', 'subject', 'from', 'to', 'cc', 'bcc', 'receivedAt', 'textBody', 'htmlBody', 'attachments', 'bodyValues'],
+          properties: ['id', 'subject', 'from', 'to', 'cc', 'bcc', 'receivedAt', 'textBody', 'htmlBody', 'attachments', 'bodyValues', 'messageId', 'inReplyTo', 'references', 'threadId'],
           bodyProperties: ['partId', 'blobId', 'type', 'size'],
           fetchTextBodyValues: true,
           fetchHTMLBodyValues: true,
@@ -418,6 +421,8 @@ export class JmapClient {
     htmlBody?: string;
     from?: string;
     attachments?: AttachmentInput[];
+    inReplyTo?: string[];
+    references?: string[];
   }): Promise<string> {
     const session = await this.getSession();
 
@@ -470,7 +475,9 @@ export class JmapClient {
       bodyValues: {
         ...(email.textBody && { text: { value: email.textBody } }),
         ...(email.htmlBody && { html: { value: email.htmlBody } })
-      }
+      },
+      ...(email.inReplyTo && { inReplyTo: email.inReplyTo }),
+      ...(email.references && { references: email.references }),
     };
 
     // Add attachments if any were uploaded
@@ -510,6 +517,8 @@ export class JmapClient {
     from?: string;
     mailboxId?: string;
     attachments?: AttachmentInput[];
+    inReplyTo?: string[];
+    references?: string[];
   }): Promise<string> {
     const session = await this.getSession();
 
@@ -571,7 +580,9 @@ export class JmapClient {
       bodyValues: {
         ...(email.textBody && { text: { value: email.textBody } }),
         ...(email.htmlBody && { html: { value: email.htmlBody } })
-      }
+      },
+      ...(email.inReplyTo && { inReplyTo: email.inReplyTo }),
+      ...(email.references && { references: email.references }),
     };
 
     // Add attachments if any were uploaded

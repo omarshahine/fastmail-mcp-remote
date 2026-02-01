@@ -88,7 +88,7 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 
 		this.server.tool(
 			"send_email",
-			"Send an email. Supports file attachments via base64-encoded content.",
+			"Send an email. Supports file attachments via base64-encoded content. For replies, set inReplyTo and references from the original email.",
 			{
 				to: z.array(z.string()).describe("Recipient email addresses"),
 				cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
@@ -102,8 +102,10 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 					mimeType: z.string().describe("MIME type (e.g., 'application/pdf', 'image/png')"),
 					content: z.string().describe("Base64-encoded file content"),
 				})).optional().describe("File attachments (optional). Each attachment needs filename, mimeType, and base64 content. Max 25MB per file."),
+				inReplyTo: z.array(z.string()).optional().describe("Message-ID(s) this email is replying to. Get from original email's messageId field."),
+				references: z.array(z.string()).optional().describe("Message-ID chain for threading. Combine original email's references with its messageId."),
 			},
-			async ({ to, cc, bcc, from, subject, textBody, htmlBody, attachments }) => {
+			async ({ to, cc, bcc, from, subject, textBody, htmlBody, attachments, inReplyTo, references }) => {
 				if (!textBody && !htmlBody) {
 					return {
 						content: [{ text: "Error: Either textBody or htmlBody is required", type: "text" }],
@@ -111,11 +113,12 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				}
 				try {
 					const client = this.getJmapClient();
-					const submissionId = await client.sendEmail({ to, cc, bcc, from, subject, textBody, htmlBody, attachments });
+					const submissionId = await client.sendEmail({ to, cc, bcc, from, subject, textBody, htmlBody, attachments, inReplyTo, references });
 					const attachmentCount = attachments?.length || 0;
 					const attachmentNote = attachmentCount > 0 ? ` with ${attachmentCount} attachment(s)` : '';
+					const replyNote = inReplyTo ? ' (reply)' : '';
 					return {
-						content: [{ text: `Email sent successfully${attachmentNote}. Submission ID: ${submissionId}`, type: "text" }],
+						content: [{ text: `Email sent successfully${attachmentNote}${replyNote}. Submission ID: ${submissionId}`, type: "text" }],
 					};
 				} catch (error) {
 					const errorMessage = error instanceof Error ? error.message : String(error);
@@ -128,7 +131,7 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 
 		this.server.tool(
 			"create_draft",
-			"Create an email draft in the Drafts folder without sending it. Supports file attachments via base64-encoded content.",
+			"Create an email draft in the Drafts folder without sending it. Supports file attachments via base64-encoded content. For reply drafts, set inReplyTo and references from the original email.",
 			{
 				to: z.array(z.string()).describe("Recipient email addresses"),
 				cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
@@ -142,8 +145,10 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 					mimeType: z.string().describe("MIME type (e.g., 'application/pdf', 'image/png')"),
 					content: z.string().describe("Base64-encoded file content"),
 				})).optional().describe("File attachments (optional). Each attachment needs filename, mimeType, and base64 content. Max 25MB per file."),
+				inReplyTo: z.array(z.string()).optional().describe("Message-ID(s) this email is replying to. Get from original email's messageId field."),
+				references: z.array(z.string()).optional().describe("Message-ID chain for threading. Combine original email's references with its messageId."),
 			},
-			async ({ to, cc, bcc, from, subject, textBody, htmlBody, attachments }) => {
+			async ({ to, cc, bcc, from, subject, textBody, htmlBody, attachments, inReplyTo, references }) => {
 				if (!textBody && !htmlBody) {
 					return {
 						content: [{ text: "Error: Either textBody or htmlBody is required", type: "text" }],
@@ -151,11 +156,12 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				}
 				try {
 					const client = this.getJmapClient();
-					const draftId = await client.createDraft({ to, cc, bcc, from, subject, textBody, htmlBody, attachments });
+					const draftId = await client.createDraft({ to, cc, bcc, from, subject, textBody, htmlBody, attachments, inReplyTo, references });
 					const attachmentCount = attachments?.length || 0;
 					const attachmentNote = attachmentCount > 0 ? ` with ${attachmentCount} attachment(s)` : '';
+					const replyNote = inReplyTo ? ' (reply)' : '';
 					return {
-						content: [{ text: `Draft created successfully${attachmentNote} in Drafts folder. Draft ID: ${draftId}`, type: "text" }],
+						content: [{ text: `Draft created successfully${attachmentNote}${replyNote} in Drafts folder. Draft ID: ${draftId}`, type: "text" }],
 					};
 				} catch (error) {
 					const errorMessage = error instanceof Error ? error.message : String(error);
