@@ -88,7 +88,7 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 
 		this.server.tool(
 			"send_email",
-			"Send an email. Supports file attachments via base64-encoded content.",
+			"Send an email. Supports file attachments via base64-encoded content. For replies, set inReplyTo and references from the original email.",
 			{
 				to: z.array(z.string()).describe("Recipient email addresses"),
 				cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
@@ -102,8 +102,10 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 					mimeType: z.string().describe("MIME type (e.g., 'application/pdf', 'image/png')"),
 					content: z.string().describe("Base64-encoded file content"),
 				})).optional().describe("File attachments (optional). Each attachment needs filename, mimeType, and base64 content. Max 25MB per file."),
+				inReplyTo: z.array(z.string()).optional().describe("Message-ID(s) this email is replying to. Get from original email's messageId field."),
+				references: z.array(z.string()).optional().describe("Message-ID chain for threading. Combine original email's references with its messageId."),
 			},
-			async ({ to, cc, bcc, from, subject, textBody, htmlBody, attachments }) => {
+			async ({ to, cc, bcc, from, subject, textBody, htmlBody, attachments, inReplyTo, references }) => {
 				if (!textBody && !htmlBody) {
 					return {
 						content: [{ text: "Error: Either textBody or htmlBody is required", type: "text" }],
@@ -111,11 +113,12 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				}
 				try {
 					const client = this.getJmapClient();
-					const submissionId = await client.sendEmail({ to, cc, bcc, from, subject, textBody, htmlBody, attachments });
+					const submissionId = await client.sendEmail({ to, cc, bcc, from, subject, textBody, htmlBody, attachments, inReplyTo, references });
 					const attachmentCount = attachments?.length || 0;
 					const attachmentNote = attachmentCount > 0 ? ` with ${attachmentCount} attachment(s)` : '';
+					const replyNote = inReplyTo ? ' (reply)' : '';
 					return {
-						content: [{ text: `Email sent successfully${attachmentNote}. Submission ID: ${submissionId}`, type: "text" }],
+						content: [{ text: `Email sent successfully${attachmentNote}${replyNote}. Submission ID: ${submissionId}`, type: "text" }],
 					};
 				} catch (error) {
 					const errorMessage = error instanceof Error ? error.message : String(error);
@@ -128,7 +131,7 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 
 		this.server.tool(
 			"create_draft",
-			"Create an email draft in the Drafts folder without sending it. Supports file attachments via base64-encoded content.",
+			"Create an email draft in the Drafts folder without sending it. Supports file attachments via base64-encoded content. For reply drafts, set inReplyTo and references from the original email.",
 			{
 				to: z.array(z.string()).describe("Recipient email addresses"),
 				cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
@@ -142,8 +145,10 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 					mimeType: z.string().describe("MIME type (e.g., 'application/pdf', 'image/png')"),
 					content: z.string().describe("Base64-encoded file content"),
 				})).optional().describe("File attachments (optional). Each attachment needs filename, mimeType, and base64 content. Max 25MB per file."),
+				inReplyTo: z.array(z.string()).optional().describe("Message-ID(s) this email is replying to. Get from original email's messageId field."),
+				references: z.array(z.string()).optional().describe("Message-ID chain for threading. Combine original email's references with its messageId."),
 			},
-			async ({ to, cc, bcc, from, subject, textBody, htmlBody, attachments }) => {
+			async ({ to, cc, bcc, from, subject, textBody, htmlBody, attachments, inReplyTo, references }) => {
 				if (!textBody && !htmlBody) {
 					return {
 						content: [{ text: "Error: Either textBody or htmlBody is required", type: "text" }],
@@ -151,16 +156,179 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				}
 				try {
 					const client = this.getJmapClient();
-					const draftId = await client.createDraft({ to, cc, bcc, from, subject, textBody, htmlBody, attachments });
+					const draftId = await client.createDraft({ to, cc, bcc, from, subject, textBody, htmlBody, attachments, inReplyTo, references });
 					const attachmentCount = attachments?.length || 0;
 					const attachmentNote = attachmentCount > 0 ? ` with ${attachmentCount} attachment(s)` : '';
+					const replyNote = inReplyTo ? ' (reply)' : '';
 					return {
-						content: [{ text: `Draft created successfully${attachmentNote} in Drafts folder. Draft ID: ${draftId}`, type: "text" }],
+						content: [{ text: `Draft created successfully${attachmentNote}${replyNote} in Drafts folder. Draft ID: ${draftId}`, type: "text" }],
 					};
 				} catch (error) {
 					const errorMessage = error instanceof Error ? error.message : String(error);
 					return {
 						content: [{ text: `Failed to create draft: ${errorMessage}`, type: "text" }],
+					};
+				}
+			},
+		);
+
+		this.server.tool(
+			"reply_to_email",
+			"Reply to an email with proper threading and quoting, just like Fastmail's reply button. Automatically handles recipients, subject, threading headers, and quotes the original message.",
+			{
+				emailId: z.string().describe("ID of the email to reply to"),
+				body: z.string().describe("Your reply message (plain text)"),
+				htmlBody: z.string().optional().describe("Your reply message (HTML, optional). If not provided, plain text body is used."),
+				replyAll: z.boolean().default(false).describe("If true, reply to all recipients (sender + CC). Default is reply to sender only."),
+				sendImmediately: z.boolean().default(false).describe("If true, send the reply immediately. If false (default), create a draft."),
+				excludeQuote: z.boolean().default(false).describe("If true, don't include quoted original message. Default includes quote."),
+			},
+			async ({ emailId, body, htmlBody, replyAll, sendImmediately, excludeQuote }) => {
+				try {
+					const client = this.getJmapClient();
+
+					// Fetch the original email with all needed properties
+					const original = await client.getEmailById(emailId);
+
+					if (!original) {
+						return {
+							content: [{ text: `Error: Email with ID '${emailId}' not found`, type: "text" }],
+						};
+					}
+
+					// Determine recipients
+					// Reply goes to: replyTo if present, otherwise from
+					const replyToAddrs = original.replyTo || original.from || [];
+					if (replyToAddrs.length === 0) {
+						return {
+							content: [{ text: `Error: Cannot reply - email has no sender address`, type: "text" }],
+						};
+					}
+					const toRecipients = replyToAddrs.map((addr: any) => addr.email);
+					const toRecipientsLower = toRecipients.map((e: string) => e.toLowerCase());
+
+					// For reply-all, include CC recipients (excluding self and To recipients)
+					let ccRecipients: string[] = [];
+					if (replyAll) {
+						const userEmail = await client.getUserEmail();
+						const allOriginalRecipients = [
+							...(original.to || []),
+							...(original.cc || [])
+						];
+						ccRecipients = allOriginalRecipients
+							.map((addr: any) => addr.email)
+							.filter((email: string) =>
+								email.toLowerCase() !== userEmail.toLowerCase() &&
+								!toRecipientsLower.includes(email.toLowerCase())
+							);
+					}
+
+					// Build subject with Re: prefix if not already present
+					let subject = original.subject || '';
+					if (!subject.match(/^Re:/i)) {
+						subject = `Re: ${subject}`;
+					}
+
+					// Build threading headers
+					const inReplyTo = original.messageId || [];
+					const references = [
+						...(original.references || []),
+						...(original.messageId || [])
+					];
+
+					// Format the quoted original message
+					let quotedText = '';
+					let quotedHtml = '';
+
+					if (!excludeQuote) {
+						// Get original sender info for attribution
+						const originalFrom = original.from?.[0];
+						const senderName = originalFrom?.name || originalFrom?.email || 'Unknown';
+						const senderEmail = originalFrom?.email || '';
+
+						// Format date like Fastmail: "Feb 1, 2026, at 10:51 AM"
+						const receivedDate = new Date(original.receivedAt);
+						const dateStr = receivedDate.toLocaleDateString('en-US', {
+							month: 'short',
+							day: 'numeric',
+							year: 'numeric'
+						});
+						const timeStr = receivedDate.toLocaleTimeString('en-US', {
+							hour: 'numeric',
+							minute: '2-digit',
+							hour12: true
+						});
+
+						// Get original body content
+						const bodyValues = original.bodyValues as Record<string, { value: string }> | undefined;
+						const originalTextBody = bodyValues?.text?.value ||
+							bodyValues?.['1']?.value ||
+							bodyValues?.['1.1']?.value ||
+							(bodyValues ? Object.values(bodyValues)[0]?.value : '') || '';
+
+						// Plain text quote format (Fastmail style)
+						const quotedLines = originalTextBody.split('\n').map((line: string) => `> ${line}`).join('\n');
+						quotedText = `\n\nOn ${dateStr}, at ${timeStr}, ${senderName} <${senderEmail}> wrote:\n\n${quotedLines}`;
+
+						// HTML quote format (Fastmail style)
+						const originalHtmlBody = bodyValues?.html?.value ||
+							bodyValues?.['1.2']?.value || '';
+
+						const quotedContent = originalHtmlBody ||
+							`<pre style="white-space: pre-wrap; font-family: inherit;">${originalTextBody.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
+
+						quotedHtml = `
+<br><br>
+<div style="color: #666;">On ${dateStr}, at ${timeStr}, ${senderName} &lt;${senderEmail}&gt; wrote:</div>
+<blockquote type="cite" style="margin: 10px 0 0 0; padding: 0 0 0 10px; border-left: 2px solid #ccc;">
+${quotedContent}
+</blockquote>`;
+					}
+
+					// Compose final body
+					const finalTextBody = body + quotedText;
+					const finalHtmlBody = htmlBody
+						? `<div>${htmlBody}</div>${quotedHtml}`
+						: `<div style="white-space: pre-wrap;">${body.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>${quotedHtml}`;
+
+					// Send or create draft
+					if (sendImmediately) {
+						const submissionId = await client.sendEmail({
+							to: toRecipients,
+							cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+							subject,
+							textBody: finalTextBody,
+							htmlBody: finalHtmlBody,
+							inReplyTo,
+							references,
+						});
+						return {
+							content: [{
+								text: `Reply sent successfully. Submission ID: ${submissionId}\nTo: ${toRecipients.join(', ')}${ccRecipients.length > 0 ? `\nCC: ${ccRecipients.join(', ')}` : ''}`,
+								type: "text"
+							}],
+						};
+					} else {
+						const draftId = await client.createDraft({
+							to: toRecipients,
+							cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+							subject,
+							textBody: finalTextBody,
+							htmlBody: finalHtmlBody,
+							inReplyTo,
+							references,
+						});
+						return {
+							content: [{
+								text: `Reply draft created successfully. Draft ID: ${draftId}\nTo: ${toRecipients.join(', ')}${ccRecipients.length > 0 ? `\nCC: ${ccRecipients.join(', ')}` : ''}\nSubject: ${subject}`,
+								type: "text"
+							}],
+						};
+					}
+				} catch (error) {
+					const errorMessage = error instanceof Error ? error.message : String(error);
+					return {
+						content: [{ text: `Failed to create reply: ${errorMessage}`, type: "text" }],
 					};
 				}
 			},
