@@ -1,6 +1,6 @@
 {
 	"name": "fastmail-mcp-remote",
-	"version": "1.5.0",
+	"version": "1.6.0",
 	"description": "Remote MCP server for Fastmail on Cloudflare Workers with GitHub OAuth",
 	"private": true,
 	"scripts": {
@@ -16,6 +16,7 @@
 		"agents": "^0.3.6",
 		"hono": "^4.11.3",
 		"just-pick": "^4.2.0",
+		"marked": "^17.0.1",
 		"zod": "^4.2.1"
 	},
 	"devDependencies": {
