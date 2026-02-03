@@ -267,20 +267,19 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 							hour12: true
 						});
 
-						// Get original body content
+						// Get original body content using partId from body structure
 						const bodyValues = original.bodyValues as Record<string, { value: string }> | undefined;
-						const originalTextBody = bodyValues?.text?.value ||
-							bodyValues?.['1']?.value ||
-							bodyValues?.['1.1']?.value ||
+						const textPartId = original.textBody?.[0]?.partId;
+						const htmlPartId = original.htmlBody?.[0]?.partId;
+						const originalTextBody = (textPartId && bodyValues?.[textPartId]?.value) ||
 							(bodyValues ? Object.values(bodyValues)[0]?.value : '') || '';
 
 						// Plain text quote format (Fastmail style)
 						const quotedLines = originalTextBody.split('\n').map((line: string) => `> ${line}`).join('\n');
 						quotedText = `\n\nOn ${dateStr}, at ${timeStr}, ${senderName} <${senderEmail}> wrote:\n\n${quotedLines}`;
 
-						// HTML quote format (Fastmail style)
-						const originalHtmlBody = bodyValues?.html?.value ||
-							bodyValues?.['1.2']?.value || '';
+						// HTML quote format (Fastmail style) - use partId from htmlBody array
+						const originalHtmlBody = (htmlPartId && bodyValues?.[htmlPartId]?.value) || '';
 
 						const quotedContent = originalHtmlBody ||
 							`<pre style="white-space: pre-wrap; font-family: inherit;">${originalTextBody.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`;
