@@ -37,6 +37,27 @@ A remote MCP (Model Context Protocol) server for Fastmail email, contacts, and c
 - `flag_email` - Flag or unflag an email
 - `bulk_flag` - Flag or unflag multiple emails
 
+### Email Body Formats
+
+The `send_email`, `create_draft`, and `reply_to_email` tools support three body formats:
+
+| Parameter | Format | Description |
+|-----------|--------|-------------|
+| `textBody` | Plain text | Simple text content |
+| `htmlBody` | HTML | Rich HTML content |
+| `markdownBody` | Markdown | GitHub-flavored Markdown (auto-converted to HTML) |
+
+At least one body format is required. If `markdownBody` is provided, it takes precedence over `htmlBody`.
+
+**Example with Markdown:**
+```json
+{
+  "to": ["recipient@example.com"],
+  "subject": "Meeting notes",
+  "markdownBody": "# Meeting Summary\n\n- Point 1\n- Point 2\n\n**Action items:**\n1. Review proposal\n2. Send feedback"
+}
+```
+
 ### Sending Emails with Attachments
 
 Both `send_email` and `create_draft` support file attachments. Attachments are passed as an array of objects with base64-encoded content:
@@ -84,6 +105,7 @@ The `reply_to_email` tool provides a convenient way to reply to emails with prop
 | `emailId` | string | required | ID of the email to reply to |
 | `body` | string | required | Your reply message (plain text) |
 | `htmlBody` | string | optional | Your reply message (HTML) |
+| `markdownBody` | string | optional | Your reply message (Markdown, auto-converted to HTML) |
 | `replyAll` | boolean | `false` | Reply to all recipients (sender + CC) |
 | `sendImmediately` | boolean | `false` | Send immediately vs create draft |
 | `excludeQuote` | boolean | `false` | Skip quoting the original message |

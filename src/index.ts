@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import { Hono } from "hono";
 import { z } from "zod";
+import { marked } from "marked";
 import { FastmailAuth } from "./fastmail-auth";
 import { JmapClient } from "./jmap-client";
 import { ContactsCalendarClient } from "./contacts-calendar";
@@ -97,6 +98,7 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				subject: z.string().describe("Email subject"),
 				textBody: z.string().optional().describe("Plain text body (optional)"),
 				htmlBody: z.string().optional().describe("HTML body (optional)"),
+				markdownBody: z.string().optional().describe("Markdown body (optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
 				attachments: z.array(z.object({
 					filename: z.string().describe("Filename for the attachment (e.g., 'report.pdf')"),
 					mimeType: z.string().describe("MIME type (e.g., 'application/pdf', 'image/png')"),
@@ -105,15 +107,17 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				inReplyTo: z.array(z.string()).optional().describe("Message-ID(s) this email is replying to. Get from original email's messageId field."),
 				references: z.array(z.string()).optional().describe("Message-ID chain for threading. Combine original email's references with its messageId."),
 			},
-			async ({ to, cc, bcc, from, subject, textBody, htmlBody, attachments, inReplyTo, references }) => {
-				if (!textBody && !htmlBody) {
+			async ({ to, cc, bcc, from, subject, textBody, htmlBody, markdownBody, attachments, inReplyTo, references }) => {
+				if (!textBody && !htmlBody && !markdownBody) {
 					return {
-						content: [{ text: "Error: Either textBody or htmlBody is required", type: "text" }],
+						content: [{ text: "Error: Either textBody, htmlBody, or markdownBody is required", type: "text" }],
 					};
 				}
 				try {
 					const client = this.getJmapClient();
-					const submissionId = await client.sendEmail({ to, cc, bcc, from, subject, textBody, htmlBody, attachments, inReplyTo, references });
+					// Convert markdown to HTML if provided (takes precedence over htmlBody)
+					const finalHtmlBody = markdownBody ? await marked.parse(markdownBody) : htmlBody;
+					const submissionId = await client.sendEmail({ to, cc, bcc, from, subject, textBody, htmlBody: finalHtmlBody, attachments, inReplyTo, references });
 					const attachmentCount = attachments?.length || 0;
 					const attachmentNote = attachmentCount > 0 ? ` with ${attachmentCount} attachment(s)` : '';
 					const replyNote = inReplyTo ? ' (reply)' : '';
@@ -140,6 +144,7 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				subject: z.string().describe("Email subject"),
 				textBody: z.string().optional().describe("Plain text body (optional)"),
 				htmlBody: z.string().optional().describe("HTML body (optional)"),
+				markdownBody: z.string().optional().describe("Markdown body (optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
 				attachments: z.array(z.object({
 					filename: z.string().describe("Filename for the attachment (e.g., 'report.pdf')"),
 					mimeType: z.string().describe("MIME type (e.g., 'application/pdf', 'image/png')"),
@@ -148,15 +153,17 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				inReplyTo: z.array(z.string()).optional().describe("Message-ID(s) this email is replying to. Get from original email's messageId field."),
 				references: z.array(z.string()).optional().describe("Message-ID chain for threading. Combine original email's references with its messageId."),
 			},
-			async ({ to, cc, bcc, from, subject, textBody, htmlBody, attachments, inReplyTo, references }) => {
-				if (!textBody && !htmlBody) {
+			async ({ to, cc, bcc, from, subject, textBody, htmlBody, markdownBody, attachments, inReplyTo, references }) => {
+				if (!textBody && !htmlBody && !markdownBody) {
 					return {
-						content: [{ text: "Error: Either textBody or htmlBody is required", type: "text" }],
+						content: [{ text: "Error: Either textBody, htmlBody, or markdownBody is required", type: "text" }],
 					};
 				}
 				try {
 					const client = this.getJmapClient();
-					const draftId = await client.createDraft({ to, cc, bcc, from, subject, textBody, htmlBody, attachments, inReplyTo, references });
+					// Convert markdown to HTML if provided (takes precedence over htmlBody)
+					const finalHtmlBody = markdownBody ? await marked.parse(markdownBody) : htmlBody;
+					const draftId = await client.createDraft({ to, cc, bcc, from, subject, textBody, htmlBody: finalHtmlBody, attachments, inReplyTo, references });
 					const attachmentCount = attachments?.length || 0;
 					const attachmentNote = attachmentCount > 0 ? ` with ${attachmentCount} attachment(s)` : '';
 					const replyNote = inReplyTo ? ' (reply)' : '';
@@ -179,11 +186,12 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				emailId: z.string().describe("ID of the email to reply to"),
 				body: z.string().describe("Your reply message (plain text)"),
 				htmlBody: z.string().optional().describe("Your reply message (HTML, optional). If not provided, plain text body is used."),
+				markdownBody: z.string().optional().describe("Your reply message (Markdown, optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
 				replyAll: z.boolean().default(false).describe("If true, reply to all recipients (sender + CC). Default is reply to sender only."),
 				sendImmediately: z.boolean().default(false).describe("If true, send the reply immediately. If false (default), create a draft."),
 				excludeQuote: z.boolean().default(false).describe("If true, don't include quoted original message. Default includes quote."),
 			},
-			async ({ emailId, body, htmlBody, replyAll, sendImmediately, excludeQuote }) => {
+			async ({ emailId, body, htmlBody, markdownBody, replyAll, sendImmediately, excludeQuote }) => {
 				try {
 					const client = this.getJmapClient();
 
@@ -287,8 +295,12 @@ ${quotedContent}
 
 					// Compose final body
 					const finalTextBody = body + quotedText;
-					const finalHtmlBody = htmlBody
-						? `<div>${htmlBody}</div>${quotedHtml}`
+					// Convert markdown to HTML if provided (takes precedence over htmlBody)
+					const replyHtml = markdownBody
+						? await marked.parse(markdownBody)
+						: htmlBody;
+					const finalHtmlBody = replyHtml
+						? `<div>${replyHtml}</div>${quotedHtml}`
 						: `<div style="white-space: pre-wrap;">${body.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>${quotedHtml}`;
 
 					// Send or create draft
