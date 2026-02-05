@@ -12,6 +12,8 @@ import {
 	handleCallback,
 	handleToken,
 	handleRegister,
+	handleGetToken,
+	handleGetTokenCallback,
 } from "./oauth-handler";
 import { validateAccessToken } from "./oauth-utils";
 
@@ -911,6 +913,16 @@ app.post('/mcp/register', async (c) => {
 // Also handle /register for MCP spec compliance
 app.post('/register', async (c) => {
 	return handleRegister(c.req.raw, c.env);
+});
+
+// Direct token flow for SSH/headless scenarios
+// Visit /get-token in browser, authenticate, get a token to configure manually
+app.get('/get-token', async (c) => {
+	return handleGetToken(c.req.raw, c.env, new URL(c.req.url));
+});
+
+app.get('/get-token/callback', async (c) => {
+	return handleGetTokenCallback(c.req.raw, c.env, new URL(c.req.url));
 });
 
 // Helper to create 401 response with proper WWW-Authenticate header for MCP OAuth
