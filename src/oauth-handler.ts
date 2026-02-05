@@ -82,14 +82,17 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 		return new Response('Invalid code_challenge_method', { status: 400 });
 	}
 
-	// Validate redirect URI (allow HTTPS or localhost)
-	try {
-		const redirectUrl = new URL(redirectUri);
-		if (redirectUrl.protocol !== 'https:' && redirectUrl.hostname !== 'localhost' && redirectUrl.hostname !== '127.0.0.1') {
+	// Validate redirect URI (allow HTTPS, localhost, or OOB URIs for headless flows)
+	const isOOBUri = redirectUri === 'urn:ietf:wg:oauth:2.0:oob' || redirectUri.startsWith('oob:');
+	if (!isOOBUri) {
+		try {
+			const redirectUrl = new URL(redirectUri);
+			if (redirectUrl.protocol !== 'https:' && redirectUrl.hostname !== 'localhost' && redirectUrl.hostname !== '127.0.0.1') {
+				return new Response('Invalid redirect_uri', { status: 400 });
+			}
+		} catch {
 			return new Response('Invalid redirect_uri', { status: 400 });
 		}
-	} catch {
-		return new Response('Invalid redirect_uri', { status: 400 });
 	}
 
 	// Generate state and store OAuth parameters in KV
@@ -236,11 +239,33 @@ export async function handleCallback(request: Request, env: Env, url: URL): Prom
 			expirationTtl: CODE_TTL_SECONDS,
 		});
 
-		// Redirect back to client with authorization code
+		// Check for explicit OOB (Out-of-Band) mode
+		const isExplicitOOB = stateResult.redirect_uri === 'urn:ietf:wg:oauth:2.0:oob' ||
+			stateResult.redirect_uri.startsWith('oob:');
+
+		if (isExplicitOOB) {
+			// Display the code on a page for manual copy-paste (SSH/headless flow)
+			return renderOOBPage(authCode, clientState, null);
+		}
+
+		// Build redirect URL
 		const redirectUrl = new URL(stateResult.redirect_uri);
 		redirectUrl.searchParams.set('code', authCode);
 		if (clientState) redirectUrl.searchParams.set('state', clientState);
 
+		// For localhost redirects, show a hybrid page that:
+		// 1. Attempts the redirect automatically
+		// 2. Shows the code for manual copy if redirect fails (SSH scenarios)
+		try {
+			const parsedRedirect = new URL(stateResult.redirect_uri);
+			if (parsedRedirect.hostname === 'localhost' || parsedRedirect.hostname === '127.0.0.1') {
+				return renderHybridPage(authCode, clientState, redirectUrl.toString());
+			}
+		} catch {
+			// Invalid URL, fall through to normal redirect
+		}
+
+		// Normal redirect for HTTPS endpoints
 		return new Response(null, { status: 302, headers: { Location: redirectUrl.toString() } });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Unknown error';
@@ -411,5 +436,388 @@ function jsonError(error: string, description: string, status: number): Response
 	return new Response(JSON.stringify({ error, error_description: description }), {
 		status,
 		headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Pragma: 'no-cache' },
+	});
+}
+
+// Render hybrid page for localhost redirects - tries redirect but shows code as fallback
+function renderHybridPage(authCode: string, clientState: string | null, redirectUrl: string): Response {
+	const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Fastmail MCP - Authorization Complete</title>
+	<style>
+		* { box-sizing: border-box; margin: 0; padding: 0; }
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+			background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+			min-height: 100vh;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 20px;
+		}
+		.container {
+			background: white;
+			border-radius: 16px;
+			padding: 40px;
+			max-width: 540px;
+			width: 100%;
+			box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+		}
+		.icon {
+			width: 64px;
+			height: 64px;
+			background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+			border-radius: 50%;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			margin: 0 auto 24px;
+		}
+		.icon svg { width: 32px; height: 32px; fill: white; }
+		.spinner {
+			display: none;
+			width: 64px;
+			height: 64px;
+			border: 4px solid #e5e7eb;
+			border-top-color: #4f46e5;
+			border-radius: 50%;
+			animation: spin 1s linear infinite;
+			margin: 0 auto 24px;
+		}
+		@keyframes spin { to { transform: rotate(360deg); } }
+		h1 {
+			text-align: center;
+			color: #1f2937;
+			font-size: 24px;
+			margin-bottom: 8px;
+		}
+		.subtitle {
+			text-align: center;
+			color: #6b7280;
+			margin-bottom: 24px;
+		}
+		.redirect-status {
+			text-align: center;
+			padding: 16px;
+			background: #f0fdf4;
+			border-radius: 8px;
+			color: #166534;
+			margin-bottom: 24px;
+		}
+		.redirect-failed {
+			background: #fef3c7;
+			color: #92400e;
+		}
+		.divider {
+			display: flex;
+			align-items: center;
+			margin: 24px 0;
+			color: #9ca3af;
+			font-size: 14px;
+		}
+		.divider::before, .divider::after {
+			content: '';
+			flex: 1;
+			height: 1px;
+			background: #e5e7eb;
+		}
+		.divider span { padding: 0 16px; }
+		.code-section { display: none; }
+		.code-section.visible { display: block; }
+		.code-label {
+			font-size: 14px;
+			font-weight: 600;
+			color: #374151;
+			margin-bottom: 8px;
+		}
+		.code-box {
+			background: #f3f4f6;
+			border: 2px solid #e5e7eb;
+			border-radius: 8px;
+			padding: 16px;
+			padding-right: 80px;
+			font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
+			font-size: 13px;
+			word-break: break-all;
+			color: #1f2937;
+			position: relative;
+		}
+		.copy-btn {
+			position: absolute;
+			top: 50%;
+			right: 8px;
+			transform: translateY(-50%);
+			background: #4f46e5;
+			color: white;
+			border: none;
+			border-radius: 6px;
+			padding: 8px 16px;
+			font-size: 12px;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.2s;
+		}
+		.copy-btn:hover { background: #4338ca; }
+		.copy-btn.copied { background: #10b981; }
+		.toggle-manual {
+			display: block;
+			text-align: center;
+			color: #4f46e5;
+			cursor: pointer;
+			font-size: 14px;
+			margin-top: 16px;
+		}
+		.toggle-manual:hover { text-decoration: underline; }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<div class="icon" id="successIcon">
+			<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+		</div>
+		<div class="spinner" id="spinner"></div>
+
+		<h1>Authorization Successful</h1>
+		<p class="subtitle" id="subtitle">Redirecting to Claude Code...</p>
+
+		<div class="redirect-status" id="redirectStatus">
+			<span id="statusText">⏳ Completing authorization...</span>
+		</div>
+
+		<div class="code-section" id="codeSection">
+			<div class="divider"><span>or copy manually</span></div>
+			<div class="code-label">Authorization Code</div>
+			<div class="code-box">
+				<code id="authCode">${authCode}</code>
+				<button class="copy-btn" onclick="copyCode()">Copy</button>
+			</div>
+		</div>
+
+		<a class="toggle-manual" id="toggleManual" onclick="showManual()">
+			Using SSH? Click here to copy the code manually
+		</a>
+	</div>
+
+	<script>
+		const redirectUrl = ${JSON.stringify(redirectUrl)};
+		let redirectAttempted = false;
+
+		function attemptRedirect() {
+			if (redirectAttempted) return;
+			redirectAttempted = true;
+
+			document.getElementById('spinner').style.display = 'block';
+			document.getElementById('successIcon').style.display = 'none';
+
+			// Try to redirect
+			const startTime = Date.now();
+			window.location.href = redirectUrl;
+
+			// If still on this page after 2 seconds, show manual option
+			setTimeout(() => {
+				if (document.visibilityState !== 'hidden') {
+					showManualWithError();
+				}
+			}, 2000);
+		}
+
+		function showManual() {
+			document.getElementById('codeSection').classList.add('visible');
+			document.getElementById('toggleManual').style.display = 'none';
+		}
+
+		function showManualWithError() {
+			document.getElementById('spinner').style.display = 'none';
+			document.getElementById('successIcon').style.display = 'flex';
+			document.getElementById('subtitle').textContent = 'Copy this code and paste it into Claude Code';
+			document.getElementById('redirectStatus').classList.add('redirect-failed');
+			document.getElementById('statusText').textContent = '⚠️ Redirect failed - copy the code below instead';
+			document.getElementById('codeSection').classList.add('visible');
+			document.getElementById('toggleManual').style.display = 'none';
+		}
+
+		function copyCode() {
+			const code = document.getElementById('authCode').textContent;
+			navigator.clipboard.writeText(code).then(() => {
+				const btn = document.querySelector('.copy-btn');
+				btn.textContent = 'Copied!';
+				btn.classList.add('copied');
+				setTimeout(() => {
+					btn.textContent = 'Copy';
+					btn.classList.remove('copied');
+				}, 2000);
+			});
+		}
+
+		// Start redirect attempt after brief delay
+		setTimeout(attemptRedirect, 500);
+	</script>
+</body>
+</html>`;
+
+	return new Response(html, {
+		status: 200,
+		headers: {
+			'Content-Type': 'text/html; charset=utf-8',
+			'Cache-Control': 'no-store',
+		},
+	});
+}
+
+// Render OOB page for explicit headless/SSH OAuth flow (no redirect attempt)
+function renderOOBPage(authCode: string, clientState: string | null, _unused: null): Response {
+	const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Fastmail MCP - Authorization Complete</title>
+	<style>
+		* { box-sizing: border-box; margin: 0; padding: 0; }
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+			background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+			min-height: 100vh;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 20px;
+		}
+		.container {
+			background: white;
+			border-radius: 16px;
+			padding: 40px;
+			max-width: 500px;
+			width: 100%;
+			box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+		}
+		.icon {
+			width: 64px;
+			height: 64px;
+			background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+			border-radius: 50%;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			margin: 0 auto 24px;
+		}
+		.icon svg { width: 32px; height: 32px; fill: white; }
+		h1 {
+			text-align: center;
+			color: #1f2937;
+			font-size: 24px;
+			margin-bottom: 8px;
+		}
+		.subtitle {
+			text-align: center;
+			color: #6b7280;
+			margin-bottom: 32px;
+		}
+		.code-label {
+			font-size: 14px;
+			font-weight: 600;
+			color: #374151;
+			margin-bottom: 8px;
+		}
+		.code-box {
+			background: #f3f4f6;
+			border: 2px solid #e5e7eb;
+			border-radius: 8px;
+			padding: 16px;
+			font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
+			font-size: 14px;
+			word-break: break-all;
+			color: #1f2937;
+			position: relative;
+		}
+		.copy-btn {
+			position: absolute;
+			top: 8px;
+			right: 8px;
+			background: #4f46e5;
+			color: white;
+			border: none;
+			border-radius: 6px;
+			padding: 8px 16px;
+			font-size: 12px;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.2s;
+		}
+		.copy-btn:hover { background: #4338ca; }
+		.copy-btn.copied { background: #10b981; }
+		.instructions {
+			margin-top: 24px;
+			padding: 16px;
+			background: #fef3c7;
+			border-radius: 8px;
+			border-left: 4px solid #f59e0b;
+		}
+		.instructions-title {
+			font-weight: 600;
+			color: #92400e;
+			margin-bottom: 8px;
+		}
+		.instructions ol {
+			color: #78350f;
+			padding-left: 20px;
+			font-size: 14px;
+			line-height: 1.6;
+		}
+		${clientState ? '.state-info { margin-top: 16px; font-size: 12px; color: #9ca3af; }' : ''}
+	</style>
+</head>
+<body>
+	<div class="container">
+		<div class="icon">
+			<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+		</div>
+		<h1>Authorization Successful</h1>
+		<p class="subtitle">Copy this code and paste it into Claude Code</p>
+
+		<div class="code-label">Authorization Code</div>
+		<div class="code-box">
+			<code id="authCode">${authCode}</code>
+			<button class="copy-btn" onclick="copyCode()">Copy</button>
+		</div>
+
+		<div class="instructions">
+			<div class="instructions-title">📋 Next Steps</div>
+			<ol>
+				<li>Copy the code above</li>
+				<li>Return to your terminal (SSH session)</li>
+				<li>Paste the code when Claude Code prompts for it</li>
+				<li>You can close this browser tab</li>
+			</ol>
+		</div>
+		${clientState ? `<div class="state-info">State: ${clientState}</div>` : ''}
+	</div>
+
+	<script>
+		function copyCode() {
+			const code = document.getElementById('authCode').textContent;
+			navigator.clipboard.writeText(code).then(() => {
+				const btn = document.querySelector('.copy-btn');
+				btn.textContent = 'Copied!';
+				btn.classList.add('copied');
+				setTimeout(() => {
+					btn.textContent = 'Copy';
+					btn.classList.remove('copied');
+				}, 2000);
+			});
+		}
+	</script>
+</body>
+</html>`;
+
+	return new Response(html, {
+		status: 200,
+		headers: {
+			'Content-Type': 'text/html; charset=utf-8',
+			'Cache-Control': 'no-store',
+		},
 	});
 }
