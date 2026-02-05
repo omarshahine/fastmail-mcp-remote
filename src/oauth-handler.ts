@@ -760,3 +760,347 @@ function renderOOBPage(authCode: string, clientState: string | null, _unused: nu
 		},
 	});
 }
+
+// =====================================================
+// DIRECT TOKEN FLOW (for SSH/headless scenarios)
+// =====================================================
+// This flow bypasses Claude Code's OAuth entirely.
+// User visits /get-token, authenticates, gets a token to configure manually.
+
+// Initiates direct token flow - redirects to Cloudflare Access
+export async function handleGetToken(request: Request, env: Env, url: URL): Promise<Response> {
+	if (!env.ACCESS_CLIENT_ID || !env.ACCESS_TEAM_NAME) {
+		return new Response('OAuth not configured', { status: 500 });
+	}
+
+	// Generate state for CSRF protection
+	const state = generateState();
+	await env.OAUTH_KV.put(`direct-token-state:${state}`, 'pending', {
+		expirationTtl: STATE_TTL_SECONDS,
+	});
+
+	// Redirect to Cloudflare Access
+	const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME);
+	const accessAuthUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/authorization`;
+	const accessParams = new URLSearchParams({
+		client_id: env.ACCESS_CLIENT_ID,
+		redirect_uri: `${url.origin}/get-token/callback`,
+		response_type: 'code',
+		scope: 'openid email profile',
+		state,
+	});
+
+	return new Response(null, {
+		status: 302,
+		headers: { Location: `${accessAuthUrl}?${accessParams.toString()}` },
+	});
+}
+
+// Callback for direct token flow - generates token and displays it
+export async function handleGetTokenCallback(request: Request, env: Env, url: URL): Promise<Response> {
+	if (!env.OAUTH_KV || !env.ACCESS_CLIENT_ID || !env.ACCESS_CLIENT_SECRET) {
+		return new Response('OAuth not configured', { status: 500 });
+	}
+
+	const code = url.searchParams.get('code');
+	const state = url.searchParams.get('state');
+	const error = url.searchParams.get('error');
+
+	if (error) {
+		return new Response(`OAuth error: ${error}`, { status: 400 });
+	}
+
+	if (!code || !state) {
+		return new Response('Missing code or state', { status: 400 });
+	}
+
+	// Validate state
+	const stateData = await env.OAUTH_KV.get(`direct-token-state:${state}`);
+	if (!stateData) {
+		return new Response('Invalid or expired state', { status: 400 });
+	}
+	await env.OAUTH_KV.delete(`direct-token-state:${state}`);
+
+	try {
+		// Exchange code for tokens with Cloudflare Access
+		const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME!);
+		const tokenUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/token`;
+		const tokenResponse = await fetch(tokenUrl, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams({
+				grant_type: 'authorization_code',
+				client_id: env.ACCESS_CLIENT_ID,
+				client_secret: env.ACCESS_CLIENT_SECRET,
+				code,
+				redirect_uri: `${url.origin}/get-token/callback`,
+			}),
+		});
+
+		if (!tokenResponse.ok) {
+			const errorText = await tokenResponse.text();
+			throw new Error(`Failed to exchange code: ${errorText}`);
+		}
+
+		const tokenData = (await tokenResponse.json()) as { id_token?: string; error?: string };
+		if (tokenData.error || !tokenData.id_token) {
+			throw new Error(tokenData.error || 'No ID token received');
+		}
+
+		// Decode ID token to get user info
+		const parts = tokenData.id_token.split('.');
+		const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+		const userEmail = payload.email;
+
+		// Check if user is allowed
+		if (!isUserAllowed(userEmail, env.ALLOWED_USERS || '')) {
+			return renderDirectTokenError(`User ${userEmail} is not authorized`);
+		}
+
+		// Generate access token for MCP
+		const accessToken = generateToken();
+		const tokenHash = await hashToken(accessToken);
+		const tokenExpiresAt = getExpiresAt(TOKEN_TTL_SECONDS);
+
+		const mcpTokenData: OAuthTokenData = {
+			client_id: 'direct-token',
+			user_id: payload.sub,
+			user_login: userEmail,
+			scope: DEFAULT_SCOPE,
+			expires_at: tokenExpiresAt,
+		};
+
+		await env.OAUTH_KV.put(`token:${tokenHash}`, JSON.stringify(mcpTokenData), {
+			expirationTtl: TOKEN_TTL_SECONDS,
+		});
+
+		// Calculate expiry for display
+		const expiryDate = new Date(tokenExpiresAt);
+		const expiryString = expiryDate.toLocaleDateString('en-US', {
+			month: 'long', day: 'numeric', year: 'numeric'
+		});
+
+		return renderDirectTokenSuccess(accessToken, userEmail, expiryString, url.origin);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : 'Unknown error';
+		return renderDirectTokenError(message);
+	}
+}
+
+function renderDirectTokenSuccess(token: string, email: string, expiry: string, origin: string): Response {
+	const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Fastmail MCP - Token Generated</title>
+	<style>
+		* { box-sizing: border-box; margin: 0; padding: 0; }
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+			background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+			min-height: 100vh;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 20px;
+		}
+		.container {
+			background: white;
+			border-radius: 16px;
+			padding: 40px;
+			max-width: 700px;
+			width: 100%;
+			box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+		}
+		.icon {
+			width: 64px;
+			height: 64px;
+			background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+			border-radius: 50%;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			margin: 0 auto 24px;
+		}
+		.icon svg { width: 32px; height: 32px; fill: white; }
+		h1 { text-align: center; color: #1f2937; font-size: 24px; margin-bottom: 8px; }
+		.subtitle { text-align: center; color: #6b7280; margin-bottom: 24px; }
+		.user-info {
+			text-align: center;
+			padding: 12px;
+			background: #f0fdf4;
+			border-radius: 8px;
+			color: #166534;
+			margin-bottom: 24px;
+			font-size: 14px;
+		}
+		.section { margin-bottom: 24px; }
+		.section-title { font-weight: 600; color: #374151; margin-bottom: 8px; font-size: 14px; }
+		.token-box {
+			background: #1f2937;
+			border-radius: 8px;
+			padding: 16px;
+			font-family: 'SF Mono', monospace;
+			font-size: 12px;
+			color: #10b981;
+			word-break: break-all;
+			position: relative;
+		}
+		.copy-btn {
+			position: absolute;
+			top: 8px;
+			right: 8px;
+			background: #4f46e5;
+			color: white;
+			border: none;
+			border-radius: 6px;
+			padding: 6px 12px;
+			font-size: 11px;
+			font-weight: 600;
+			cursor: pointer;
+		}
+		.copy-btn:hover { background: #4338ca; }
+		.copy-btn.copied { background: #10b981; }
+		.command-box {
+			background: #f3f4f6;
+			border-radius: 8px;
+			padding: 12px 16px;
+			font-family: 'SF Mono', monospace;
+			font-size: 12px;
+			color: #1f2937;
+			overflow-x: auto;
+			white-space: nowrap;
+		}
+		.warning {
+			padding: 16px;
+			background: #fef3c7;
+			border-radius: 8px;
+			border-left: 4px solid #f59e0b;
+			font-size: 14px;
+			color: #92400e;
+		}
+		.warning-title { font-weight: 600; margin-bottom: 4px; }
+		.expiry { text-align: center; color: #6b7280; font-size: 13px; margin-top: 16px; }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<div class="icon">
+			<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
+		</div>
+		<h1>Token Generated Successfully</h1>
+		<p class="subtitle">Use this token to configure Fastmail MCP in Claude Code</p>
+
+		<div class="user-info">✓ Authenticated as ${email}</div>
+
+		<div class="section">
+			<div class="section-title">Your Access Token</div>
+			<div class="token-box">
+				<code id="token">${token}</code>
+				<button class="copy-btn" onclick="copyToken()">Copy</button>
+			</div>
+		</div>
+
+		<div class="section">
+			<div class="section-title">Add to Claude Code</div>
+			<div class="command-box">
+				claude mcp add --transport http --header "Authorization: Bearer ${token}" fastmail-remote ${origin}/mcp
+			</div>
+		</div>
+
+		<div class="warning">
+			<div class="warning-title">⚠️ Keep this token secret</div>
+			This token grants full access to your Fastmail account via MCP. Don't share it.
+		</div>
+
+		<p class="expiry">Token expires: ${expiry}</p>
+	</div>
+
+	<script>
+		function copyToken() {
+			navigator.clipboard.writeText(document.getElementById('token').textContent).then(() => {
+				const btn = document.querySelector('.copy-btn');
+				btn.textContent = 'Copied!';
+				btn.classList.add('copied');
+				setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+			});
+		}
+	</script>
+</body>
+</html>`;
+
+	return new Response(html, {
+		status: 200,
+		headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+	});
+}
+
+function renderDirectTokenError(message: string): Response {
+	const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Fastmail MCP - Error</title>
+	<style>
+		* { box-sizing: border-box; margin: 0; padding: 0; }
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+			background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+			min-height: 100vh;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			padding: 20px;
+		}
+		.container {
+			background: white;
+			border-radius: 16px;
+			padding: 40px;
+			max-width: 500px;
+			width: 100%;
+			text-align: center;
+		}
+		.icon {
+			width: 64px;
+			height: 64px;
+			background: #fecaca;
+			border-radius: 50%;
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			margin: 0 auto 24px;
+		}
+		.icon svg { width: 32px; height: 32px; fill: #dc2626; }
+		h1 { color: #1f2937; font-size: 24px; margin-bottom: 16px; }
+		.message { color: #6b7280; margin-bottom: 24px; }
+		.retry {
+			display: inline-block;
+			background: #4f46e5;
+			color: white;
+			padding: 12px 24px;
+			border-radius: 8px;
+			text-decoration: none;
+			font-weight: 600;
+		}
+		.retry:hover { background: #4338ca; }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<div class="icon">
+			<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
+		</div>
+		<h1>Token Generation Failed</h1>
+		<p class="message">${message}</p>
+		<a href="/get-token" class="retry">Try Again</a>
+	</div>
+</body>
+</html>`;
+
+	return new Response(html, {
+		status: 400,
+		headers: { 'Content-Type': 'text/html; charset=utf-8' },
+	});
+}
