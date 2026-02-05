@@ -1005,7 +1005,7 @@ function renderDirectTokenSuccess(token: string, email: string, expiry: string, 
 		<div class="section">
 			<div class="section-title">Add to Claude Code</div>
 			<div class="command-box">
-				claude mcp add --transport http --header "Authorization: Bearer ${token}" fastmail-remote ${origin}/mcp
+				claude mcp add --transport http fastmail-remote ${origin}/mcp --header "Authorization: Bearer ${token}"
 			</div>
 		</div>
 
