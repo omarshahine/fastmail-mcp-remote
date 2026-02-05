@@ -427,6 +427,16 @@ function jsonError(error: string, description: string, status: number): Response
 	});
 }
 
+// Escape HTML special characters to prevent XSS
+function escapeHtml(str: string): string {
+	return str
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+}
+
 // Render hybrid page for localhost redirects - tries redirect but shows code as fallback
 function renderHybridPage(authCode: string, clientState: string | null, redirectUrl: string): Response {
 	const html = `<!DOCTYPE html>
@@ -980,7 +990,7 @@ function renderDirectTokenSuccess(token: string, email: string, expiry: string, 
 		<h1>Token Generated Successfully</h1>
 		<p class="subtitle">Use this token to configure Fastmail MCP in Claude Code</p>
 
-		<div class="user-info">✓ Authenticated as ${email}</div>
+		<div class="user-info">✓ Authenticated as ${escapeHtml(email)}</div>
 
 		<div class="section">
 			<div class="section-title">Your Access Token</div>
@@ -1081,7 +1091,7 @@ function renderDirectTokenError(message: string): Response {
 			<svg viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/></svg>
 		</div>
 		<h1>Token Generation Failed</h1>
-		<p class="message">${message}</p>
+		<p class="message">${escapeHtml(message)}</p>
 		<a href="/get-token" class="retry">Try Again</a>
 	</div>
 </body>
