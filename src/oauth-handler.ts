@@ -477,17 +477,6 @@ function renderHybridPage(authCode: string, clientState: string | null, redirect
 			margin: 0 auto 24px;
 		}
 		.icon svg { width: 32px; height: 32px; fill: white; }
-		.spinner {
-			display: none;
-			width: 64px;
-			height: 64px;
-			border: 4px solid #e5e7eb;
-			border-top-color: #4f46e5;
-			border-radius: 50%;
-			animation: spin 1s linear infinite;
-			margin: 0 auto 24px;
-		}
-		@keyframes spin { to { transform: rotate(360deg); } }
 		h1 {
 			text-align: center;
 			color: #1f2937;
@@ -505,28 +494,9 @@ function renderHybridPage(authCode: string, clientState: string | null, redirect
 			background: #f0fdf4;
 			border-radius: 8px;
 			color: #166534;
-			margin-bottom: 24px;
+			margin-top: 24px;
 		}
-		.redirect-failed {
-			background: #fef3c7;
-			color: #92400e;
-		}
-		.divider {
-			display: flex;
-			align-items: center;
-			margin: 24px 0;
-			color: #9ca3af;
-			font-size: 14px;
-		}
-		.divider::before, .divider::after {
-			content: '';
-			flex: 1;
-			height: 1px;
-			background: #e5e7eb;
-		}
-		.divider span { padding: 0 16px; }
-		.code-section { display: none; }
-		.code-section.visible { display: block; }
+		.code-section { display: block; }
 		.code-label {
 			font-size: 14px;
 			font-weight: 600;
@@ -575,20 +545,14 @@ function renderHybridPage(authCode: string, clientState: string | null, redirect
 </head>
 <body>
 	<div class="container">
-		<div class="icon" id="successIcon">
+		<div class="icon">
 			<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
 		</div>
-		<div class="spinner" id="spinner"></div>
 
 		<h1>Authorization Successful</h1>
-		<p class="subtitle" id="subtitle">Redirecting to Claude Code...</p>
-
-		<div class="redirect-status" id="redirectStatus">
-			<span id="statusText">⏳ Completing authorization...</span>
-		</div>
+		<p class="subtitle">Copy this code and paste it into Claude Code</p>
 
 		<div class="code-section" id="codeSection">
-			<div class="divider"><span>or copy manually</span></div>
 			<div class="code-label">Authorization Code</div>
 			<div class="code-box">
 				<code id="authCode">${authCode}</code>
@@ -596,47 +560,21 @@ function renderHybridPage(authCode: string, clientState: string | null, redirect
 			</div>
 		</div>
 
-		<a class="toggle-manual" id="toggleManual" onclick="showManual()">
-			Using SSH? Click here to copy the code manually
+		<div class="redirect-status" id="redirectStatus">
+			<span id="statusText">📋 Copy the code above, then return to your terminal</span>
+		</div>
+
+		<a class="toggle-manual" onclick="tryRedirect()">
+			Running locally? Click to try auto-redirect
 		</a>
 	</div>
 
 	<script>
 		const redirectUrl = ${JSON.stringify(redirectUrl)};
-		let redirectAttempted = false;
 
-		function attemptRedirect() {
-			if (redirectAttempted) return;
-			redirectAttempted = true;
-
-			document.getElementById('spinner').style.display = 'block';
-			document.getElementById('successIcon').style.display = 'none';
-
-			// Try to redirect
-			const startTime = Date.now();
+		function tryRedirect() {
+			// User explicitly wants to try the redirect
 			window.location.href = redirectUrl;
-
-			// If still on this page after 2 seconds, show manual option
-			setTimeout(() => {
-				if (document.visibilityState !== 'hidden') {
-					showManualWithError();
-				}
-			}, 2000);
-		}
-
-		function showManual() {
-			document.getElementById('codeSection').classList.add('visible');
-			document.getElementById('toggleManual').style.display = 'none';
-		}
-
-		function showManualWithError() {
-			document.getElementById('spinner').style.display = 'none';
-			document.getElementById('successIcon').style.display = 'flex';
-			document.getElementById('subtitle').textContent = 'Copy this code and paste it into Claude Code';
-			document.getElementById('redirectStatus').classList.add('redirect-failed');
-			document.getElementById('statusText').textContent = '⚠️ Redirect failed - copy the code below instead';
-			document.getElementById('codeSection').classList.add('visible');
-			document.getElementById('toggleManual').style.display = 'none';
 		}
 
 		function copyCode() {
@@ -652,8 +590,9 @@ function renderHybridPage(authCode: string, clientState: string | null, redirect
 			});
 		}
 
-		// Start redirect attempt after brief delay
-		setTimeout(attemptRedirect, 500);
+		// For localhost, show the code immediately - don't auto-redirect
+		// (auto-redirect just shows connection refused error)
+		document.getElementById('codeSection').classList.add('visible');
 	</script>
 </body>
 </html>`;
