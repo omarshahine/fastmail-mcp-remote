@@ -248,24 +248,12 @@ export async function handleCallback(request: Request, env: Env, url: URL): Prom
 			return renderOOBPage(authCode, clientState, null);
 		}
 
-		// Build redirect URL
+		// Build redirect URL and do a normal redirect
+		// For SSH/headless scenarios, users should use /get-token instead of the OAuth flow
 		const redirectUrl = new URL(stateResult.redirect_uri);
 		redirectUrl.searchParams.set('code', authCode);
 		if (clientState) redirectUrl.searchParams.set('state', clientState);
 
-		// For localhost redirects, show a hybrid page that:
-		// 1. Attempts the redirect automatically
-		// 2. Shows the code for manual copy if redirect fails (SSH scenarios)
-		try {
-			const parsedRedirect = new URL(stateResult.redirect_uri);
-			if (parsedRedirect.hostname === 'localhost' || parsedRedirect.hostname === '127.0.0.1') {
-				return renderHybridPage(authCode, clientState, redirectUrl.toString());
-			}
-		} catch {
-			// Invalid URL, fall through to normal redirect
-		}
-
-		// Normal redirect for HTTPS endpoints
 		return new Response(null, { status: 302, headers: { Location: redirectUrl.toString() } });
 	} catch (err) {
 		const message = err instanceof Error ? err.message : 'Unknown error';
