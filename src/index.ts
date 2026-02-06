@@ -189,11 +189,12 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				body: z.string().describe("Your reply message (plain text)"),
 				htmlBody: z.string().optional().describe("Your reply message (HTML, optional). If not provided, plain text body is used."),
 				markdownBody: z.string().optional().describe("Your reply message (Markdown, optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
+				from: z.string().optional().describe("Sender email address (optional, defaults to account primary email). Use list_identities to see available aliases."),
 				replyAll: z.boolean().default(false).describe("If true, reply to all recipients (sender + CC). Default is reply to sender only."),
 				sendImmediately: z.boolean().default(false).describe("If true, send the reply immediately. If false (default), create a draft."),
 				excludeQuote: z.boolean().default(false).describe("If true, don't include quoted original message. Default includes quote."),
 			},
-			async ({ emailId, body, htmlBody, markdownBody, replyAll, sendImmediately, excludeQuote }) => {
+			async ({ emailId, body, htmlBody, markdownBody, from, replyAll, sendImmediately, excludeQuote }) => {
 				try {
 					const client = this.getJmapClient();
 
@@ -309,6 +310,7 @@ ${quotedContent}
 						const submissionId = await client.sendEmail({
 							to: toRecipients,
 							cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+							from,
 							subject,
 							textBody: finalTextBody,
 							htmlBody: finalHtmlBody,
@@ -325,6 +327,7 @@ ${quotedContent}
 						const draftId = await client.createDraft({
 							to: toRecipients,
 							cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+							from,
 							subject,
 							textBody: finalTextBody,
 							htmlBody: finalHtmlBody,
