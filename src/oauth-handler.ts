@@ -428,7 +428,8 @@ function jsonError(error: string, description: string, status: number): Response
 }
 
 // Escape HTML special characters to prevent XSS
-function escapeHtml(str: string): string {
+function escapeHtml(str: string | null | undefined): string {
+	if (!str) return '';
 	return str
 		.replace(/&/g, '&amp;')
 		.replace(/</g, '&lt;')
