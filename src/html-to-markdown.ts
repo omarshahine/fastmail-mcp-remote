@@ -53,7 +53,7 @@ function isLayoutTable(table: DomNode): boolean {
   if (hasHeaders) return false;
   // cellpadding="0" + cellspacing="0" without headers is a strong layout signal
   if (table.getAttribute('cellpadding') === '0' && table.getAttribute('cellspacing') === '0') return true;
-  return true; // No headers = likely layout
+  return false; // No explicit layout signals = treat as data table
 }
 
 function createTurndownService(): TurndownService {
@@ -175,7 +175,7 @@ function cleanMarkdown(md: string): string {
     // Deduplicate adjacent repeated phrases (e.g., "Amazon Alexa Amazon Alexa" → "Amazon Alexa")
     // This occurs when <a> wraps <img> with alt text — image rule emits alt, link rule emits text
     // Restricted to word chars + spaces to avoid collapsing legitimate repeated data like "100 100"
-    .replace(/\b(\w[\w ]{1,78}\w)\s+\1\b/g, '$1')
+    .replace(/\b(\w[\w ]{4,78}\w)\s+\1\b/g, '$1')
     // Strip generic legal boilerplate lines (but preserve unsubscribe/preferences content)
     .replace(/^.*(?:©|all rights reserved|view in browser|view as a web page|view online version).*$/gim, '')
     // Collapse 3+ newlines to 2 (preserve paragraph breaks)
