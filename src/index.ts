@@ -890,20 +890,27 @@ ${quotedContent}
 // Create Hono app for routing
 const app = new Hono<{ Bindings: Env }>();
 
-// Protected Resource Metadata (RFC 9728) - tells clients where to find auth server
-app.get('/.well-known/oauth-protected-resource', (c) => {
+// RFC 9728 Protected Resource Metadata - tells clients where to find auth server
+// SDK's discoverMetadataWithFallback() tries path-aware first, then falls back to root
+function handleProtectedResourceMetadata(c: { req: { url: string } }): Response {
 	const url = new URL(c.req.url);
 	return new Response(JSON.stringify({
 		resource: `${url.origin}/mcp`,
 		authorization_servers: [url.origin],
 		scopes_supported: ['mcp:read', 'mcp:write'],
+		bearer_methods_supported: ['header'],
+		resource_name: 'Fastmail MCP',
+		resource_documentation: 'https://github.com/omarshahine/fastmail-mcp-remote',
 	}), {
 		headers: {
 			'Content-Type': 'application/json',
 			'Cache-Control': 'public, max-age=3600',
 		},
 	});
-});
+}
+
+app.get('/.well-known/oauth-protected-resource', (c) => handleProtectedResourceMetadata(c));
+app.get('/.well-known/oauth-protected-resource/mcp', (c) => handleProtectedResourceMetadata(c));
 
 // OAuth Authorization Server Metadata
 app.get('/.well-known/oauth-authorization-server', (c) => {
@@ -946,13 +953,17 @@ app.get('/get-token/callback', async (c) => {
 function unauthorizedResponse(c: { req: { url: string } }, error: string, description: string): Response {
 	const url = new URL(c.req.url);
 	const resourceMetadata = `${url.origin}/.well-known/oauth-protected-resource`;
+	// Include error type in WWW-Authenticate for invalid tokens per RFC 6750 Section 3
+	const wwwAuth = error === 'invalid_token'
+		? `Bearer error="invalid_token", resource_metadata="${resourceMetadata}"`
+		: `Bearer resource_metadata="${resourceMetadata}"`;
 	return new Response(
 		JSON.stringify({ error, error_description: description }),
 		{
 			status: 401,
 			headers: {
 				'Content-Type': 'application/json',
-				'WWW-Authenticate': `Bearer resource_metadata="${resourceMetadata}"`,
+				'WWW-Authenticate': wwwAuth,
 			},
 		}
 	);
@@ -1042,6 +1053,7 @@ app.get('/', (c) => {
 		version: '1.0.0',
 		description: 'Remote MCP server for Fastmail email, contacts, and calendar access',
 		oauth_discovery: '/.well-known/oauth-authorization-server',
+		protected_resource_metadata: '/.well-known/oauth-protected-resource',
 		endpoints: {
 			mcp: '/mcp',
 			sse: '/sse',
