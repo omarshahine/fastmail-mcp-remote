@@ -1158,7 +1158,10 @@ export class JmapClient {
         ['Email/get', {
           accountId: session.accountId,
           '#ids': { resultOf: 'getThread', name: 'Thread/get', path: '/list/*/emailIds' },
-          properties: ['id', 'subject', 'from', 'to', 'cc', 'receivedAt', 'preview', 'hasAttachment', 'keywords', 'threadId']
+          properties: ['id', 'subject', 'from', 'to', 'cc', 'receivedAt', 'preview', 'hasAttachment', 'keywords', 'threadId', 'textBody', 'htmlBody', 'attachments', 'bodyValues', 'messageId', 'inReplyTo', 'references'],
+          bodyProperties: ['partId', 'blobId', 'type', 'size'],
+          fetchTextBodyValues: true,
+          fetchHTMLBodyValues: true,
         }, 'emails']
       ]
     };
