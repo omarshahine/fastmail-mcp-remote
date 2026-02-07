@@ -1,5 +1,5 @@
-import TurndownService from 'turndown';
-import { parseHTML } from 'linkedom';
+import TurndownService from "turndown";
+import { parseHTML } from "linkedom";
 
 /**
  * Converts HTML email bodies to clean markdown optimized for LLM consumption.
@@ -20,112 +20,109 @@ interface DomNode {
 }
 
 // Known tracking/pixel domains (partial matches)
-const TRACKING_DOMAINS = [
-  'track', 'pixel', 'beacon', 'open', 'click',
-  'mailchimp', 'sendgrid', 'sparkpost', 'mailgun',
-  'list-manage', 'email-tracking', 'emailtracking',
-  'mandrillapp', 'ctctcdn', 'constantcontact',
-];
+// Note: Generic words like 'track', 'open', 'click' removed to avoid false positives.
+// The 1x1 size check already catches most tracking pixels; this is just a fallback.
+const TRACKING_DOMAINS = ["pixel", "beacon", "email-tracking", "emailtracking"];
 
 function createTurndownService(): TurndownService {
   const service = new TurndownService({
-    headingStyle: 'atx',
-    bulletListMarker: '-',
-    codeBlockStyle: 'fenced',
-    emDelimiter: '*',
-    strongDelimiter: '**',
-    linkStyle: 'inlined',
+    headingStyle: "atx",
+    bulletListMarker: "-",
+    codeBlockStyle: "fenced",
+    emDelimiter: "*",
+    strongDelimiter: "**",
+    linkStyle: "inlined",
   });
 
   // Strip tracking pixels: 1x1 images or images from known tracking domains
-  service.addRule('trackingPixels', {
+  service.addRule("trackingPixels", {
     filter: ((node: DomNode) => {
-      if (node.nodeName !== 'IMG') return false;
-      const width = node.getAttribute('width');
-      const height = node.getAttribute('height');
+      if (node.nodeName !== "IMG") return false;
+      const width = node.getAttribute("width");
+      const height = node.getAttribute("height");
       // 1x1 pixel images are almost always trackers
-      if (width === '1' && height === '1') return true;
-      if (width === '0' || height === '0') return true;
+      if (width === "1" && height === "1") return true;
+      if (width === "0" || height === "0") return true;
       // Check src against known tracking domains
-      const src = (node.getAttribute('src') || '').toLowerCase();
-      return TRACKING_DOMAINS.some(domain => src.includes(domain));
+      const src = (node.getAttribute("src") || "").toLowerCase();
+      return TRACKING_DOMAINS.some((domain) => src.includes(domain));
     }) as TurndownService.FilterFunction,
-    replacement: () => '',
+    replacement: () => "",
   });
 
   // Strip invisible spacer images (transparent GIFs, blank spacers)
-  service.addRule('spacerImages', {
+  service.addRule("spacerImages", {
     filter: ((node: DomNode) => {
-      if (node.nodeName !== 'IMG') return false;
-      const src = (node.getAttribute('src') || '').toLowerCase();
-      const alt = node.getAttribute('alt') || '';
+      if (node.nodeName !== "IMG") return false;
+      const src = (node.getAttribute("src") || "").toLowerCase();
+      const alt = node.getAttribute("alt") || "";
       // Spacer GIFs with no alt text
-      if (/spacer|blank|transparent|shim/i.test(src) && alt === '') return true;
+      if (/spacer|blank|transparent|shim/i.test(src) && alt === "") return true;
       // Data URI transparent images
-      if (src.startsWith('data:image/gif') && alt === '') return true;
+      if (src.startsWith("data:image/gif") && alt === "") return true;
       return false;
     }) as TurndownService.FilterFunction,
-    replacement: () => '',
+    replacement: () => "",
   });
 
   // Flatten layout tables: tables used for email layout (not data tables)
-  service.addRule('layoutTables', {
+  service.addRule("layoutTables", {
     filter: ((node: DomNode) => {
-      if (node.nodeName !== 'TABLE') return false;
+      if (node.nodeName !== "TABLE") return false;
       // Explicit presentation role = layout table
-      if (node.getAttribute('role') === 'presentation') return true;
+      if (node.getAttribute("role") === "presentation") return true;
       // Full-width tables are almost always layout
-      if (node.getAttribute('width') === '100%') return true;
+      if (node.getAttribute("width") === "100%") return true;
       // No <th> elements = likely layout, not data
-      if (node.querySelectorAll('th').length === 0) return true;
+      if (node.querySelectorAll("th").length === 0) return true;
       return false;
     }) as TurndownService.FilterFunction,
-    replacement: (content: string) => content + '\n\n',
+    replacement: (content: string) => content + "\n\n",
   });
 
   // Also flatten layout table rows and cells to just pass through content
-  service.addRule('layoutTableRows', {
+  service.addRule("layoutTableRows", {
     filter: ((node: DomNode) => {
-      if (node.nodeName !== 'TR' && node.nodeName !== 'TBODY' && node.nodeName !== 'THEAD') return false;
-      const table = node.closest('table');
+      if (node.nodeName !== "TR" && node.nodeName !== "TBODY" && node.nodeName !== "THEAD") return false;
+      const table = node.closest("table");
       if (!table) return false;
-      return table.getAttribute('role') === 'presentation'
-        || table.getAttribute('width') === '100%'
-        || table.querySelectorAll('th').length === 0;
+      return (
+        table.getAttribute("role") === "presentation" || table.getAttribute("width") === "100%" || table.querySelectorAll("th").length === 0
+      );
     }) as TurndownService.FilterFunction,
     replacement: (content: string) => content,
   });
 
-  service.addRule('layoutTableCells', {
+  service.addRule("layoutTableCells", {
     filter: ((node: DomNode) => {
-      if (node.nodeName !== 'TD') return false;
-      const table = node.closest('table');
+      if (node.nodeName !== "TD") return false;
+      const table = node.closest("table");
       if (!table) return false;
-      return table.getAttribute('role') === 'presentation'
-        || table.getAttribute('width') === '100%'
-        || table.querySelectorAll('th').length === 0;
+      return (
+        table.getAttribute("role") === "presentation" || table.getAttribute("width") === "100%" || table.querySelectorAll("th").length === 0
+      );
     }) as TurndownService.FilterFunction,
     replacement: (content: string) => {
       const trimmed = content.trim();
-      return trimmed ? trimmed + '\n' : '';
+      return trimmed ? trimmed + "\n" : "";
     },
   });
 
   // Strip style tags entirely
-  service.remove(['style'] as unknown as TurndownService.Filter);
+  service.remove(["style"] as unknown as TurndownService.Filter);
 
   // Strip script tags entirely
-  service.remove(['script'] as unknown as TurndownService.Filter);
+  service.remove(["script"] as unknown as TurndownService.Filter);
 
   // Strip HTML comments (handled by linkedom parsing, but just in case)
-  service.addRule('comments', {
+  service.addRule("comments", {
     filter: ((node: DomNode) => node.nodeType === 8) as TurndownService.FilterFunction, // COMMENT_NODE
-    replacement: () => '',
+    replacement: () => "",
   });
 
   // Strip <center> tags but keep content
-  service.addRule('center', {
-    filter: ['center'] as unknown as TurndownService.Filter,
+  service.addRule("center", {
+    filter: ["center"] as unknown as TurndownService.Filter,
     replacement: (content: string) => content,
   });
 
@@ -137,15 +134,17 @@ function createTurndownService(): TurndownService {
  * remove trailing spaces, normalize line endings.
  */
 function cleanMarkdown(md: string): string {
-  return md
-    // Collapse 3+ newlines to 2 (preserve paragraph breaks)
-    .replace(/\n{3,}/g, '\n\n')
-    // Remove lines that are only whitespace
-    .replace(/^[ \t]+$/gm, '')
-    // Remove trailing whitespace from lines
-    .replace(/[ \t]+$/gm, '')
-    // Trim leading/trailing whitespace
-    .trim();
+  return (
+    md
+      // Collapse 3+ newlines to 2 (preserve paragraph breaks)
+      .replace(/\n{3,}/g, "\n\n")
+      // Remove lines that are only whitespace
+      .replace(/^[ \t]+$/gm, "")
+      // Remove trailing whitespace from lines
+      .replace(/[ \t]+$/gm, "")
+      // Trim leading/trailing whitespace
+      .trim()
+  );
 }
 
 // Singleton Turndown instance (stateless after creation)
@@ -169,14 +168,14 @@ function getTurndown(): TurndownService {
  */
 export function htmlToMarkdown(html: string): string {
   if (!html || html.trim().length === 0) {
-    return '';
+    return "";
   }
 
   // Parse HTML using linkedom (Worker-compatible DOM implementation)
   const { document } = parseHTML(`<!DOCTYPE html><html><body>${html}</body></html>`);
 
   // Remove <style> and <script> elements before conversion
-  for (const el of document.querySelectorAll('style, script')) {
+  for (const el of document.querySelectorAll("style, script")) {
     el.remove();
   }
 
@@ -199,35 +198,37 @@ export function formatEmailAsMarkdown(email: any): string {
   const parts: string[] = [];
 
   // Header section
-  const subject = email.subject || '(no subject)';
+  const subject = email.subject || "(no subject)";
   parts.push(`# ${subject}`);
-  parts.push('');
+  parts.push("");
 
-  const from = email.from?.map((a: any) => a.name ? `${a.name} <${a.email}>` : a.email).join(', ') || 'Unknown';
+  const from = email.from?.map((a: any) => (a.name ? `${a.name} <${a.email}>` : a.email)).join(", ") || "Unknown";
   parts.push(`**From:** ${from}`);
 
-  const to = email.to?.map((a: any) => a.name ? `${a.name} <${a.email}>` : a.email).join(', ');
+  const to = email.to?.map((a: any) => (a.name ? `${a.name} <${a.email}>` : a.email)).join(", ");
   if (to) parts.push(`**To:** ${to}`);
 
-  const cc = email.cc?.map((a: any) => a.name ? `${a.name} <${a.email}>` : a.email).join(', ');
+  const cc = email.cc?.map((a: any) => (a.name ? `${a.name} <${a.email}>` : a.email)).join(", ");
   if (cc) parts.push(`**CC:** ${cc}`);
 
   if (email.receivedAt) {
     const date = new Date(email.receivedAt);
-    parts.push(`**Date:** ${date.toLocaleString('en-US', {
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    })}`);
+    parts.push(
+      `**Date:** ${date.toLocaleString("en-US", {
+        weekday: "short",
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      })}`,
+    );
   }
 
-  parts.push('');
-  parts.push('---');
-  parts.push('');
+  parts.push("");
+  parts.push("---");
+  parts.push("");
 
   // Body content — extract from bodyValues using partId references
   const bodyValues = email.bodyValues as Record<string, { value: string }> | undefined;
@@ -247,31 +248,31 @@ export function formatEmailAsMarkdown(email: any): string {
 
   // Attachments
   if (email.attachments && email.attachments.length > 0) {
-    parts.push('');
-    parts.push('---');
-    parts.push('');
-    parts.push('**Attachments:**');
+    parts.push("");
+    parts.push("---");
+    parts.push("");
+    parts.push("**Attachments:**");
     for (const att of email.attachments) {
-      const size = att.size ? ` (${formatFileSize(att.size)})` : '';
-      parts.push(`- ${att.name || 'unnamed'}${size}`);
+      const size = att.size ? ` (${formatFileSize(att.size)})` : "";
+      parts.push(`- ${att.name || "unnamed"}${size}`);
     }
   }
 
   // Metadata footer
-  parts.push('');
-  parts.push('---');
-  parts.push('');
+  parts.push("");
+  parts.push("---");
+  parts.push("");
   const meta: string[] = [];
   if (email.id) meta.push(`emailId: ${email.id}`);
   if (email.threadId) meta.push(`threadId: ${email.threadId}`);
   if (email.messageId?.length) meta.push(`messageId: ${email.messageId[0]}`);
   if (email.inReplyTo?.length) meta.push(`inReplyTo: ${email.inReplyTo[0]}`);
-  if (email.references?.length) meta.push(`references: ${email.references.join(', ')}`);
+  if (email.references?.length) meta.push(`references: ${email.references.join(", ")}`);
   if (meta.length > 0) {
-    parts.push(meta.join(' | '));
+    parts.push(meta.join(" | "));
   }
 
-  return parts.join('\n');
+  return parts.join("\n");
 }
 
 function formatFileSize(bytes: number): string {
