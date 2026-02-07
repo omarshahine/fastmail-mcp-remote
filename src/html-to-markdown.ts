@@ -4,24 +4,21 @@ import { parseHTML } from 'linkedom';
 /**
  * Converts HTML email bodies to clean markdown optimized for LLM consumption.
  *
- * Email HTML is notoriously bloated — marketing emails use table-based layouts,
- * tracking pixels, spacer GIFs, and inline styles that can balloon a simple
- * message to 20-50KB+. This module strips all that noise and returns just
- * the semantic content as markdown.
+ * Aggressively strips noise: images (LLMs can't see them), tracking URLs,
+ * layout tables, invisible characters, and excessive formatting. The goal
+ * is minimum tokens for maximum semantic content.
  */
 
 // DOM node interface for linkedom elements (Workers don't have global HTMLElement)
 interface DomNode {
   nodeName: string;
   nodeType: number;
+  textContent: string | null;
   getAttribute(name: string): string | null;
   querySelectorAll(selector: string): ArrayLike<DomNode>;
   closest(selector: string): DomNode | null;
+  childNodes: ArrayLike<DomNode>;
 }
-
-// Regex for tracking pixel URL paths — only matches path segments, not domains.
-// Avoids false positives on legitimate image CDNs (e.g., Mailchimp content images).
-const TRACKING_PATH_PATTERN = /\/(track|pixel|beacon|wf\/open|o\/open|e\/o|trk|cl)[\/?]/i;
 
 function createTurndownService(): TurndownService {
   const service = new TurndownService({
@@ -33,53 +30,46 @@ function createTurndownService(): TurndownService {
     linkStyle: 'inlined',
   });
 
-  // Strip tracking pixels: 1x1 images or images with tracking-specific URL paths
-  service.addRule('trackingPixels', {
-    filter: ((node: DomNode) => {
-      if (node.nodeName !== 'IMG') return false;
-      const width = node.getAttribute('width');
-      const height = node.getAttribute('height');
-      // 1x1 pixel images are almost always trackers
-      if (width === '1' && height === '1') return true;
-      if (width === '0' || height === '0') return true;
-      // Check URL path for common tracking pixel patterns
-      const src = node.getAttribute('src') || '';
-      return TRACKING_PATH_PATTERN.test(src);
-    }) as TurndownService.FilterFunction,
-    replacement: () => '',
+  // Strip ALL images — LLMs cannot see images, so img tags are pure noise.
+  // If the image has meaningful alt text, we keep that as plain text.
+  service.addRule('allImages', {
+    filter: 'img' as any,
+    replacement: (_content: string, node: any) => {
+      const alt = (node.getAttribute('alt') || '').trim();
+      // Only keep alt text if it's meaningful (not just "logo", "icon", empty, etc.)
+      if (alt && alt.length > 3 && !/^(logo|icon|image|img|photo|picture|banner|spacer|pixel)$/i.test(alt)) {
+        return alt;
+      }
+      return '';
+    },
   });
 
-  // Strip invisible spacer images (transparent GIFs, blank spacers)
-  service.addRule('spacerImages', {
+  // Simplify links: strip image-only links (where the only child is an img)
+  // and remove links with tracking/unsubscribe URLs that add no content value
+  service.addRule('simplifyLinks', {
     filter: ((node: DomNode) => {
-      if (node.nodeName !== 'IMG') return false;
-      const src = (node.getAttribute('src') || '').toLowerCase();
-      const alt = node.getAttribute('alt') || '';
-      // Spacer GIFs with no alt text
-      if (/spacer|blank|transparent|shim/i.test(src) && alt === '') return true;
-      // Data URI transparent images
-      if (src.startsWith('data:image/gif') && alt === '') return true;
+      if (node.nodeName !== 'A') return false;
+      const href = node.getAttribute('href') || '';
+      // Strip links that are just tracking redirects with no useful text
+      if (!href || href === '#') return true;
       return false;
     }) as TurndownService.FilterFunction,
-    replacement: () => '',
+    replacement: (content: string) => content,
   });
 
   // Flatten layout tables: tables used for email layout (not data tables)
   service.addRule('layoutTables', {
     filter: ((node: DomNode) => {
       if (node.nodeName !== 'TABLE') return false;
-      // Explicit presentation role = layout table
       if (node.getAttribute('role') === 'presentation') return true;
-      // Full-width tables are almost always layout
       if (node.getAttribute('width') === '100%') return true;
-      // No <th> elements = likely layout, not data
       if (node.querySelectorAll('th').length === 0) return true;
       return false;
     }) as TurndownService.FilterFunction,
     replacement: (content: string) => content + '\n\n',
   });
 
-  // Also flatten layout table rows and cells to just pass through content
+  // Flatten layout table rows/cells to just pass through content
   service.addRule('layoutTableRows', {
     filter: ((node: DomNode) => {
       if (node.nodeName !== 'TR' && node.nodeName !== 'TBODY' && node.nodeName !== 'THEAD') return false;
@@ -107,15 +97,13 @@ function createTurndownService(): TurndownService {
     },
   });
 
-  // Strip style tags entirely
+  // Strip style and script tags entirely
   service.remove(['style'] as unknown as TurndownService.Filter);
-
-  // Strip script tags entirely
   service.remove(['script'] as unknown as TurndownService.Filter);
 
-  // Strip HTML comments (handled by linkedom parsing, but just in case)
+  // Strip HTML comments
   service.addRule('comments', {
-    filter: ((node: DomNode) => node.nodeType === 8) as TurndownService.FilterFunction, // COMMENT_NODE
+    filter: ((node: DomNode) => node.nodeType === 8) as TurndownService.FilterFunction,
     replacement: () => '',
   });
 
@@ -129,17 +117,34 @@ function createTurndownService(): TurndownService {
 }
 
 /**
- * Clean up the markdown output: collapse excessive whitespace,
- * remove trailing spaces, normalize line endings.
+ * Clean up the markdown output for LLM consumption:
+ * - Strip invisible Unicode characters (zero-width spaces, soft hyphens, preheader padding)
+ * - Collapse excessive whitespace
+ * - Remove empty markdown links
+ * - Strip lines that are only punctuation/separators
  */
 function cleanMarkdown(md: string): string {
   return md
+    // Strip invisible Unicode characters used in email preheaders
+    .replace(/[\u200B\u200C\u200D\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180E\u2060\u2061\u2062\u2063\u2064\uFEFF\u180E]/g, '')
+    // Strip braille pattern blank and other invisible spacers
+    .replace(/[͏​‌‍ ­]/g, '')
+    // Remove empty markdown links: [](url) or [ ](url)
+    .replace(/\[\s*\]\([^)]*\)/g, '')
+    // Remove markdown links that contain only whitespace text
+    .replace(/\[\s+\]\([^)]*\)/g, '')
+    // Remove image-in-link leftovers: [![](url)](url) patterns
+    .replace(/\[\s*!\[\s*\]\([^)]*\)\s*\]\([^)]*\)/g, '')
     // Collapse 3+ newlines to 2 (preserve paragraph breaks)
     .replace(/\n{3,}/g, '\n\n')
     // Remove lines that are only whitespace
     .replace(/^[ \t]+$/gm, '')
     // Remove trailing whitespace from lines
     .replace(/[ \t]+$/gm, '')
+    // Remove lines that are only pipe separators (leftover from table stripping)
+    .replace(/^\s*\|?\s*$/gm, '')
+    // Final collapse of blank lines after all cleanup
+    .replace(/\n{3,}/g, '\n\n')
     // Trim leading/trailing whitespace
     .trim();
 }
@@ -158,7 +163,7 @@ function getTurndown(): TurndownService {
  * Convert an HTML email body to clean markdown.
  *
  * Uses linkedom to parse HTML in a Worker-compatible way (no native DOM needed),
- * then Turndown to convert to markdown with email-specific cleanup rules.
+ * then Turndown to convert to markdown with aggressive email-specific cleanup.
  *
  * @param html - Raw HTML string from email body
  * @returns Clean markdown string optimized for LLM consumption
@@ -171,8 +176,8 @@ export function htmlToMarkdown(html: string): string {
   // Parse HTML using linkedom (Worker-compatible DOM implementation)
   const { document } = parseHTML(`<!DOCTYPE html><html><body>${html}</body></html>`);
 
-  // Remove <style> and <script> elements before conversion
-  for (const el of document.querySelectorAll('style, script')) {
+  // Remove non-content elements before conversion
+  for (const el of document.querySelectorAll('style, script, meta, link')) {
     el.remove();
   }
 
@@ -185,9 +190,9 @@ export function htmlToMarkdown(html: string): string {
 /**
  * Format an email as LLM-friendly structured text.
  *
- * Returns a markdown document with:
+ * Returns a compact markdown document with:
  * - Header section (Subject, From, To, CC, Date)
- * - Body as markdown-converted content
+ * - Body as clean markdown (no images, no tracking)
  * - Attachment list (if any)
  * - Metadata footer (emailId, threadId, messageId, etc.)
  */
