@@ -3,6 +3,7 @@ import { McpAgent } from "agents/mcp";
 import { Hono } from "hono";
 import { z } from "zod";
 import { marked } from "marked";
+import { formatEmailAsMarkdown } from "./html-to-markdown";
 import { FastmailAuth } from "./fastmail-auth";
 import { JmapClient } from "./jmap-client";
 import { ContactsCalendarClient } from "./contacts-calendar";
@@ -76,15 +77,21 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 
 		this.server.tool(
 			"get_email",
-			"Get a specific email by ID",
+			"Get a specific email by ID. Returns LLM-friendly markdown by default (converts HTML to clean markdown, strips tracking pixels and layout noise). Use format='html' to get the raw JMAP JSON when you need to inspect original HTML.",
 			{
 				emailId: z.string().describe("ID of the email to retrieve"),
+				format: z.enum(["markdown", "html"]).default("markdown").describe("Output format: 'markdown' (default) returns clean readable text, 'html' returns raw JMAP JSON"),
 			},
-			async ({ emailId }) => {
+			async ({ emailId, format }) => {
 				const client = this.getJmapClient();
 				const email = await client.getEmailById(emailId);
+				if (format === "html") {
+					return {
+						content: [{ text: JSON.stringify(email, null, 2), type: "text" }],
+					};
+				}
 				return {
-					content: [{ text: JSON.stringify(email, null, 2), type: "text" }],
+					content: [{ text: formatEmailAsMarkdown(email), type: "text" }],
 				};
 			},
 		);
@@ -554,16 +561,23 @@ ${quotedContent}
 
 		this.server.tool(
 			"get_thread",
-			"Get all emails in a conversation thread",
+			"Get all emails in a conversation thread. Returns LLM-friendly markdown by default (converts HTML to clean markdown, strips tracking pixels and layout noise). Use format='html' to get the raw JMAP JSON when you need to inspect original HTML.",
 			{
 				threadId: z.string().describe("ID of the thread/conversation"),
+				format: z.enum(["markdown", "html"]).default("markdown").describe("Output format: 'markdown' (default) returns clean readable text, 'html' returns raw JMAP JSON"),
 			},
-			async ({ threadId }) => {
+			async ({ threadId, format }) => {
 				const client = this.getJmapClient();
 				try {
 					const thread = await client.getThread(threadId);
+					if (format === "html") {
+						return {
+							content: [{ text: JSON.stringify(thread, null, 2), type: "text" }],
+						};
+					}
+					const formatted = thread.map((email: any) => formatEmailAsMarkdown(email)).join('\n\n---\n\n');
 					return {
-						content: [{ text: JSON.stringify(thread, null, 2), type: "text" }],
+						content: [{ text: formatted, type: "text" }],
 					};
 				} catch (error) {
 					return {
