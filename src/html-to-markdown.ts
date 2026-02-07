@@ -44,17 +44,21 @@ function createTurndownService(): TurndownService {
     },
   });
 
-  // Simplify links: strip image-only links (where the only child is an img)
-  // and remove links with tracking/unsubscribe URLs that add no content value
-  service.addRule('simplifyLinks', {
-    filter: ((node: DomNode) => {
-      if (node.nodeName !== 'A') return false;
-      const href = node.getAttribute('href') || '';
-      // Strip links that are just tracking redirects with no useful text
-      if (!href || href === '#') return true;
-      return false;
-    }) as TurndownService.FilterFunction,
-    replacement: (content: string) => content,
+  // Strip ALL link URLs — LLMs can't click links, so URLs are wasted tokens.
+  // Keep only the display text. For mailto: links, keep the email address.
+  service.addRule('stripLinkUrls', {
+    filter: 'a' as any,
+    replacement: (content: string, node: any) => {
+      const href = (node.getAttribute('href') || '').trim();
+      const trimmed = content.trim();
+      // For mailto: links, show the email address if it differs from display text
+      if (href.startsWith('mailto:')) {
+        const email = href.slice(7).split('?')[0];
+        if (trimmed && trimmed !== email) return `${trimmed} (${email})`;
+        return email || trimmed;
+      }
+      return trimmed;
+    },
   });
 
   // Flatten layout tables: tables used for email layout (not data tables)
@@ -125,10 +129,13 @@ function createTurndownService(): TurndownService {
  */
 function cleanMarkdown(md: string): string {
   return md
-    // Strip invisible Unicode characters used in email preheaders
-    .replace(/[\u200B\u200C\u200D\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180E\u2060\u2061\u2062\u2063\u2064\uFEFF\u180E]/g, '')
-    // Strip braille pattern blank and other invisible spacers
-    .replace(/[͏​‌‍ ­]/g, '')
+    // Replace zero-width spaces with real spaces — they serve as word boundaries
+    // in email HTML; stripping them concatenates adjacent words
+    .replace(/[\u200B]/g, ' ')
+    // Strip other invisible Unicode characters (joiners, soft hyphens, preheader padding)
+    .replace(/[\u200C\u200D\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180E\u2060\u2061\u2062\u2063\u2064\uFEFF]/g, '')
+    // Collapse multiple spaces to single space (from zero-width space replacement)
+    .replace(/ {2,}/g, ' ')
     // Remove empty markdown links: [](url) or [ ](url)
     .replace(/\[\s*\]\([^)]*\)/g, '')
     // Remove markdown links that contain only whitespace text
@@ -179,6 +186,15 @@ export function htmlToMarkdown(html: string): string {
   // Remove non-content elements before conversion
   for (const el of document.querySelectorAll('style, script, meta, link')) {
     el.remove();
+  }
+
+  // Inject whitespace between block-level elements to prevent word concatenation.
+  // Email HTML relies on CSS for visual spacing between elements; when we strip
+  // styles and flatten layout, adjacent text from sibling elements concatenates.
+  for (const el of document.querySelectorAll('div, p, td, th, li, br, h1, h2, h3, h4, h5, h6, section, article, blockquote')) {
+    if (el.parentNode) {
+      el.parentNode.insertBefore(document.createTextNode(' '), el);
+    }
   }
 
   const turndown = getTurndown();
