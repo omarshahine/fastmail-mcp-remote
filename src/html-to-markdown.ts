@@ -21,7 +21,7 @@ interface DomNode {
 
 // Regex for tracking pixel URL paths — only matches path segments, not domains.
 // Avoids false positives on legitimate image CDNs (e.g., Mailchimp content images).
-const TRACKING_PATH_PATTERN = /\/(track|pixel|beacon|wf\/open|o\/open|e\/o\/|trk\/|cl\/)[\/?]/i;
+const TRACKING_PATH_PATTERN = /\/(track|pixel|beacon|wf\/open|o\/open|e\/o|trk|cl)[\/?]/i;
 
 function createTurndownService(): TurndownService {
   const service = new TurndownService({
