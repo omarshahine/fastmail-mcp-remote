@@ -3,6 +3,7 @@ import { McpAgent } from "agents/mcp";
 import { Hono } from "hono";
 import { z } from "zod";
 import { marked } from "marked";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { formatEmailAsMarkdown } from "./html-to-markdown";
 import { FastmailAuth } from "./fastmail-auth";
 import { JmapClient } from "./jmap-client";
@@ -17,7 +18,10 @@ import {
 	handleGetTokenCallback,
 } from "./oauth-handler";
 import { validateAccessToken } from "./oauth-utils";
-import { checkMcpPermissions, filterToolsListResponse } from "./permissions";
+import { checkMcpPermissions, filterToolsListResponse, getPermissionsConfig, getUserConfig, isToolAllowed } from "./permissions";
+
+// AsyncLocalStorage for per-request context (user login for SSE permission checks)
+const requestContext = new AsyncLocalStorage<{ userLogin: string; kv: KVNamespace }>();
 
 export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<string, never>> {
 	server = new McpServer({
@@ -42,6 +46,34 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 	async init() {
 		// Authorization is handled in OAuth callback (oauth-handler.ts)
 		// Only users in ALLOWED_USERS can obtain a valid access token
+		
+		// Override tool registration to add SSE permission checks
+		// For SSE transport, we cannot check permissions at Hono level because
+		// errors must be sent through the event stream, not as HTTP response bodies
+		const originalTool = this.server.tool.bind(this.server);
+		
+		this.server.tool = function(name: string, description: string, schema: any, handler: any) {
+			const wrappedHandler = async (params: any) => {
+				// Check permissions using AsyncLocalStorage context (set for SSE requests)
+				// For /mcp transport, permissions are checked at Hono level before reaching here
+				const context = requestContext.getStore();
+				
+				if (context) {
+					// Check permissions for SSE requests
+					const config = await getPermissionsConfig(context.kv);
+					const userConfig = getUserConfig(config, context.userLogin);
+					const result = isToolAllowed(userConfig, name, params);
+					
+					if (!result.allowed) {
+						// Throw error that SDK will serialize through event stream
+						throw new Error(result.error);
+					}
+				}
+				
+				return await handler(params);
+			};
+			return originalTool(name, description, schema, wrappedHandler);
+		} as any;
 
 		// =====================
 		// EMAIL TOOLS
@@ -1010,12 +1042,15 @@ async function handleSse(c: { req: { raw: Request; url: string; header: (name: s
 		return unauthorizedResponse(c, 'invalid_token', 'Invalid or expired access token');
 	}
 
-	// Check tools/call permissions (clones request internally)
-	const denial = await checkMcpPermissions(c.req.raw, tokenInfo.user_login, c.env.OAUTH_KV);
-	if (denial) return denial;
-
-	// Handle SSE MCP request
-	return FastmailMCP.serveSSE('/sse').fetch(c.req.raw, c.env, c.executionCtx);
+	// For SSE transport, DO NOT check permissions at Hono level and return Response
+	// SSE clients expect 202 Accepted for POST and read JSON-RPC responses from event stream
+	// Permissions are checked at tool handler level using AsyncLocalStorage context
+	
+	// Run SDK handler with request context for permission checks
+	return requestContext.run(
+		{ userLogin: tokenInfo.user_login, kv: c.env.OAUTH_KV },
+		() => FastmailMCP.serveSSE('/sse').fetch(c.req.raw, c.env, c.executionCtx)
+	);
 }
 
 app.all('/sse', handleSse);
