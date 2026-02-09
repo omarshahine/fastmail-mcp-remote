@@ -64,7 +64,7 @@ src/
 3. **Configure Cloudflare Access Application**:
    - Go to Zero Trust Dashboard → Access → Applications
    - Create or edit your Access application
-   - Add redirect URL: `https://your-worker-name.your-subdomain.workers.dev/mcp/callback`
+   - Add redirect URL: `https://fastmail-mcp.shahine.com/mcp/callback`
 
 4. **Get Fastmail API Token** at https://www.fastmail.com/settings/security/tokens
 
@@ -89,11 +89,11 @@ npm run deploy
 ### Verify Deployment
 
 ```bash
-# Check discovery endpoint (replace with your worker URL)
-curl https://your-worker-name.your-subdomain.workers.dev/.well-known/oauth-authorization-server
+# Check discovery endpoint
+curl https://fastmail-mcp.shahine.com/.well-known/oauth-authorization-server
 
 # Check root endpoint
-curl https://your-worker-name.your-subdomain.workers.dev/
+curl https://fastmail-mcp.shahine.com/
 ```
 
 ## Local Development
@@ -170,9 +170,9 @@ Empty set would allow all authenticated users (not recommended).
 
 ## Claude Code Integration
 
-Add to Claude Code (replace with your worker URL):
+Add to Claude Code:
 ```bash
-claude mcp add --scope user --transport http fastmail "https://your-worker-name.your-subdomain.workers.dev/mcp"
+claude mcp add --scope user --transport http fastmail "https://fastmail-mcp.shahine.com/mcp"
 ```
 
 Complete OAuth via `/mcp` in Claude Code when prompted.

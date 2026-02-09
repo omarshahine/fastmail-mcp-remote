@@ -901,6 +901,7 @@ function handleProtectedResourceMetadata(c: { req: { url: string } }): Response 
 		bearer_methods_supported: ['header'],
 		resource_name: 'Fastmail MCP',
 		resource_documentation: 'https://github.com/omarshahine/fastmail-mcp-remote',
+		logo_uri: `${url.origin}/favicon.png`,
 	}), {
 		headers: {
 			'Content-Type': 'application/json',
@@ -1042,6 +1043,27 @@ app.get('/download/:token', async (c) => {
 			'Content-Type': tokenData.mimeType,
 			'Content-Disposition': `attachment; filename="${tokenData.filename}"`,
 			'Content-Length': tokenData.size.toString(),
+		},
+	});
+});
+
+// Favicon - Fastmail app icon (64x64 PNG)
+import { FASTMAIL_ICON_BASE64 } from './favicon';
+app.get('/favicon.png', (c) => {
+	const iconBytes = Uint8Array.from(atob(FASTMAIL_ICON_BASE64), (ch) => ch.charCodeAt(0));
+	return new Response(iconBytes, {
+		headers: {
+			'Content-Type': 'image/png',
+			'Cache-Control': 'public, max-age=86400',
+		},
+	});
+});
+app.get('/favicon.ico', (c) => {
+	const iconBytes = Uint8Array.from(atob(FASTMAIL_ICON_BASE64), (ch) => ch.charCodeAt(0));
+	return new Response(iconBytes, {
+		headers: {
+			'Content-Type': 'image/png',
+			'Cache-Control': 'public, max-age=86400',
 		},
 	});
 });
