@@ -77,11 +77,12 @@
 	 * Note: Use secrets to store sensitive data.
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
 	 */
-	// Set WORKER_URL via: npx wrangler secret put WORKER_URL
-	// Value should be your deployed worker URL (e.g., https://your-worker.example.com)
-	// ACCESS_TEAM_NAME and ALLOWED_USERS are set via Cloudflare dashboard
-	// and in .dev.vars for local development. Not in wrangler.jsonc to avoid PII.
-	// Set via: Workers & Pages → fastmail-mcp-remote → Settings → Variables
+	// ACCESS_TEAM_NAME and ALLOWED_USERS are set via Cloudflare secrets/dashboard.
+	// NEVER put PII (emails, usernames) in this file — it is tracked by git.
+	// For local dev, use .dev.vars (gitignored). For production, use:
+	//   npx wrangler secret put ACCESS_TEAM_NAME
+	//   npx wrangler secret put ALLOWED_USERS
+	//   npx wrangler secret put WORKER_URL
 	/**
 	 * Static Assets
 	 * https://developers.cloudflare.com/workers/static-assets/binding/
