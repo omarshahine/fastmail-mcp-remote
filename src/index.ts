@@ -17,6 +17,7 @@ import {
 	handleGetTokenCallback,
 } from "./oauth-handler";
 import { validateAccessToken } from "./oauth-utils";
+import { checkMcpPermissions, filterToolsListResponse } from "./permissions";
 
 export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<string, never>> {
 	server = new McpServer({
@@ -984,25 +985,15 @@ app.all('/mcp', async (c) => {
 		return unauthorizedResponse(c, 'invalid_token', 'Invalid or expired access token');
 	}
 
-	// Handle MCP request - user is already authorized via OAuth
-	return FastmailMCP.serve('/mcp').fetch(c.req.raw, c.env, c.executionCtx);
-});
+	// Check tools/call permissions (clones request internally)
+	const denial = await checkMcpPermissions(c.req.raw, tokenInfo.user_login, c.env.OAUTH_KV);
+	if (denial) return denial;
 
-app.all('/sse', async (c) => {
-	// Validate Bearer token
-	const authHeader = c.req.header('Authorization');
-	if (!authHeader?.startsWith('Bearer ')) {
-		return unauthorizedResponse(c, 'unauthorized', 'Missing or invalid Authorization header');
-	}
+	// Pass through to MCP SDK
+	const response = await FastmailMCP.serve('/mcp').fetch(c.req.raw, c.env, c.executionCtx);
 
-	const token = authHeader.substring(7);
-	const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token);
-	if (!tokenInfo) {
-		return unauthorizedResponse(c, 'invalid_token', 'Invalid or expired access token');
-	}
-
-	// Handle SSE MCP request - user is already authorized via OAuth
-	return FastmailMCP.serveSSE('/sse').fetch(c.req.raw, c.env, c.executionCtx);
+	// Filter tools/list response to hide disabled categories
+	return filterToolsListResponse(response, tokenInfo.user_login, c.env.OAUTH_KV);
 });
 
 // Attachment download proxy endpoint (no auth required - uses single-use token)
@@ -1078,7 +1069,6 @@ app.get('/', (c) => {
 		protected_resource_metadata: '/.well-known/oauth-protected-resource',
 		endpoints: {
 			mcp: '/mcp',
-			sse: '/sse',
 			download: '/download/:token (temporary, single-use)',
 		},
 	});

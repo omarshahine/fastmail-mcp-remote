@@ -14,13 +14,17 @@ If a file contains what appears to be a personal username in a path (e.g., `/Use
 
 ## Email Address Detection
 
-If a file contains an email address pattern (except @example.com, @anthropic.com, or @noreply addresses), then:
+If a configuration file (wrangler.jsonc, wrangler.toml, *.d.ts, .env*, *.json) contains a real email address (not @example.com, @anthropic.com, @noreply, or @users.noreply.github.com), then:
+- Add a **blocking** bug: "Real email address detected in configuration file. Move to a secret or environment variable to avoid committing PII to the repo. Use `wrangler secret put` for Cloudflare Workers."
+
+If any other file contains an email address pattern (except @example.com, @anthropic.com, or @noreply addresses), then:
 - Add a non-blocking bug: "Email address detected. Verify this is not personal information that should be parameterized or removed."
 
 Exclude from email checks:
 - CHANGELOG.md
 - package-lock.json
 - node_modules/
+- Co-Authored-By lines in commit messages
 
 ## API Keys and Secrets
 
