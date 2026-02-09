@@ -168,6 +168,8 @@ dist
 
 # wrangler project
 
+wrangler.jsonc
+worker-configuration.d.ts
 .dev.vars
 .wrangler/
 

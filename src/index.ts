@@ -901,7 +901,7 @@ function handleProtectedResourceMetadata(c: { req: { url: string } }): Response 
 		scopes_supported: ['mcp:read', 'mcp:write'],
 		bearer_methods_supported: ['header'],
 		resource_name: 'Fastmail MCP',
-		resource_documentation: 'https://github.com/omarshahine/fastmail-mcp-remote',
+		resource_documentation: url.origin,
 		logo_uri: `${url.origin}/favicon.png`,
 	}), {
 		headers: {

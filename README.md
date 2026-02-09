@@ -189,16 +189,16 @@ Create a Cloudflare Access SaaS application for OAuth:
 
 ### 3. Configure Environment Variables
 
-Edit `wrangler.jsonc` to set your configuration:
-```jsonc
-"vars": {
-  "ACCESS_TEAM_NAME": "your-team-name",
-  "ALLOWED_USERS": "user1@example.com,user2@example.com"
-}
+Set these as Cloudflare secrets (never put PII in `wrangler.jsonc` — it's tracked by git):
+```bash
+npx wrangler secret put ACCESS_TEAM_NAME    # Your Zero Trust team name
+npx wrangler secret put ALLOWED_USERS       # Comma-separated email list
 ```
 
 - **ACCESS_TEAM_NAME**: Your Cloudflare Zero Trust team name (the subdomain before `.cloudflareaccess.com`)
 - **ALLOWED_USERS**: Comma-separated list of email addresses allowed to access the server
+
+For local development, add these to `.dev.vars` (gitignored).
 
 ### 4. Get Fastmail API Token
 

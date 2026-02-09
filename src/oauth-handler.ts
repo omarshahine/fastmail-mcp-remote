@@ -36,7 +36,7 @@ export function handleOAuthDiscovery(url: URL): Response {
 		grant_types_supported: ['authorization_code'],
 		token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
 		code_challenge_methods_supported: ['S256', 'plain'],
-		service_documentation: 'https://github.com/omarshahine/fastmail-mcp-remote',
+		service_documentation: url.origin,
 		logo_uri: `${url.origin}/favicon.png`,
 	};
 

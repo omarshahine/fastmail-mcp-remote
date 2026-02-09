@@ -1,4 +1,7 @@
-# Cloudflare Access OAuth credentials (same as travel-hub MCP)
+# Cloudflare account (used instead of account_id in wrangler.jsonc)
+CLOUDFLARE_ACCOUNT_ID=<your cloudflare account id>
+
+# Cloudflare Access OAuth credentials
 ACCESS_CLIENT_ID=<your cloudflare access client id>
 ACCESS_CLIENT_SECRET=<your cloudflare access client secret>
 ACCESS_TEAM_NAME=<your cloudflare zero trust team name>

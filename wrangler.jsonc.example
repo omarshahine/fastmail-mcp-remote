@@ -1,0 +1,50 @@
+/**
+ * Copy this file to wrangler.jsonc and fill in your values.
+ * wrangler.jsonc is gitignored — your config stays local.
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "fastmail-mcp-remote",
+	"account_id": "<your-cloudflare-account-id>",
+	"workers_dev": true,
+	"preview_urls": true,
+	"routes": [
+		{
+			"pattern": "<your-custom-domain>",
+			"custom_domain": true
+		}
+	],
+	"main": "src/index.ts",
+	"compatibility_date": "2025-03-10",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"migrations": [
+		{
+			"new_sqlite_classes": [
+				"FastmailMCP"
+			],
+			"tag": "v1"
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"class_name": "FastmailMCP",
+				"name": "MCP_OBJECT"
+			}
+		]
+	},
+	"kv_namespaces": [
+		{
+			"binding": "OAUTH_KV",
+			"id": "<your-kv-namespace-id>"
+		}
+	],
+	"observability": {
+		"enabled": true
+	},
+	"dev": {
+		"port": 8788
+	}
+}

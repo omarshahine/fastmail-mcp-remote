@@ -64,15 +64,18 @@ src/
 3. **Configure Cloudflare Access Application**:
    - Go to Zero Trust Dashboard → Access → Applications
    - Create or edit your Access application
-   - Add redirect URL: `https://your-worker.example.com/mcp/callback`
+   - Add redirect URL: `https://<your-worker-domain>/mcp/callback`
 
 4. **Get Fastmail API Token** at https://www.fastmail.com/settings/security/tokens
 
-5. **Set production secrets** (same ACCESS credentials as travel-hub):
+5. **Set production secrets**:
    ```bash
    npx wrangler secret put ACCESS_CLIENT_ID
    npx wrangler secret put ACCESS_CLIENT_SECRET
+   npx wrangler secret put ACCESS_TEAM_NAME
+   npx wrangler secret put ALLOWED_USERS
    npx wrangler secret put FASTMAIL_API_TOKEN
+   npx wrangler secret put WORKER_URL
    ```
 
 6. **Deploy**:
@@ -89,11 +92,11 @@ npm run deploy
 ### Verify Deployment
 
 ```bash
-# Check discovery endpoint
-curl https://your-worker.example.com/.well-known/oauth-authorization-server
+# Check discovery endpoint (replace with your domain)
+curl https://<your-worker-domain>/.well-known/oauth-authorization-server
 
 # Check root endpoint
-curl https://your-worker.example.com/
+curl https://<your-worker-domain>/
 ```
 
 ## Local Development
@@ -131,21 +134,27 @@ npx @modelcontextprotocol/inspector@latest
 
 ## User Access Control
 
-Edit `ALLOWED_USERS` in `src/oauth-utils.ts` to control which email addresses can access:
-
-```typescript
-export const ALLOWED_USERS = new Set(['user@example.com']);
+Set `ALLOWED_USERS` as a Cloudflare secret (comma-separated email list):
+```bash
+npx wrangler secret put ALLOWED_USERS
+# Enter: user1@example.com,user2@example.com
 ```
 
-Empty set would allow all authenticated users (not recommended).
+For local development, add to `.dev.vars`:
+```
+ALLOWED_USERS=user1@example.com,user2@example.com
+```
 
 ## Secrets Required
 
 | Secret | Description |
 |--------|-------------|
-| `ACCESS_CLIENT_ID` | Cloudflare Access SaaS app client ID (same as travel-hub MCP) |
-| `ACCESS_CLIENT_SECRET` | Cloudflare Access SaaS app client secret (same as travel-hub MCP) |
+| `ACCESS_CLIENT_ID` | Cloudflare Access SaaS app client ID |
+| `ACCESS_CLIENT_SECRET` | Cloudflare Access SaaS app client secret |
+| `ACCESS_TEAM_NAME` | Cloudflare Zero Trust team name |
+| `ALLOWED_USERS` | Comma-separated list of allowed email addresses |
 | `FASTMAIL_API_TOKEN` | Fastmail API token with required scopes |
+| `WORKER_URL` | Your deployed worker URL (for download links) |
 
 ## KV Keys
 
@@ -172,7 +181,7 @@ Empty set would allow all authenticated users (not recommended).
 
 Add to Claude Code:
 ```bash
-claude mcp add --scope user --transport http fastmail "https://your-worker.example.com/mcp"
+claude mcp add --scope user --transport http fastmail "https://<your-worker-domain>/mcp"
 ```
 
 Complete OAuth via `/mcp` in Claude Code when prompted.
