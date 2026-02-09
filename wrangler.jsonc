@@ -81,7 +81,7 @@
 	// Value should be your deployed worker URL (e.g., https://fastmail-mcp.shahine.com)
 	"vars": {
 		"ACCESS_TEAM_NAME": "REDACTED_TEAM_NAME",
-		"ALLOWED_USERS": "REDACTED_EMAIL_1"
+		"ALLOWED_USERS": "REDACTED_EMAIL_1,REDACTED_EMAIL_2"
 	}
 	/**
 	 * Static Assets
