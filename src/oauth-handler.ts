@@ -36,7 +36,8 @@ export function handleOAuthDiscovery(url: URL): Response {
 		grant_types_supported: ['authorization_code'],
 		token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
 		code_challenge_methods_supported: ['S256', 'plain'],
-		service_documentation: 'https://github.com/your-username/fastmail-mcp-remote',
+		service_documentation: 'https://github.com/omarshahine/fastmail-mcp-remote',
+		logo_uri: `${url.origin}/favicon.png`,
 	};
 
 	return new Response(JSON.stringify(metadata), {
@@ -445,6 +446,7 @@ function renderHybridPage(authCode: string, clientState: string | null, redirect
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<link rel="icon" href="/favicon.png" type="image/png">
 	<title>Fastmail MCP - Authorization Complete</title>
 	<style>
 		* { box-sizing: border-box; margin: 0; padding: 0; }
@@ -612,6 +614,7 @@ function renderOOBPage(authCode: string, clientState: string | null, _unused: nu
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<link rel="icon" href="/favicon.png" type="image/png">
 	<title>Fastmail MCP - Authorization Complete</title>
 	<style>
 		* { box-sizing: border-box; margin: 0; padding: 0; }
@@ -892,6 +895,7 @@ function renderDirectTokenSuccess(token: string, email: string, expiry: string, 
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<link rel="icon" href="/favicon.png" type="image/png">
 	<title>Fastmail MCP - Token Generated</title>
 	<style>
 		* { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1041,6 +1045,7 @@ function renderDirectTokenError(message: string): Response {
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<link rel="icon" href="/favicon.png" type="image/png">
 	<title>Fastmail MCP - Error</title>
 	<style>
 		* { box-sizing: border-box; margin: 0; padding: 0; }

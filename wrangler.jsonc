@@ -10,6 +10,14 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "fastmail-mcp-remote",
 	"account_id": "your-cloudflare-account-id",
+	"workers_dev": true,
+	"preview_urls": true,
+	"routes": [
+		{
+			"pattern": "your-worker.example.com",
+			"custom_domain": true
+		}
+	],
 	"main": "src/index.ts",
 	"compatibility_date": "2025-03-10",
 	"compatibility_flags": [
@@ -70,7 +78,7 @@
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
 	 */
 	// Set WORKER_URL via: npx wrangler secret put WORKER_URL
-	// Value should be your deployed worker URL (e.g., https://fastmail-mcp-remote.your-subdomain.workers.dev)
+	// Value should be your deployed worker URL (e.g., https://your-worker.example.com)
 	"vars": {
 		"ACCESS_TEAM_NAME": "REDACTED_TEAM_NAME",
 		"ALLOWED_USERS": "REDACTED_EMAIL_1"

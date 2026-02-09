@@ -183,7 +183,7 @@ Create a Cloudflare Access SaaS application for OAuth:
    - **Application type:** Custom
 4. Configure OIDC settings:
    - **Auth Type:** OIDC
-   - **Redirect URI:** `https://your-worker-name.your-subdomain.workers.dev/mcp/callback`
+   - **Redirect URI:** `https://your-worker.example.com/mcp/callback`
 5. Configure access policy to allow your users (e.g., email domain or specific emails)
 6. Copy the **Client ID** and generate a **Client Secret**
 
@@ -260,7 +260,7 @@ npx wrangler secret put FASTMAIL_API_TOKEN
 Set the worker URL for download links:
 ```bash
 npx wrangler secret put WORKER_URL
-# Paste: https://your-worker-name.your-subdomain.workers.dev
+# Paste: https://your-worker.example.com
 ```
 
 ### 10. Add to MCP Client
@@ -271,7 +271,7 @@ npx wrangler secret put WORKER_URL
 2. Click **Add custom connector**
 3. Enter your MCP server URL:
    ```
-   https://your-worker-name.your-subdomain.workers.dev/sse
+   https://your-worker.example.com/sse
    ```
 4. Click **Add**
 5. Click **Connect** and authenticate via Cloudflare Access
@@ -279,7 +279,7 @@ npx wrangler secret put WORKER_URL
 #### Claude Code
 
 ```bash
-claude mcp add --scope user --transport http fastmail "https://your-worker-name.your-subdomain.workers.dev/mcp"
+claude mcp add --scope user --transport http fastmail "https://your-worker.example.com/mcp"
 ```
 
 Then run `/mcp` in Claude Code to complete the OAuth flow.
@@ -290,7 +290,7 @@ GitHub Copilot CLI doesn't support automatic OAuth client registration, so you n
 
 1. **Register an OAuth client:**
    ```bash
-   curl -X POST "https://your-worker-name.your-subdomain.workers.dev/register" \
+   curl -X POST "https://your-worker.example.com/register" \
      -H "Content-Type: application/json" \
      -d '{"client_name": "github-copilot", "redirect_uris": ["http://localhost", "http://127.0.0.1"]}'
    ```
@@ -299,7 +299,7 @@ GitHub Copilot CLI doesn't support automatic OAuth client registration, so you n
 
 2. **Add the MCP server:**
    ```bash
-   copilot mcp add fastmail --url "https://your-worker-name.your-subdomain.workers.dev/mcp"
+   copilot mcp add fastmail --url "https://your-worker.example.com/mcp"
    ```
 
 3. **When prompted for OAuth credentials:**
