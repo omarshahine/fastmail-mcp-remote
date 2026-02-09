@@ -17,6 +17,7 @@ import {
 	handleGetTokenCallback,
 } from "./oauth-handler";
 import { validateAccessToken } from "./oauth-utils";
+import { checkMcpPermissions, filterToolsListResponse } from "./permissions";
 
 export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<string, never>> {
 	server = new McpServer({
@@ -984,11 +985,19 @@ app.all('/mcp', async (c) => {
 		return unauthorizedResponse(c, 'invalid_token', 'Invalid or expired access token');
 	}
 
-	// Handle MCP request - user is already authorized via OAuth
-	return FastmailMCP.serve('/mcp').fetch(c.req.raw, c.env, c.executionCtx);
+	// Check tools/call permissions (clones request internally)
+	const denial = await checkMcpPermissions(c.req.raw, tokenInfo.user_login, c.env.OAUTH_KV);
+	if (denial) return denial;
+
+	// Pass through to MCP SDK
+	const response = await FastmailMCP.serve('/mcp').fetch(c.req.raw, c.env, c.executionCtx);
+
+	// Filter tools/list response to hide disabled categories
+	return filterToolsListResponse(response, tokenInfo.user_login, c.env.OAUTH_KV);
 });
 
-app.all('/sse', async (c) => {
+// SSE handler shared between /sse and /sse/* (SDK sends POST to /sse/message)
+async function handleSse(c: { req: { raw: Request; url: string; header: (name: string) => string | undefined }; env: Env; executionCtx: ExecutionContext }) {
 	// Validate Bearer token
 	const authHeader = c.req.header('Authorization');
 	if (!authHeader?.startsWith('Bearer ')) {
@@ -1001,9 +1010,15 @@ app.all('/sse', async (c) => {
 		return unauthorizedResponse(c, 'invalid_token', 'Invalid or expired access token');
 	}
 
-	// Handle SSE MCP request - user is already authorized via OAuth
+	// Note: permission enforcement is NOT applied on the SSE transport.
+	// SSE POST responses expect 202 Accepted; JSON-RPC errors returned as the
+	// HTTP body would be silently lost (clients read responses via the event
+	// stream). The primary /mcp Streamable HTTP endpoint enforces permissions.
 	return FastmailMCP.serveSSE('/sse').fetch(c.req.raw, c.env, c.executionCtx);
-});
+}
+
+app.all('/sse', handleSse);
+app.all('/sse/*', handleSse);
 
 // Attachment download proxy endpoint (no auth required - uses single-use token)
 app.get('/download/:token', async (c) => {
