@@ -79,10 +79,9 @@
 	 */
 	// Set WORKER_URL via: npx wrangler secret put WORKER_URL
 	// Value should be your deployed worker URL (e.g., https://fastmail-mcp.shahine.com)
-	"vars": {
-		"ACCESS_TEAM_NAME": "REDACTED_TEAM_NAME",
-		"ALLOWED_USERS": "REDACTED_EMAIL_1"
-	}
+	// ACCESS_TEAM_NAME and ALLOWED_USERS are set via Cloudflare dashboard
+	// and in .dev.vars for local development. Not in wrangler.jsonc to avoid PII.
+	// Set via: Workers & Pages → fastmail-mcp-remote → Settings → Variables
 	/**
 	 * Static Assets
 	 * https://developers.cloudflare.com/workers/static-assets/binding/
