@@ -310,8 +310,14 @@ export async function filterToolsListResponse(
 	userLogin: string,
 	kv: KVNamespace,
 ): Promise<Response> {
-	// Only filter JSON responses
 	const contentType = response.headers.get('content-type') || '';
+
+	// Handle SSE responses (text/event-stream) — MCP Streamable HTTP wraps JSON-RPC in SSE
+	if (contentType.includes('text/event-stream')) {
+		return filterSseToolsListResponse(response, userLogin, kv);
+	}
+
+	// Handle plain JSON responses
 	if (!contentType.includes('application/json')) return response;
 
 	let body: unknown;
@@ -362,6 +368,85 @@ export async function filterToolsListResponse(
 	headers.delete('Content-Length');
 
 	return new Response(JSON.stringify(filteredBody), {
+		status: response.status,
+		headers,
+	});
+}
+
+/**
+ * Filter a tools/list response delivered as SSE (text/event-stream).
+ *
+ * MCP Streamable HTTP wraps JSON-RPC responses in SSE events like:
+ *   event: message
+ *   data: {"jsonrpc":"2.0","id":1,"result":{"tools":[...]}}
+ *
+ * We read the full SSE body, find the tools/list result, filter it,
+ * and re-emit the modified SSE stream.
+ */
+async function filterSseToolsListResponse(
+	response: Response,
+	userLogin: string,
+	kv: KVNamespace,
+): Promise<Response> {
+	const text = await response.text();
+
+	// Parse SSE events — look for "data:" lines containing tools/list result
+	const lines = text.split('\n');
+	let modified = false;
+
+	const config = await getPermissionsConfig(kv);
+	const userConfig = getUserConfig(config, userLogin);
+	const visible = getVisibleTools(userConfig);
+
+	const outputLines: string[] = [];
+	for (const line of lines) {
+		if (!line.startsWith('data: ')) {
+			outputLines.push(line);
+			continue;
+		}
+
+		const jsonStr = line.substring(6); // strip "data: "
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(jsonStr);
+		} catch {
+			outputLines.push(line);
+			continue;
+		}
+
+		// Check if this is a tools/list result
+		if (
+			typeof parsed === 'object' &&
+			parsed !== null &&
+			'result' in (parsed as Record<string, unknown>)
+		) {
+			const result = (parsed as Record<string, unknown>).result as Record<string, unknown> | undefined;
+			if (result && Array.isArray(result.tools)) {
+				// Filter tools
+				const filteredTools = (result.tools as Array<Record<string, unknown>>).filter(
+					(tool) => {
+						const name = tool.name as string;
+						return !TOOL_CATEGORIES[name] || visible.has(name);
+					},
+				);
+
+				const filteredBody = {
+					...(parsed as Record<string, unknown>),
+					result: { ...result, tools: filteredTools },
+				};
+				outputLines.push(`data: ${JSON.stringify(filteredBody)}`);
+				modified = true;
+				continue;
+			}
+		}
+
+		outputLines.push(line);
+	}
+
+	const headers = new Headers(response.headers);
+	headers.delete('Content-Length');
+
+	return new Response(outputLines.join('\n'), {
 		status: response.status,
 		headers,
 	});
