@@ -3,6 +3,9 @@ ACCESS_CLIENT_ID=<your cloudflare access client id>
 ACCESS_CLIENT_SECRET=<your cloudflare access client secret>
 ACCESS_TEAM_NAME=<your cloudflare zero trust team name>
 
+# Allowed users (comma-separated email addresses)
+ALLOWED_USERS=user@example.com
+
 # Fastmail API token (get from https://www.fastmail.com/settings/security/tokens)
 FASTMAIL_API_TOKEN=<your fastmail api token>
 

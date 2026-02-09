@@ -8,8 +8,8 @@ declare namespace Cloudflare {
 	}
 	interface Env {
 		OAUTH_KV: KVNamespace;
-		ACCESS_TEAM_NAME: "REDACTED_TEAM_NAME";
-		ALLOWED_USERS: "REDACTED_EMAIL_1";
+		ACCESS_TEAM_NAME: string;
+		ALLOWED_USERS: string;
 		ACCESS_CLIENT_ID: string;
 		ACCESS_CLIENT_SECRET: string;
 		FASTMAIL_API_TOKEN: string;
