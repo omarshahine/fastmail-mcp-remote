@@ -18,6 +18,7 @@ import {
 } from "./oauth-handler";
 import { validateAccessToken } from "./oauth-utils";
 import { checkMcpPermissions, filterToolsListResponse } from "./permissions";
+import { markJsonResponse, markUntrustedText, isPimDataTool, getDatamarkingPreamble } from "./prompt-guard";
 
 export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<string, never>> {
 	server = new McpServer({
@@ -39,6 +40,20 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 		return new ContactsCalendarClient(auth);
 	}
 
+	/**
+	 * Wrap a JSON tool response with prompt injection datamarking.
+	 * Applies Microsoft Spotlighting (datamarking variant) to untrusted PIM fields.
+	 */
+	private guardResponse(toolName: string, data: unknown): { content: { text: string; type: "text" }[] } {
+		const json = JSON.stringify(data, null, 2);
+		if (isPimDataTool(toolName)) {
+			const preamble = getDatamarkingPreamble();
+			const marked = markJsonResponse(json, toolName);
+			return { content: [{ text: `${preamble}\n\n${marked}`, type: "text" }] };
+		}
+		return { content: [{ text: json, type: "text" }] };
+	}
+
 	async init() {
 		// Authorization is handled in OAuth callback (oauth-handler.ts)
 		// Only users in ALLOWED_USERS can obtain a valid access token
@@ -54,9 +69,7 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 			async () => {
 				const client = this.getJmapClient();
 				const mailboxes = await client.getMailboxes();
-				return {
-					content: [{ text: JSON.stringify(mailboxes, null, 2), type: "text" }],
-				};
+				return this.guardResponse("list_mailboxes", mailboxes);
 			},
 		);
 
@@ -70,9 +83,7 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 			async ({ mailboxId, limit }) => {
 				const client = this.getJmapClient();
 				const emails = await client.getEmails(mailboxId, limit);
-				return {
-					content: [{ text: JSON.stringify(emails, null, 2), type: "text" }],
-				};
+				return this.guardResponse("list_emails", emails);
 			},
 		);
 
@@ -87,12 +98,12 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 				const client = this.getJmapClient();
 				const email = await client.getEmailById(emailId);
 				if (format === "html") {
-					return {
-						content: [{ text: JSON.stringify(email, null, 2), type: "text" }],
-					};
+					return this.guardResponse("get_email", email);
 				}
+				const preamble = getDatamarkingPreamble();
+				const markdown = markUntrustedText(formatEmailAsMarkdown(email), "mail.body");
 				return {
-					content: [{ text: formatEmailAsMarkdown(email), type: "text" }],
+					content: [{ text: `${preamble}\n\n${markdown}`, type: "text" }],
 				};
 			},
 		);
@@ -368,9 +379,7 @@ ${quotedContent}
 			async ({ query, limit }) => {
 				const client = this.getJmapClient();
 				const emails = await client.searchEmails(query, limit);
-				return {
-					content: [{ text: JSON.stringify(emails, null, 2), type: "text" }],
-				};
+				return this.guardResponse("search_emails", emails);
 			},
 		);
 
@@ -384,9 +393,7 @@ ${quotedContent}
 			async ({ limit, mailboxName }) => {
 				const client = this.getJmapClient();
 				const emails = await client.getRecentEmails(limit, mailboxName);
-				return {
-					content: [{ text: JSON.stringify(emails, null, 2), type: "text" }],
-				};
+				return this.guardResponse("get_recent_emails", emails);
 			},
 		);
 
@@ -462,9 +469,7 @@ ${quotedContent}
 			async ({ emailId }) => {
 				const client = this.getJmapClient();
 				const attachments = await client.getEmailAttachments(emailId);
-				return {
-					content: [{ text: JSON.stringify(attachments, null, 2), type: "text" }],
-				};
+				return this.guardResponse("get_email_attachments", attachments);
 			},
 		);
 
@@ -554,9 +559,7 @@ ${quotedContent}
 			async (filters) => {
 				const client = this.getJmapClient();
 				const emails = await client.advancedSearch(filters);
-				return {
-					content: [{ text: JSON.stringify(emails, null, 2), type: "text" }],
-				};
+				return this.guardResponse("advanced_search", emails);
 			},
 		);
 
@@ -572,13 +575,13 @@ ${quotedContent}
 				try {
 					const thread = await client.getThread(threadId);
 					if (format === "html") {
-						return {
-							content: [{ text: JSON.stringify(thread, null, 2), type: "text" }],
-						};
+						return this.guardResponse("get_thread", thread);
 					}
+					const preamble = getDatamarkingPreamble();
 					const formatted = thread.map((email: any) => formatEmailAsMarkdown(email)).join('\n\n---\n\n');
+					const marked = markUntrustedText(formatted, "mail.thread");
 					return {
-						content: [{ text: formatted, type: "text" }],
+						content: [{ text: `${preamble}\n\n${marked}`, type: "text" }],
 					};
 				} catch (error) {
 					return {
@@ -597,9 +600,7 @@ ${quotedContent}
 			async ({ mailboxId }) => {
 				const client = this.getJmapClient();
 				const stats = await client.getMailboxStats(mailboxId);
-				return {
-					content: [{ text: JSON.stringify(stats, null, 2), type: "text" }],
-				};
+				return this.guardResponse("get_mailbox_stats", stats);
 			},
 		);
 
@@ -719,9 +720,7 @@ ${quotedContent}
 			async ({ limit }) => {
 				const client = this.getContactsCalendarClient();
 				const contacts = await client.getContacts(limit);
-				return {
-					content: [{ text: JSON.stringify(contacts, null, 2), type: "text" }],
-				};
+				return this.guardResponse("list_contacts", contacts);
 			},
 		);
 
@@ -734,9 +733,7 @@ ${quotedContent}
 			async ({ contactId }) => {
 				const client = this.getContactsCalendarClient();
 				const contact = await client.getContactById(contactId);
-				return {
-					content: [{ text: JSON.stringify(contact, null, 2), type: "text" }],
-				};
+				return this.guardResponse("get_contact", contact);
 			},
 		);
 
@@ -750,9 +747,7 @@ ${quotedContent}
 			async ({ query, limit }) => {
 				const client = this.getContactsCalendarClient();
 				const contacts = await client.searchContacts(query, limit);
-				return {
-					content: [{ text: JSON.stringify(contacts, null, 2), type: "text" }],
-				};
+				return this.guardResponse("search_contacts", contacts);
 			},
 		);
 
@@ -767,9 +762,7 @@ ${quotedContent}
 			async () => {
 				const client = this.getContactsCalendarClient();
 				const calendars = await client.getCalendars();
-				return {
-					content: [{ text: JSON.stringify(calendars, null, 2), type: "text" }],
-				};
+				return this.guardResponse("list_calendars", calendars);
 			},
 		);
 
@@ -783,9 +776,7 @@ ${quotedContent}
 			async ({ calendarId, limit }) => {
 				const client = this.getContactsCalendarClient();
 				const events = await client.getCalendarEvents(calendarId, limit);
-				return {
-					content: [{ text: JSON.stringify(events, null, 2), type: "text" }],
-				};
+				return this.guardResponse("list_calendar_events", events);
 			},
 		);
 
@@ -798,9 +789,7 @@ ${quotedContent}
 			async ({ eventId }) => {
 				const client = this.getContactsCalendarClient();
 				const event = await client.getCalendarEventById(eventId);
-				return {
-					content: [{ text: JSON.stringify(event, null, 2), type: "text" }],
-				};
+				return this.guardResponse("get_calendar_event", event);
 			},
 		);
 
