@@ -174,6 +174,32 @@ function markItem(item: Record<string, unknown>, domain: string): Record<string,
 function markToolResult(result: unknown, toolName: string): unknown {
   if (!result || typeof result !== "object") return result;
 
+  // Handle top-level arrays for calendar and contact tools
+  if (Array.isArray(result)) {
+    if (toolName === "list_calendars") {
+      return (result as Array<Record<string, unknown>>).map((c) => markItem(c, "event"));
+    }
+    if (toolName === "list_calendar_events") {
+      return (result as Array<Record<string, unknown>>).map((e) => markItem(e, "event"));
+    }
+    if (toolName === "list_contacts" || toolName === "search_contacts") {
+      return (result as Array<Record<string, unknown>>).map((c) => markItem(c, "contact"));
+    }
+    // Mail thread result (array of emails)
+    if (
+      toolName.startsWith("mail_") ||
+      toolName.includes("email") ||
+      toolName === "list_emails" ||
+      toolName === "get_email" ||
+      toolName === "search_emails" ||
+      toolName === "get_recent_emails" ||
+      toolName === "advanced_search" ||
+      toolName === "get_thread"
+    ) {
+      return (result as Array<Record<string, unknown>>).map((m) => markItem(m, "mail"));
+    }
+  }
+
   const marked = { ...(result as Record<string, unknown>) };
 
   // Calendar results
@@ -222,51 +248,9 @@ function markToolResult(result: unknown, toolName: string): unknown {
     if (marked.subject !== undefined || marked.body !== undefined || marked.textBody !== undefined) {
       return markItem(marked, "mail");
     }
-    // Thread result (array of emails)
-    if (Array.isArray(result)) {
-      return (result as Array<Record<string, unknown>>).map((m) => markItem(m, "mail"));
-    }
   }
 
   return marked;
-}
-
-/**
- * Apply datamarking to a JSON string tool response.
- * Parses the JSON, applies marking, and re-serializes.
- * Falls back to raw text marking if JSON parsing fails.
- */
-function markJsonResponse(jsonText: string, toolName: string): string {
-  try {
-    const parsed = JSON.parse(jsonText);
-
-    // Handle arrays at the top level (e.g., mailbox lists, thread results)
-    if (Array.isArray(parsed)) {
-      const domain = getDomainForTool(toolName);
-      if (domain) {
-        const marked = parsed.map((item: Record<string, unknown>) =>
-          typeof item === "object" && item !== null ? markItem(item, domain) : item,
-        );
-        return JSON.stringify(marked, null, 2);
-      }
-    }
-
-    const marked = markToolResult(parsed, toolName);
-    return JSON.stringify(marked, null, 2);
-  } catch {
-    // Not JSON - apply text-level marking for known risky tools
-    return markUntrustedText(jsonText, toolName);
-  }
-}
-
-/**
- * Determine the PIM domain for a given tool name.
- */
-function getDomainForTool(toolName: string): string | null {
-  if (toolName.includes("calendar") || toolName.includes("event")) return "event";
-  if (toolName.includes("contact")) return "contact";
-  if (toolName.includes("email") || toolName.includes("mail") || toolName === "get_thread" || toolName === "advanced_search") return "mail";
-  return null;
 }
 
 /** Tools that return untrusted PIM data requiring datamarking */
