@@ -391,6 +391,30 @@ ${quotedContent}
 		);
 
 		this.server.tool(
+			"get_inbox_updates",
+			"Get inbox changes since a previous state. Returns only new/removed emails for incremental sync. On first call (no sinceQueryState), returns all inbox emails with a state token for future incremental calls.",
+			{
+				sinceQueryState: z.string().optional().describe("Opaque JMAP query state token from a previous call. Omit for full fetch."),
+				mailboxId: z.string().optional().describe("Mailbox ID to query (auto-discovers Inbox if omitted)"),
+				limit: z.number().default(100).describe("Maximum number of emails to return (default: 100)"),
+			},
+			async ({ sinceQueryState, mailboxId, limit }) => {
+				try {
+					const client = this.getJmapClient();
+					const result = await client.getInboxUpdates({ sinceQueryState, mailboxId, limit });
+					return {
+						content: [{ text: JSON.stringify(result, null, 2), type: "text" }],
+					};
+				} catch (error) {
+					const errorMessage = error instanceof Error ? error.message : String(error);
+					return {
+						content: [{ text: `Failed to get inbox updates: ${errorMessage}`, type: "text" }],
+					};
+				}
+			},
+		);
+
+		this.server.tool(
 			"mark_email_read",
 			"Mark an email as read or unread",
 			{
@@ -853,7 +877,7 @@ ${quotedContent}
 						available: true,
 						functions: [
 							'list_mailboxes', 'list_emails', 'get_email', 'send_email', 'create_draft',
-							'search_emails', 'get_recent_emails', 'mark_email_read', 'flag_email', 'delete_email', 'move_email',
+							'search_emails', 'get_recent_emails', 'get_inbox_updates', 'mark_email_read', 'flag_email', 'delete_email', 'move_email',
 							'get_email_attachments', 'download_attachment', 'advanced_search', 'get_thread',
 							'get_mailbox_stats', 'get_account_summary', 'bulk_mark_read', 'bulk_move', 'bulk_delete', 'bulk_flag'
 						]

@@ -359,6 +359,124 @@ export class JmapClient {
     return response.methodResponses[1][1].list;
   }
 
+  async getInboxUpdates(options: {
+    sinceQueryState?: string;
+    mailboxId?: string;
+    limit?: number;
+  } = {}): Promise<{
+    queryState: string;
+    added: any[];
+    removed: string[];
+    total: number;
+    isFullQuery: boolean;
+  }> {
+    const session = await this.getSession();
+    const limit = options.limit || 100;
+
+    // Auto-discover Inbox if mailboxId not provided
+    let mailboxId = options.mailboxId;
+    if (!mailboxId) {
+      const mailboxes = await this.getMailboxes();
+      const inbox = mailboxes.find((mb: any) => mb.role === 'inbox');
+      if (!inbox) {
+        throw new Error('Could not find Inbox mailbox');
+      }
+      mailboxId = inbox.id;
+    }
+
+    const filter = { inMailbox: mailboxId };
+    const sort = [{ property: 'receivedAt', isAscending: false }];
+
+    // Incremental path: use Email/queryChanges
+    if (options.sinceQueryState) {
+      try {
+        const request: JmapRequest = {
+          using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+          methodCalls: [
+            ['Email/queryChanges', {
+              accountId: session.accountId,
+              filter,
+              sort,
+              sinceQueryState: options.sinceQueryState,
+              maxChanges: limit,
+            }, 'queryChanges'],
+          ]
+        };
+
+        const response = await this.makeRequest(request);
+        const changesResult = response.methodResponses[0][1];
+
+        // Check for cannotCalculateChanges error
+        if (changesResult.type === 'cannotCalculateChanges') {
+          // Fall through to full query below
+        } else {
+          const addedIds = (changesResult.added || []).map((entry: any) => entry.id);
+          const removedIds = (changesResult.removed || []);
+
+          // Fetch full email objects for added IDs
+          let addedEmails: any[] = [];
+          if (addedIds.length > 0) {
+            const getRequest: JmapRequest = {
+              using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+              methodCalls: [
+                ['Email/get', {
+                  accountId: session.accountId,
+                  ids: addedIds,
+                  properties: ['id', 'subject', 'from', 'to', 'receivedAt', 'preview', 'hasAttachment', 'keywords']
+                }, 'emails']
+              ]
+            };
+            const getResponse = await this.makeRequest(getRequest);
+            addedEmails = getResponse.methodResponses[0][1].list;
+          }
+
+          return {
+            queryState: changesResult.newQueryState,
+            added: addedEmails,
+            removed: removedIds,
+            total: changesResult.total ?? addedEmails.length,
+            isFullQuery: false,
+          };
+        }
+      } catch (error: any) {
+        // If the error is cannotCalculateChanges, fall through to full query
+        if (!error?.message?.includes('cannotCalculateChanges')) {
+          // For other errors, also fall through gracefully
+        }
+      }
+    }
+
+    // Full query path: Email/query + Email/get via backreference
+    const request: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/query', {
+          accountId: session.accountId,
+          filter,
+          sort,
+          limit,
+        }, 'query'],
+        ['Email/get', {
+          accountId: session.accountId,
+          '#ids': { resultOf: 'query', name: 'Email/query', path: '/ids' },
+          properties: ['id', 'subject', 'from', 'to', 'receivedAt', 'preview', 'hasAttachment', 'keywords']
+        }, 'emails']
+      ]
+    };
+
+    const response = await this.makeRequest(request);
+    const queryResult = response.methodResponses[0][1];
+    const emails = response.methodResponses[1][1].list;
+
+    return {
+      queryState: queryResult.queryState,
+      added: emails,
+      removed: [],
+      total: queryResult.total ?? emails.length,
+      isFullQuery: true,
+    };
+  }
+
   async getEmailById(id: string): Promise<any> {
     const session = await this.getSession();
 
