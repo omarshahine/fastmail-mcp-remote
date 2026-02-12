@@ -213,8 +213,8 @@ describe('getVisibleTools', () => {
 });
 
 describe('TOOL_CATEGORIES completeness', () => {
-	it('maps all 31 tools', () => {
-		expect(Object.keys(TOOL_CATEGORIES).length).toBe(31);
+	it('maps all 32 tools', () => {
+		expect(Object.keys(TOOL_CATEGORIES).length).toBe(32);
 	});
 
 	it('has no empty categories', () => {

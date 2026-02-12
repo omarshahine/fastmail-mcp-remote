@@ -18,7 +18,7 @@ import {
 } from "./oauth-handler";
 import { validateAccessToken } from "./oauth-utils";
 import { checkMcpPermissions, filterToolsListResponse } from "./permissions";
-import { markToolResult, markUntrustedText, isPimDataTool, getDatamarkingPreamble } from "./prompt-guard";
+import { markToolResult, markUntrustedText, isExternalDataTool, getDatamarkingPreamble } from "./prompt-guard";
 
 export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<string, never>> {
   server = new McpServer({
@@ -42,10 +42,10 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
 
   /**
    * Wrap a JSON tool response with prompt injection datamarking.
-   * Applies Microsoft Spotlighting (datamarking variant) to untrusted PIM fields.
+   * Applies Microsoft Spotlighting (datamarking variant) to untrusted external fields.
    */
   private guardResponse(toolName: string, data: unknown): { content: { text: string; type: "text" }[] } {
-    if (isPimDataTool(toolName)) {
+    if (isExternalDataTool(toolName)) {
       const preamble = getDatamarkingPreamble();
       const marked = markToolResult(data, toolName);
       const json = JSON.stringify(marked, null, 2);

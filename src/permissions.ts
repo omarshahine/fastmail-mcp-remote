@@ -84,6 +84,9 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
 	// SEND
 	send_email: 'SEND',
 
+	// EMAIL_READ (incremental sync)
+	get_inbox_updates: 'EMAIL_READ',
+
 	// META
 	check_function_availability: 'META',
 };

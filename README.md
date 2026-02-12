@@ -36,6 +36,7 @@ A remote MCP (Model Context Protocol) server for Fastmail email, contacts, and c
 - `bulk_delete` - Delete multiple emails
 - `flag_email` - Flag or unflag an email
 - `bulk_flag` - Flag or unflag multiple emails
+- `get_inbox_updates` - Get inbox changes since a previous state (incremental sync)
 
 ### Email Body Formats
 
@@ -326,6 +327,81 @@ This is a comma-separated list of email addresses. Users not in this list will b
 - OAuth tokens stored in Cloudflare KV with TTL expiration
 - All traffic over HTTPS
 - Email-based allowlist for access control
+
+## Delegate Access (Role-Based Permissions)
+
+The server supports role-based access control with two layers:
+
+1. **Role-based** — `admin` (full access) vs `delegate` (read + inbox management + drafts)
+2. **Category-based** — per-user disabled categories (e.g., hide contacts/calendar)
+
+### Roles
+
+| Role | Can Do | Cannot Do |
+|------|--------|-----------|
+| **admin** | Everything (unless categories are disabled) | — |
+| **delegate** | Read email, manage inbox, create drafts, reply as draft | Send email, create calendar events |
+
+### Tool Categories
+
+| Category | Tools | Admin | Delegate |
+|----------|-------|:-----:|:--------:|
+| `EMAIL_READ` | list_mailboxes, list_emails, get_email, search_emails, get_recent_emails, get_inbox_updates, get_email_attachments, download_attachment, advanced_search, get_thread, get_mailbox_stats, get_account_summary, list_identities | Yes | Yes |
+| `CONTACTS` | list_contacts, get_contact, search_contacts | Yes | Yes |
+| `CALENDAR_READ` | list_calendars, list_calendar_events, get_calendar_event | Yes | Yes |
+| `CALENDAR_WRITE` | create_calendar_event | Yes | No |
+| `INBOX_MANAGE` | mark_email_read, flag_email, delete_email, move_email, bulk_mark_read, bulk_move, bulk_delete, bulk_flag | Yes | Yes |
+| `DRAFT` | create_draft | Yes | Yes |
+| `REPLY` | reply_to_email | Yes | Yes* |
+| `SEND` | send_email | Yes | No |
+| `META` | check_function_availability | Yes | Yes |
+
+\* Delegates can use `reply_to_email` to create draft replies, but `sendImmediately: true` is denied.
+
+### Configuration
+
+Permissions are stored in Cloudflare KV under the key `config:permissions` as JSON:
+
+```json
+{
+  "users": {
+    "admin@example.com": {
+      "role": "admin",
+      "disabled_categories": []
+    },
+    "assistant@example.com": {
+      "role": "delegate",
+      "disabled_categories": ["CONTACTS", "CALENDAR_READ", "CALENDAR_WRITE"]
+    }
+  },
+  "default_role": "admin",
+  "default_disabled_categories": []
+}
+```
+
+Set the config via wrangler:
+
+```bash
+# Write permissions config to KV
+npx wrangler kv key put --binding=OAUTH_KV "config:permissions" '{
+  "users": {
+    "assistant@example.com": {
+      "role": "delegate",
+      "disabled_categories": ["CONTACTS", "CALENDAR_READ", "CALENDAR_WRITE"]
+    }
+  },
+  "default_role": "admin",
+  "default_disabled_categories": []
+}'
+```
+
+### How It Works
+
+- **tools/list filtering**: Delegates only see tools they're allowed to use. Disabled categories are hidden for all roles.
+- **tools/call interception**: If a delegate tries to call a denied tool, they receive a JSON-RPC error with an actionable hint (e.g., "Use 'create_draft' to compose emails as drafts instead").
+- **Config caching**: Permissions config is cached for 5 minutes to minimize KV reads.
+- **Unknown users**: Fall back to `default_role` and `default_disabled_categories`.
+- **Case-insensitive**: Email lookups are case-insensitive.
 
 ## Troubleshooting
 
