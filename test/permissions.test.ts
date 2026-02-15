@@ -5,6 +5,7 @@ import {
 	getUserConfig,
 	isToolAllowed,
 	getVisibleTools,
+	checkMcpPermissions,
 	TOOL_CATEGORIES,
 	_resetCache,
 } from '../src/permissions';
@@ -209,6 +210,81 @@ describe('getVisibleTools', () => {
 		expect(visible.has('reply_to_email')).toBe(true);
 		expect(visible.has('list_contacts')).toBe(true);
 		expect(visible.has('list_calendars')).toBe(true);
+	});
+});
+
+describe('checkMcpPermissions — fail-closed', () => {
+	// Mock KV that returns delegate config
+	const mockKv = {
+		get: async () => TEST_CONFIG,
+	} as unknown as KVNamespace;
+
+	it('returns null (allows) for null body (GET requests)', async () => {
+		const result = await checkMcpPermissions(null, 'admin@example.com', mockKv);
+		expect(result).toBeNull();
+	});
+
+	it('DENIES unparseable JSON body (fail-closed)', async () => {
+		const result = await checkMcpPermissions('not json{{{', 'delegate@example.com', mockKv);
+		expect(result).not.toBeNull();
+		const body = await result!.json() as { error: { message: string } };
+		expect(body.error.message).toContain('could not parse');
+	});
+
+	it('denies send_email for delegate', async () => {
+		const body = JSON.stringify({
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/call',
+			params: { name: 'send_email', arguments: { to: ['x@example.com'], subject: 'hi', textBody: 'hi' } },
+		});
+		const result = await checkMcpPermissions(body, 'delegate@example.com', mockKv);
+		expect(result).not.toBeNull();
+		const json = await result!.json() as { error: { message: string } };
+		expect(json.error.message).toContain('delegate');
+	});
+
+	it('allows send_email for admin', async () => {
+		const body = JSON.stringify({
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/call',
+			params: { name: 'send_email', arguments: { to: ['x@example.com'], subject: 'hi', textBody: 'hi' } },
+		});
+		const result = await checkMcpPermissions(body, 'admin@example.com', mockKv);
+		expect(result).toBeNull();
+	});
+
+	it('allows non-tools/call methods', async () => {
+		const body = JSON.stringify({
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/list',
+		});
+		const result = await checkMcpPermissions(body, 'delegate@example.com', mockKv);
+		expect(result).toBeNull();
+	});
+
+	it('denies reply_to_email with sendImmediately:true for delegate', async () => {
+		const body = JSON.stringify({
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/call',
+			params: { name: 'reply_to_email', arguments: { emailId: 'abc', body: 'hi', sendImmediately: true } },
+		});
+		const result = await checkMcpPermissions(body, 'delegate@example.com', mockKv);
+		expect(result).not.toBeNull();
+	});
+
+	it('allows reply_to_email without sendImmediately for delegate', async () => {
+		const body = JSON.stringify({
+			jsonrpc: '2.0',
+			id: 1,
+			method: 'tools/call',
+			params: { name: 'reply_to_email', arguments: { emailId: 'abc', body: 'hi' } },
+		});
+		const result = await checkMcpPermissions(body, 'delegate@example.com', mockKv);
+		expect(result).toBeNull();
 	});
 });
 

@@ -239,25 +239,44 @@ export function getVisibleTools(userConfig: UserConfig): Set<string> {
 // ─── Hono-Level Interception ────────────────────────────────────────────────
 
 /**
- * Check a tools/call request and return a JSON-RPC error Response if denied.
+ * Check a tools/call request body and return a JSON-RPC error Response if denied.
  * Returns null if the request is allowed (or is not a tools/call).
  *
- * Clones the request internally so the original body remains unconsumed.
+ * SECURITY: Accepts a pre-read body string to avoid Request.clone() issues.
+ * The caller reads the body once and passes it here AND to the SDK handler.
+ * This eliminates the fail-open risk where clone().json() silently fails.
+ *
+ * SECURITY: Fails CLOSED — if the body cannot be parsed as JSON for a POST,
+ * the request is DENIED rather than allowed through.
  */
 export async function checkMcpPermissions(
-	request: Request,
+	bodyText: string | null,
 	userLogin: string,
 	kv: KVNamespace,
 ): Promise<Response | null> {
-	// Only intercept POST requests (JSON-RPC)
-	if (request.method !== 'POST') return null;
+	// Only check when there's a body (POST requests)
+	if (bodyText === null) return null;
 
 	let body: unknown;
 	try {
-		body = await request.clone().json();
+		body = JSON.parse(bodyText);
 	} catch {
-		// Not JSON — let it through
-		return null;
+		// FAIL CLOSED: If we can't parse the body, deny with error
+		console.error('[permissions] Failed to parse request body as JSON — denying request');
+		return new Response(
+			JSON.stringify({
+				jsonrpc: '2.0',
+				id: null,
+				error: {
+					code: -32700,
+					message: 'Permission check failed: could not parse request body.',
+				},
+			}),
+			{
+				status: 200,
+				headers: { 'Content-Type': 'application/json' },
+			},
+		);
 	}
 
 	// JSON-RPC can be an object or an array (batch)
@@ -284,6 +303,7 @@ export async function checkMcpPermissions(
 
 		if (!result.allowed) {
 			const id = (msg as Record<string, unknown>).id ?? null;
+			console.warn(`[permissions] DENIED: user=${userLogin} tool=${toolName} reason=${result.error}`);
 			return new Response(
 				JSON.stringify({
 					jsonrpc: '2.0',
@@ -321,7 +341,9 @@ export async function filterToolsListResponse(
 	}
 
 	// Handle plain JSON responses
-	if (!contentType.includes('application/json')) return response;
+	if (!contentType.includes('application/json')) {
+		return response;
+	}
 
 	let body: unknown;
 	try {
@@ -425,6 +447,7 @@ async function filterSseToolsListResponse(
 		) {
 			const result = (parsed as Record<string, unknown>).result as Record<string, unknown> | undefined;
 			if (result && Array.isArray(result.tools)) {
+				const before = result.tools.length;
 				// Filter tools
 				const filteredTools = (result.tools as Array<Record<string, unknown>>).filter(
 					(tool) => {
@@ -432,7 +455,7 @@ async function filterSseToolsListResponse(
 						return !TOOL_CATEGORIES[name] || visible.has(name);
 					},
 				);
-
+	
 				const filteredBody = {
 					...(parsed as Record<string, unknown>),
 					result: { ...result, tools: filteredTools },

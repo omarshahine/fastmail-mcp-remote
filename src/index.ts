@@ -17,7 +17,7 @@ import {
   handleGetTokenCallback,
 } from "./oauth-handler";
 import { validateAccessToken } from "./oauth-utils";
-import { checkMcpPermissions, filterToolsListResponse } from "./permissions";
+import { checkMcpPermissions, filterToolsListResponse, getPermissionsConfig, getUserConfig, getVisibleTools, isToolAllowed, TOOL_CATEGORIES } from "./permissions";
 import { markToolResult, markUntrustedText, isExternalDataTool, getDatamarkingPreamble } from "./prompt-guard";
 
 export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<string, never>> {
@@ -25,6 +25,49 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
     name: "Fastmail MCP Remote",
     version: "1.0.0",
   });
+
+  /** Current user email, set per-request via X-MCP-User header. */
+  private currentUser: string | null = null;
+
+  /**
+   * Override onConnect to extract the user identity from the X-MCP-User header
+   * injected by the Hono middleware. This enables defense-in-depth permission
+   * checks inside individual tool handlers.
+   */
+  async onConnect(conn: unknown, ctx: { request: Request }) {
+    this.currentUser = ctx.request.headers.get('X-MCP-User');
+    // @ts-expect-error — McpAgent.onConnect has complex generics; super call is safe
+    return super.onConnect(conn, ctx);
+  }
+
+  /**
+   * Defense-in-depth: Check if a tool call is allowed for the current user.
+   * Used inside sensitive tool handlers (send_email, reply_to_email).
+   * Returns an error result if denied, or null if allowed.
+   */
+  private async checkToolPermission(
+    toolName: string,
+    args?: Record<string, unknown>,
+  ): Promise<{ content: { text: string; type: "text" }[] } | null> {
+    if (!this.currentUser) {
+      console.error(`[permissions] INNER CHECK: No user identity for ${toolName} — denying`);
+      return {
+        content: [{ text: `Error: Permission denied — no user identity available.`, type: "text" }],
+      };
+    }
+
+    const config = await getPermissionsConfig(this.env.OAUTH_KV);
+    const userConfig = getUserConfig(config, this.currentUser);
+    const result = isToolAllowed(userConfig, toolName, args);
+
+    if (!result.allowed) {
+      console.warn(`[permissions] INNER DENIED: user=${this.currentUser} tool=${toolName}`);
+      return {
+        content: [{ text: `Error: ${result.error}`, type: "text" }],
+      };
+    }
+    return null;
+  }
 
   private getJmapClient(): JmapClient {
     const auth = new FastmailAuth({
@@ -142,6 +185,10 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
           .describe("Message-ID chain for threading. Combine original email's references with its messageId."),
       },
       async ({ to, cc, bcc, from, subject, textBody, htmlBody, markdownBody, attachments, inReplyTo, references }) => {
+        // DEFENSE-IN-DEPTH: Block delegates even if the outer Hono check is bypassed
+        const denied = await this.checkToolPermission('send_email');
+        if (denied) return denied;
+
         if (!textBody && !htmlBody && !markdownBody) {
           return {
             content: [{ text: "Error: Either textBody, htmlBody, or markdownBody is required", type: "text" }],
@@ -273,6 +320,12 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
         excludeQuote: z.boolean().default(false).describe("If true, don't include quoted original message. Default includes quote."),
       },
       async ({ emailId, body, htmlBody, markdownBody, from, replyAll, sendImmediately, excludeQuote }) => {
+        // DEFENSE-IN-DEPTH: Block delegates from sending replies immediately
+        if (sendImmediately) {
+          const denied = await this.checkToolPermission('reply_to_email', { sendImmediately: true });
+          if (denied) return denied;
+        }
+
         try {
           const client = this.getJmapClient();
 
@@ -926,54 +979,84 @@ ${quotedContent}
         const client = this.getJmapClient();
         const session = await client.getSession();
 
+        // Build the set of tools visible to the current user (respects role + disabled categories)
+        let visibleTools: Set<string>;
+        let userRole: string = 'unknown';
+        if (this.currentUser) {
+          const config = await getPermissionsConfig(this.env.OAUTH_KV);
+          const userConfig = getUserConfig(config, this.currentUser);
+          visibleTools = getVisibleTools(userConfig);
+          userRole = userConfig.role;
+        } else {
+          // No user identity — show all tools (conservative: admin default)
+          visibleTools = new Set(Object.keys(TOOL_CATEGORIES));
+        }
+
+        // Helper to filter tool lists to only visible tools
+        const filterTools = (tools: string[]) => tools.filter((t) => visibleTools.has(t));
+
+        const allEmailFunctions = [
+          "list_mailboxes",
+          "list_emails",
+          "get_email",
+          "send_email",
+          "create_draft",
+          "search_emails",
+          "get_recent_emails",
+          "get_inbox_updates",
+          "mark_email_read",
+          "flag_email",
+          "delete_email",
+          "move_email",
+          "get_email_attachments",
+          "download_attachment",
+          "advanced_search",
+          "get_thread",
+          "get_mailbox_stats",
+          "get_account_summary",
+          "bulk_mark_read",
+          "bulk_move",
+          "bulk_delete",
+          "bulk_flag",
+        ];
+
+        const allContactsFunctions = ["list_contacts", "get_contact", "search_contacts"];
+        const allCalendarFunctions = ["list_calendars", "list_calendar_events", "get_calendar_event", "create_calendar_event"];
+
+        const emailFunctions = filterTools(allEmailFunctions);
+        const contactsFunctions = filterTools(allContactsFunctions);
+        const calendarFunctions = filterTools(allCalendarFunctions);
+
         const availability = {
           email: {
-            available: true,
-            functions: [
-              "list_mailboxes",
-              "list_emails",
-              "get_email",
-              "send_email",
-              "create_draft",
-              "search_emails",
-              "get_recent_emails",
-              "get_inbox_updates",
-              "mark_email_read",
-              "flag_email",
-              "delete_email",
-              "move_email",
-              "get_email_attachments",
-              "download_attachment",
-              "advanced_search",
-              "get_thread",
-              "get_mailbox_stats",
-              "get_account_summary",
-              "bulk_mark_read",
-              "bulk_move",
-              "bulk_delete",
-              "bulk_flag",
-            ],
+            available: emailFunctions.length > 0,
+            functions: emailFunctions,
           },
           identity: {
-            available: true,
-            functions: ["list_identities"],
+            available: visibleTools.has("list_identities"),
+            functions: filterTools(["list_identities"]),
           },
           contacts: {
-            available: !!session.capabilities["urn:ietf:params:jmap:contacts"],
-            functions: ["list_contacts", "get_contact", "search_contacts"],
-            note: session.capabilities["urn:ietf:params:jmap:contacts"]
-              ? "Contacts are available"
-              : "Contacts access not available - may require enabling in Fastmail account settings",
+            available: contactsFunctions.length > 0 && !!session.capabilities["urn:ietf:params:jmap:contacts"],
+            functions: contactsFunctions,
+            note: !session.capabilities["urn:ietf:params:jmap:contacts"]
+              ? "Contacts access not available - may require enabling in Fastmail account settings"
+              : contactsFunctions.length === 0
+                ? "Contacts are disabled for your account"
+                : "Contacts are available",
           },
           calendar: {
-            available: !!session.capabilities["urn:ietf:params:jmap:calendars"],
-            functions: ["list_calendars", "list_calendar_events", "get_calendar_event", "create_calendar_event"],
-            note: session.capabilities["urn:ietf:params:jmap:calendars"]
-              ? "Calendar is available"
-              : "Calendar access not available - may require enabling in Fastmail account settings",
+            available: calendarFunctions.length > 0 && !!session.capabilities["urn:ietf:params:jmap:calendars"],
+            functions: calendarFunctions,
+            note: !session.capabilities["urn:ietf:params:jmap:calendars"]
+              ? "Calendar access not available - may require enabling in Fastmail account settings"
+              : calendarFunctions.length === 0
+                ? "Calendar is disabled for your account"
+                : "Calendar is available",
           },
           capabilities: Object.keys(session.capabilities),
-          authenticatedUser: "authenticated via OAuth",
+          authenticatedUser: this.currentUser || "authenticated via OAuth",
+          role: userRole,
         };
 
         return {
@@ -1082,12 +1165,30 @@ app.all("/mcp", async (c) => {
     return unauthorizedResponse(c, "invalid_token", "Invalid or expired access token");
   }
 
-  // Check tools/call permissions (clones request internally)
-  const denial = await checkMcpPermissions(c.req.raw, tokenInfo.user_login, c.env.OAUTH_KV);
+  // SECURITY: Read the body ONCE for both permission checking and SDK forwarding.
+  // This eliminates Request.clone() which can silently fail in Workers runtime,
+  // causing the fail-open catch block to allow denied tool calls through.
+  let bodyText: string | null = null;
+  if (c.req.raw.method === 'POST') {
+    bodyText = await c.req.raw.text();
+  }
+
+  // Check tools/call permissions using the pre-read body
+  const denial = await checkMcpPermissions(bodyText, tokenInfo.user_login, c.env.OAUTH_KV);
   if (denial) return denial;
 
+  // Reconstruct a fresh Request with the same body for the SDK handler.
+  // Also inject X-MCP-User header so tool handlers can enforce permissions internally.
+  const headers = new Headers(c.req.raw.headers);
+  headers.set('X-MCP-User', tokenInfo.user_login);
+  const sdkRequest = new Request(c.req.raw.url, {
+    method: c.req.raw.method,
+    headers,
+    body: bodyText,
+  });
+
   // Pass through to MCP SDK
-  const response = await FastmailMCP.serve("/mcp").fetch(c.req.raw, c.env, c.executionCtx);
+  const response = await FastmailMCP.serve("/mcp").fetch(sdkRequest, c.env, c.executionCtx);
 
   // Filter tools/list response to hide disabled categories
   return filterToolsListResponse(response, tokenInfo.user_login, c.env.OAUTH_KV);
