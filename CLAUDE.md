@@ -186,6 +186,14 @@ claude mcp add --scope user --transport http fastmail "https://<your-worker-doma
 
 Complete OAuth via `/mcp` in Claude Code when prompted.
 
+## Code Hygiene
+
+- **Config files** (`wrangler.jsonc`, `wrangler.toml`, `*.d.ts`, `.env*`, `*.json`): No real email addresses - use `wrangler secret put` for PII
+- No hardcoded user paths (`/Users/[name]/`) - use `${HOME}` or env vars
+- No API keys or secrets in code - use environment variables or Cloudflare secrets
+- No phone numbers or PII in examples - use generic placeholders
+- Excluded from checks: `.dev.vars.example`, `Co-Authored-By` lines, `CHANGELOG.md`
+
 ## Known Limitations
 
 ### No JMAP Sieve/Rules API (as of January 2026)
