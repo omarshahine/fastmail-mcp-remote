@@ -486,7 +486,7 @@ export class JmapClient {
         ['Email/get', {
           accountId: session.accountId,
           ids: [id],
-          properties: ['id', 'subject', 'from', 'replyTo', 'to', 'cc', 'bcc', 'receivedAt', 'preview', 'textBody', 'htmlBody', 'attachments', 'bodyValues', 'messageId', 'inReplyTo', 'references', 'threadId'],
+          properties: ['id', 'subject', 'from', 'replyTo', 'to', 'cc', 'bcc', 'receivedAt', 'preview', 'textBody', 'htmlBody', 'attachments', 'bodyValues', 'messageId', 'inReplyTo', 'references', 'threadId', 'keywords', 'mailboxIds'],
           bodyProperties: ['partId', 'blobId', 'type', 'size', 'name'],
           fetchTextBodyValues: true,
           fetchHTMLBodyValues: true,
@@ -1433,7 +1433,7 @@ export class JmapClient {
 
     const emailObject: JmapEmailObject = {
       mailboxIds: memosMailboxIds,
-      keywords: { $seen: true },
+      keywords: { $seen: true, $memo: true },
       from: [{ email: userEmail }],
       to: [],
       cc: [],
