@@ -1409,6 +1409,155 @@ export class JmapClient {
     }
   }
 
+  async createMemo(emailId: string, text: string): Promise<{ memoId: string; subject: string }> {
+    const session = await this.getSession();
+
+    // Get the target email's messageId and subject
+    const targetEmail = await this.getEmailById(emailId);
+    if (!targetEmail.messageId || targetEmail.messageId.length === 0) {
+      throw new Error('Target email has no messageId — cannot create memo');
+    }
+
+    // Find the Memos mailbox by role
+    const mailboxes = await this.getMailboxes();
+    const memosMailbox = mailboxes.find((mb: any) => mb.role === 'memos');
+    if (!memosMailbox) {
+      throw new Error('Memos mailbox not found. Memos may not be enabled for this account.');
+    }
+
+    // Get user's email for the From field
+    const userEmail = await this.getUserEmail();
+
+    const memosMailboxIds: Record<string, boolean> = {};
+    memosMailboxIds[memosMailbox.id] = true;
+
+    const emailObject: JmapEmailObject = {
+      mailboxIds: memosMailboxIds,
+      keywords: { $seen: true },
+      from: [{ email: userEmail }],
+      to: [],
+      cc: [],
+      bcc: [],
+      subject: targetEmail.subject || '(no subject)',
+      textBody: [{ partId: 'text', type: 'text/plain' }],
+      bodyValues: {
+        text: { value: text },
+      },
+      inReplyTo: targetEmail.messageId,
+    };
+
+    const request: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/set', {
+          accountId: session.accountId,
+          create: { memo: emailObject }
+        }, 'createMemo']
+      ]
+    };
+
+    const response = await this.makeRequest(request);
+    const result = response.methodResponses[0][1];
+
+    if (result.notCreated && result.notCreated.memo) {
+      const error = result.notCreated.memo;
+      throw new Error(`Failed to create memo: ${error.type || 'unknown'}. ${error.description || ''}`);
+    }
+
+    return {
+      memoId: result.created?.memo?.id || 'unknown',
+      subject: targetEmail.subject || '(no subject)',
+    };
+  }
+
+  async getMemo(emailId: string): Promise<{ memoId: string; text: string; createdAt: string } | null> {
+    const session = await this.getSession();
+
+    // Get the target email's messageId to match against inReplyTo
+    const targetEmail = await this.getEmailById(emailId);
+    if (!targetEmail.messageId || targetEmail.messageId.length === 0) {
+      return null;
+    }
+
+    // Find the Memos mailbox by role
+    const mailboxes = await this.getMailboxes();
+    const memosMailbox = mailboxes.find((mb: any) => mb.role === 'memos');
+    if (!memosMailbox) {
+      return null;
+    }
+
+    // Query Memos mailbox for emails with matching header
+    // Use Email/query with header filter for In-Reply-To
+    const targetMessageId = targetEmail.messageId[0];
+
+    const request: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/query', {
+          accountId: session.accountId,
+          filter: {
+            inMailbox: memosMailbox.id,
+            header: ['In-Reply-To', targetMessageId],
+          },
+          limit: 1,
+        }, 'query'],
+        ['Email/get', {
+          accountId: session.accountId,
+          '#ids': { resultOf: 'query', name: 'Email/query', path: '/ids' },
+          properties: ['id', 'receivedAt', 'textBody', 'bodyValues'],
+          fetchTextBodyValues: true,
+        }, 'memos']
+      ]
+    };
+
+    const response = await this.makeRequest(request);
+    const memos = response.methodResponses[1][1].list;
+
+    if (!memos || memos.length === 0) {
+      return null;
+    }
+
+    const memo = memos[0];
+    const textPartId = memo.textBody?.[0]?.partId;
+    const text = textPartId ? memo.bodyValues?.[textPartId]?.value || '' : '';
+
+    return {
+      memoId: memo.id,
+      text,
+      createdAt: memo.receivedAt,
+    };
+  }
+
+  async deleteMemo(emailId: string): Promise<boolean> {
+    const memo = await this.getMemo(emailId);
+    if (!memo) {
+      return false;
+    }
+
+    const session = await this.getSession();
+
+    // Permanently destroy the memo email (not move to trash)
+    const request: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/set', {
+          accountId: session.accountId,
+          destroy: [memo.memoId]
+        }, 'deleteMemo']
+      ]
+    };
+
+    const response = await this.makeRequest(request);
+    const result = response.methodResponses[0][1];
+
+    if (result.notDestroyed && result.notDestroyed[memo.memoId]) {
+      const error = result.notDestroyed[memo.memoId];
+      throw new Error(`Failed to delete memo: ${error.type || 'unknown'}. ${error.description || ''}`);
+    }
+
+    return true;
+  }
+
   async bulkDelete(emailIds: string[]): Promise<void> {
     const session = await this.getSession();
 

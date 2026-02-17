@@ -743,6 +743,85 @@ ${quotedContent}
       },
     );
 
+    // =====================
+    // MEMO TOOLS
+    // =====================
+
+    this.server.tool(
+      "create_memo",
+      "Add a private memo (note) to an email. Memos are personal annotations visible only to you, stored in Fastmail's Memos folder. Useful for reminders, tracking payment dates, or jotting notes about a conversation.",
+      {
+        emailId: z.string().describe("ID of the email to attach the memo to"),
+        text: z.string().describe("The memo text (plain text)"),
+      },
+      async ({ emailId, text }) => {
+        try {
+          const client = this.getJmapClient();
+          const result = await client.createMemo(emailId, text);
+          return {
+            content: [{ text: `Memo created successfully on "${result.subject}". Memo ID: ${result.memoId}`, type: "text" }],
+          };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ text: `Failed to create memo: ${errorMessage}`, type: "text" }],
+          };
+        }
+      },
+    );
+
+    this.server.tool(
+      "get_memo",
+      "Get the memo (private note) attached to an email, if one exists. Returns the memo text, creation date, and memo ID.",
+      {
+        emailId: z.string().describe("ID of the email to check for a memo"),
+      },
+      async ({ emailId }) => {
+        try {
+          const client = this.getJmapClient();
+          const memo = await client.getMemo(emailId);
+          if (!memo) {
+            return {
+              content: [{ text: "No memo found for this email.", type: "text" }],
+            };
+          }
+          return this.guardResponse("get_memo", memo);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ text: `Failed to get memo: ${errorMessage}`, type: "text" }],
+          };
+        }
+      },
+    );
+
+    this.server.tool(
+      "delete_memo",
+      "Delete the memo (private note) attached to an email.",
+      {
+        emailId: z.string().describe("ID of the email whose memo should be deleted"),
+      },
+      async ({ emailId }) => {
+        try {
+          const client = this.getJmapClient();
+          const deleted = await client.deleteMemo(emailId);
+          if (!deleted) {
+            return {
+              content: [{ text: "No memo found for this email.", type: "text" }],
+            };
+          }
+          return {
+            content: [{ text: "Memo deleted successfully.", type: "text" }],
+          };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ text: `Failed to delete memo: ${errorMessage}`, type: "text" }],
+          };
+        }
+      },
+    );
+
     this.server.tool(
       "get_mailbox_stats",
       "Get statistics for a mailbox (unread count, total emails, etc.)",
@@ -1018,6 +1097,9 @@ ${quotedContent}
           "bulk_move",
           "bulk_delete",
           "bulk_flag",
+          "create_memo",
+          "get_memo",
+          "delete_memo",
         ];
 
         const allContactsFunctions = ["list_contacts", "get_contact", "search_contacts"];

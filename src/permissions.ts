@@ -75,6 +75,11 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
 	bulk_delete: 'INBOX_MANAGE',
 	bulk_flag: 'INBOX_MANAGE',
 
+	// MEMO (private notes on emails)
+	create_memo: 'INBOX_MANAGE',
+	get_memo: 'EMAIL_READ',
+	delete_memo: 'INBOX_MANAGE',
+
 	// DRAFT
 	create_draft: 'DRAFT',
 

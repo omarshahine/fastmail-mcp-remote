@@ -268,6 +268,7 @@ const EXTERNAL_DATA_TOOLS = new Set([
   "list_calendar_events",
   "get_calendar_event",
   "list_calendars",
+  "get_memo",
 ]);
 
 /**
