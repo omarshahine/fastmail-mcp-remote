@@ -37,6 +37,9 @@ A remote MCP (Model Context Protocol) server for Fastmail email, contacts, and c
 - `flag_email` - Flag or unflag an email
 - `bulk_flag` - Flag or unflag multiple emails
 - `get_inbox_updates` - Get inbox changes since a previous state (incremental sync)
+- `create_memo` - Add a private note (memo) to an email, rendered as a yellow inline annotation in Fastmail
+- `get_memo` - Get the memo attached to an email
+- `delete_memo` - Delete a memo from an email
 
 ### Email Body Formats
 
@@ -136,6 +139,25 @@ For manual control over threading, `send_email` and `create_draft` support `inRe
 - `inReplyTo` - Message-IDs this email replies to
 - `references` - Full thread chain of Message-IDs
 - `threadId` - JMAP's internal thread identifier
+
+### Memos (Private Notes)
+
+Add private notes to emails that render as yellow inline annotations in Fastmail's UI. Memos are personal — only visible to you.
+
+```json
+{
+  "emailId": "abc123",
+  "text": "Follow up on this next week"
+}
+```
+
+**How it works:** Memos are stored as special emails in a hidden Memos mailbox, linked to the target email via the `In-Reply-To` header. The `$memo` JMAP keyword triggers Fastmail's yellow annotation rendering.
+
+| Tool | Description |
+|------|-------------|
+| `create_memo` | Add a memo to an email |
+| `get_memo` | Read the memo on an email (returns text, date, memoId) |
+| `delete_memo` | Remove the memo from an email |
 
 ### Identity
 - `list_identities` - List sending identities
@@ -346,11 +368,11 @@ The server supports role-based access control with two layers:
 
 | Category | Tools | Admin | Delegate |
 |----------|-------|:-----:|:--------:|
-| `EMAIL_READ` | list_mailboxes, list_emails, get_email, search_emails, get_recent_emails, get_inbox_updates, get_email_attachments, download_attachment, advanced_search, get_thread, get_mailbox_stats, get_account_summary, list_identities | Yes | Yes |
+| `EMAIL_READ` | list_mailboxes, list_emails, get_email, search_emails, get_recent_emails, get_inbox_updates, get_email_attachments, download_attachment, advanced_search, get_thread, get_mailbox_stats, get_account_summary, list_identities, get_memo | Yes | Yes |
 | `CONTACTS` | list_contacts, get_contact, search_contacts | Yes | Yes |
 | `CALENDAR_READ` | list_calendars, list_calendar_events, get_calendar_event | Yes | Yes |
 | `CALENDAR_WRITE` | create_calendar_event | Yes | No |
-| `INBOX_MANAGE` | mark_email_read, flag_email, delete_email, move_email, bulk_mark_read, bulk_move, bulk_delete, bulk_flag | Yes | Yes |
+| `INBOX_MANAGE` | mark_email_read, flag_email, delete_email, move_email, bulk_mark_read, bulk_move, bulk_delete, bulk_flag, create_memo, delete_memo | Yes | Yes |
 | `DRAFT` | create_draft | Yes | Yes |
 | `REPLY` | reply_to_email | Yes | Yes* |
 | `SEND` | send_email | Yes | No |

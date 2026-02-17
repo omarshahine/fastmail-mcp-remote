@@ -21,11 +21,15 @@ npm run cf-typegen           # Regenerate Cloudflare types
 ```
 src/
 ├── index.ts              # Main entry point, MCP tools registration, Hono routing
-├── jmap-client.ts        # JMAP protocol client for Fastmail API
+├── jmap-client.ts        # JMAP protocol client for Fastmail API (email, memos)
 ├── contacts-calendar.ts  # Contacts and calendar functionality
+├── html-to-markdown.ts   # HTML to Markdown conversion (Turndown + linkedom)
+├── permissions.ts        # Role-based access control (admin/delegate, tool categories)
+├── prompt-guard.ts       # Prompt injection protection for external data
 ├── oauth-handler.ts      # Cloudflare Access OAuth flow handling
 ├── oauth-utils.ts        # OAuth utilities (token generation, validation, PKCE)
-└── fastmail-auth.ts      # Fastmail authentication helpers
+├── fastmail-auth.ts      # Fastmail authentication helpers
+└── favicon.ts            # Favicon SVG for the worker
 ```
 
 ## Architecture
