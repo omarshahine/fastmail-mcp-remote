@@ -53,17 +53,6 @@ auth
   });
 
 // ── All other commands need an MCP client ──────────────────
-// We use a lazy-init pattern: the client is created on first use.
-
-let _client: FastmailMcpClient | null = null;
-
-async function getClient(): Promise<FastmailMcpClient> {
-  if (_client) return _client;
-  const { url, token } = await getToken();
-  _client = new FastmailMcpClient(url, token);
-  return _client;
-}
-
 // We need a way to inject the client into command registrations.
 // Since Commander parses synchronously but actions are async,
 // we create a proxy client that lazy-connects on first callTool().

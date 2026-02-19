@@ -204,9 +204,9 @@ export function formatContacts(contacts: any[]): string {
   const lines: string[] = [`# Contacts (${contacts.length})`, ""];
 
   for (const c of contacts) {
-    const name = c.name || c.firstName
-      ? [c.prefix, c.firstName, c.lastName].filter(Boolean).join(" ")
-      : "Unnamed";
+    const name = c.name
+      || [c.prefix, c.firstName, c.lastName].filter(Boolean).join(" ")
+      || "Unnamed";
     lines.push(`${c.id}  ${name}`);
 
     const emails =
