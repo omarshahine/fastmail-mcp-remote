@@ -1,23 +1,30 @@
 {
 	"name": "fastmail-mcp-remote",
 	"version": "1.8.0",
-	"description": "Remote MCP server for Fastmail on Cloudflare Workers with GitHub OAuth",
+	"description": "Remote MCP server and CLI for Fastmail on Cloudflare Workers with Cloudflare Access OAuth",
 	"private": true,
+	"bin": {
+		"fastmail": "./cli/main.ts"
+	},
 	"scripts": {
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
+		"cli": "tsx cli/main.ts",
 		"cf-typegen": "wrangler types",
 		"type-check": "tsc --noEmit",
 		"test": "vitest run",
 		"test:watch": "vitest"
 	},
 	"dependencies": {
+		"@modelcontextprotocol/sdk": "^1.26.0",
 		"agents": "^0.3.6",
+		"commander": "^14.0.3",
 		"hono": "^4.11.3",
 		"just-pick": "^4.2.0",
 		"linkedom": "^0.18.12",
 		"marked": "^17.0.1",
+		"open": "^11.0.0",
 		"turndown": "^7.2.2",
 		"zod": "^4.2.1"
 	},
@@ -27,6 +34,7 @@
 		"@types/turndown": "^5.0.6",
 		"ai": "^6.0.68",
 		"prettier": "^3.7.4",
+		"tsx": "^4.21.0",
 		"typescript": "5.9.3",
 		"vitest": "^4.0.18",
 		"wrangler": "^4.59.1"

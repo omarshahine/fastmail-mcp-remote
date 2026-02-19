@@ -101,6 +101,12 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 	const combinedState = clientState ? `${state}:${clientState}` : state;
 	const expiresAt = getExpiresAt(STATE_TTL_SECONDS);
 
+	// Resolve team name: env var takes priority, then query param from CLI
+	const teamName = env.ACCESS_TEAM_NAME || url.searchParams.get('team_name');
+	if (!teamName) {
+		return new Response('ACCESS_TEAM_NAME not configured and no team_name parameter provided', { status: 500 });
+	}
+
 	const stateData: OAuthStateData = {
 		client_id: clientId,
 		redirect_uri: redirectUri,
@@ -108,6 +114,7 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 		code_challenge: codeChallenge,
 		code_challenge_method: codeChallengeMethod,
 		expires_at: expiresAt,
+		team_name: teamName,
 	};
 
 	await env.OAUTH_KV.put(`state:${state}`, JSON.stringify(stateData), {
@@ -115,10 +122,7 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 	});
 
 	// Build Cloudflare Access OAuth URL
-	if (!env.ACCESS_TEAM_NAME) {
-		return new Response('ACCESS_TEAM_NAME not configured', { status: 500 });
-	}
-	const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME);
+	const accessBaseUrl = getAccessBaseUrl(teamName);
 	const accessAuthUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/authorization`;
 	const accessParams = new URLSearchParams({
 		client_id: env.ACCESS_CLIENT_ID,
@@ -179,7 +183,12 @@ export async function handleCallback(request: Request, env: Env, url: URL): Prom
 
 	try {
 		// Exchange code for tokens with Cloudflare Access
-		const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME!);
+		// Use team_name from stored state (set during authorize), falling back to env var
+		const teamName = stateResult.team_name || env.ACCESS_TEAM_NAME;
+		if (!teamName) {
+			throw new Error('ACCESS_TEAM_NAME not available');
+		}
+		const accessBaseUrl = getAccessBaseUrl(teamName);
 		const tokenUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/token`;
 		const tokenResponse = await fetch(tokenUrl, {
 			method: 'POST',
@@ -439,174 +448,6 @@ function escapeHtml(str: string | null | undefined): string {
 		.replace(/'/g, '&#39;');
 }
 
-// Render hybrid page for localhost redirects - tries redirect but shows code as fallback
-function renderHybridPage(authCode: string, clientState: string | null, redirectUrl: string): Response {
-	const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<link rel="icon" href="/favicon.png" type="image/png">
-	<title>Fastmail MCP - Authorization Complete</title>
-	<style>
-		* { box-sizing: border-box; margin: 0; padding: 0; }
-		body {
-			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-			background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-			min-height: 100vh;
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			padding: 20px;
-		}
-		.container {
-			background: white;
-			border-radius: 16px;
-			padding: 40px;
-			max-width: 540px;
-			width: 100%;
-			box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-		}
-		.icon {
-			width: 64px;
-			height: 64px;
-			background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-			border-radius: 50%;
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			margin: 0 auto 24px;
-		}
-		.icon svg { width: 32px; height: 32px; fill: white; }
-		h1 {
-			text-align: center;
-			color: #1f2937;
-			font-size: 24px;
-			margin-bottom: 8px;
-		}
-		.subtitle {
-			text-align: center;
-			color: #6b7280;
-			margin-bottom: 24px;
-		}
-		.redirect-status {
-			text-align: center;
-			padding: 16px;
-			background: #f0fdf4;
-			border-radius: 8px;
-			color: #166534;
-			margin-top: 24px;
-		}
-		.code-section { display: block; }
-		.code-label {
-			font-size: 14px;
-			font-weight: 600;
-			color: #374151;
-			margin-bottom: 8px;
-		}
-		.code-box {
-			background: #f3f4f6;
-			border: 2px solid #e5e7eb;
-			border-radius: 8px;
-			padding: 16px;
-			padding-right: 80px;
-			font-family: 'SF Mono', SFMono-Regular, ui-monospace, Menlo, monospace;
-			font-size: 13px;
-			word-break: break-all;
-			color: #1f2937;
-			position: relative;
-		}
-		.copy-btn {
-			position: absolute;
-			top: 50%;
-			right: 8px;
-			transform: translateY(-50%);
-			background: #4f46e5;
-			color: white;
-			border: none;
-			border-radius: 6px;
-			padding: 8px 16px;
-			font-size: 12px;
-			font-weight: 600;
-			cursor: pointer;
-			transition: all 0.2s;
-		}
-		.copy-btn:hover { background: #4338ca; }
-		.copy-btn.copied { background: #10b981; }
-		.toggle-manual {
-			display: block;
-			text-align: center;
-			color: #4f46e5;
-			cursor: pointer;
-			font-size: 14px;
-			margin-top: 16px;
-		}
-		.toggle-manual:hover { text-decoration: underline; }
-	</style>
-</head>
-<body>
-	<div class="container">
-		<div class="icon">
-			<svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>
-		</div>
-
-		<h1>Authorization Successful</h1>
-		<p class="subtitle">Copy this code and paste it into Claude Code</p>
-
-		<div class="code-section" id="codeSection">
-			<div class="code-label">Authorization Code</div>
-			<div class="code-box">
-				<code id="authCode">${authCode}</code>
-				<button class="copy-btn" onclick="copyCode()">Copy</button>
-			</div>
-		</div>
-
-		<div class="redirect-status" id="redirectStatus">
-			<span id="statusText">📋 Copy the code above, then return to your terminal</span>
-		</div>
-
-		<a class="toggle-manual" onclick="tryRedirect()">
-			Running locally? Click to try auto-redirect
-		</a>
-	</div>
-
-	<script>
-		const redirectUrl = ${JSON.stringify(redirectUrl)};
-
-		function tryRedirect() {
-			// User explicitly wants to try the redirect
-			window.location.href = redirectUrl;
-		}
-
-		function copyCode() {
-			const code = document.getElementById('authCode').textContent;
-			navigator.clipboard.writeText(code).then(() => {
-				const btn = document.querySelector('.copy-btn');
-				btn.textContent = 'Copied!';
-				btn.classList.add('copied');
-				setTimeout(() => {
-					btn.textContent = 'Copy';
-					btn.classList.remove('copied');
-				}, 2000);
-			});
-		}
-
-		// For localhost, show the code immediately - don't auto-redirect
-		// (auto-redirect just shows connection refused error)
-		document.getElementById('codeSection').classList.add('visible');
-	</script>
-</body>
-</html>`;
-
-	return new Response(html, {
-		status: 200,
-		headers: {
-			'Content-Type': 'text/html; charset=utf-8',
-			'Cache-Control': 'no-store',
-		},
-	});
-}
-
 // Render OOB page for explicit headless/SSH OAuth flow (no redirect attempt)
 function renderOOBPage(authCode: string, clientState: string | null, _unused: null): Response {
 	const html = `<!DOCTYPE html>
@@ -734,7 +575,7 @@ function renderOOBPage(authCode: string, clientState: string | null, _unused: nu
 				<li>You can close this browser tab</li>
 			</ol>
 		</div>
-		${clientState ? `<div class="state-info">State: ${clientState}</div>` : ''}
+		${clientState ? `<div class="state-info">State: ${escapeHtml(clientState)}</div>` : ''}
 	</div>
 
 	<script>
@@ -771,18 +612,24 @@ function renderOOBPage(authCode: string, clientState: string | null, _unused: nu
 
 // Initiates direct token flow - redirects to Cloudflare Access
 export async function handleGetToken(request: Request, env: Env, url: URL): Promise<Response> {
-	if (!env.ACCESS_CLIENT_ID || !env.ACCESS_TEAM_NAME) {
+	if (!env.ACCESS_CLIENT_ID) {
 		return new Response('OAuth not configured', { status: 500 });
 	}
 
-	// Generate state for CSRF protection
+	// Resolve team name: env var takes priority, then query param
+	const teamName = env.ACCESS_TEAM_NAME || url.searchParams.get('team_name');
+	if (!teamName) {
+		return new Response('ACCESS_TEAM_NAME not configured and no team_name parameter provided', { status: 500 });
+	}
+
+	// Generate state for CSRF protection (store team_name so callback can use it)
 	const state = generateState();
-	await env.OAUTH_KV.put(`direct-token-state:${state}`, 'pending', {
+	await env.OAUTH_KV.put(`direct-token-state:${state}`, JSON.stringify({ team_name: teamName }), {
 		expirationTtl: STATE_TTL_SECONDS,
 	});
 
 	// Redirect to Cloudflare Access
-	const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME);
+	const accessBaseUrl = getAccessBaseUrl(teamName);
 	const accessAuthUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/authorization`;
 	const accessParams = new URLSearchParams({
 		client_id: env.ACCESS_CLIENT_ID,
@@ -816,16 +663,29 @@ export async function handleGetTokenCallback(request: Request, env: Env, url: UR
 		return new Response('Missing code or state', { status: 400 });
 	}
 
-	// Validate state
-	const stateData = await env.OAUTH_KV.get(`direct-token-state:${state}`);
-	if (!stateData) {
+	// Validate state and extract stored data (includes team_name)
+	const stateDataJson = await env.OAUTH_KV.get(`direct-token-state:${state}`);
+	if (!stateDataJson) {
 		return new Response('Invalid or expired state', { status: 400 });
 	}
 	await env.OAUTH_KV.delete(`direct-token-state:${state}`);
 
+	// Parse stored state — may be 'pending' (legacy) or JSON with team_name
+	let storedTeamName: string | null = null;
+	try {
+		const parsed = JSON.parse(stateDataJson);
+		storedTeamName = parsed.team_name || null;
+	} catch {
+		// Legacy format: plain string 'pending'
+	}
+
 	try {
 		// Exchange code for tokens with Cloudflare Access
-		const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME!);
+		const teamName = storedTeamName || env.ACCESS_TEAM_NAME;
+		if (!teamName) {
+			throw new Error('ACCESS_TEAM_NAME not available');
+		}
+		const accessBaseUrl = getAccessBaseUrl(teamName);
 		const tokenUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/token`;
 		const tokenResponse = await fetch(tokenUrl, {
 			method: 'POST',

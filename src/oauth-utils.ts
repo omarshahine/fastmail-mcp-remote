@@ -98,6 +98,7 @@ export interface OAuthStateData {
 	code_challenge: string | null;
 	code_challenge_method: string | null;
 	expires_at: string;
+	team_name?: string | null;
 }
 
 export interface OAuthCodeData {
