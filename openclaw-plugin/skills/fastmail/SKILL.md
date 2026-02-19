@@ -1,16 +1,10 @@
 # Fastmail Tools
 
-Token-efficient tools for Fastmail email, contacts, and calendar. Each tool shells out to the `fastmail` CLI and returns compact text optimized for LLM token efficiency (5-7x savings vs raw JSON).
+Token-efficient tools for Fastmail email, contacts, and calendar. Each tool connects to a remote Fastmail MCP Worker and returns compact text optimized for LLM token efficiency (5-7x savings vs raw JSON).
 
 ## Authentication
 
-Tools require the `fastmail` CLI to be installed and authenticated:
-
-```bash
-fastmail auth --url https://your-worker.example.com --team myteam
-```
-
-Tokens last 30 days. Re-run `fastmail auth` when expired.
+Tools require `workerUrl` and `bearerToken` to be configured in the OpenClaw workspace. Each user needs their own token from `fastmail auth`.
 
 ## Available Tools
 
@@ -137,6 +131,6 @@ ID: M1234abc | Thread: T5678
 
 ## Error Handling
 
-- **"Not authenticated"** -- User needs to run `fastmail auth --url <url>`
-- **"Token expired"** -- User needs to run `fastmail auth`
+- **"Missing workerUrl/bearerToken"** -- Configure both in your OpenClaw workspace plugin settings
+- **"Token expired"** -- User needs to run `fastmail auth` and update the bearerToken in workspace config
 - **Connection errors** -- Check if the MCP worker is running

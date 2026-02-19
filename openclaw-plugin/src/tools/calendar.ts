@@ -1,19 +1,19 @@
 /**
  * Calendar tools for the Fastmail OpenClaw plugin.
- *
- * Registers 4 tools: 3 read-only + 1 optional (create event).
+ * 3 read-only + 1 optional (create).
  */
 
-import { runCli } from "../cli-runner.js";
+import type { GetClientFn } from "../../index.js";
+import { formatCalendars, formatEvents, formatEvent } from "../formatters.js";
 
-export function registerCalendarTools(api: any) {
+export function registerCalendarTools(api: any, getClient: GetClientFn) {
   api.registerTool({
     name: "fastmail_list_calendars",
     description: "List all calendars with IDs and names.",
     parameters: { type: "object", properties: {} },
     async execute() {
-      const text = await runCli(["calendars"]);
-      return { content: [{ type: "text", text }] };
+      const client = await getClient();
+      return { content: [{ type: "text", text: formatCalendars(await client.callTool("list_calendars")) }] };
     },
   });
 
@@ -23,87 +23,50 @@ export function registerCalendarTools(api: any) {
     parameters: {
       type: "object",
       properties: {
-        calendarId: {
-          type: "string",
-          description: "Calendar ID (omit for all calendars)",
-        },
-        limit: {
-          type: "integer",
-          default: 50,
-          description: "Max events to return",
-        },
+        calendarId: { type: "string", description: "Calendar ID (omit for all)" },
+        limit: { type: "integer", default: 50, description: "Max events" },
       },
     },
-    async execute(
-      _id: string,
-      params: { calendarId?: string; limit?: number },
-    ) {
-      const args = ["events"];
-      if (params.calendarId) args.push("--calendar", params.calendarId);
-      if (params.limit) args.push("--limit", String(params.limit));
-      const text = await runCli(args);
-      return { content: [{ type: "text", text }] };
+    async execute(_id: string, params: { calendarId?: string; limit?: number }) {
+      const client = await getClient();
+      const data = await client.callTool("list_calendar_events", { calendarId: params.calendarId, limit: params.limit ?? 50 });
+      return { content: [{ type: "text", text: Array.isArray(data) ? formatEvents(data) : String(data) }] };
     },
   });
 
   api.registerTool({
     name: "fastmail_get_event",
-    description:
-      "Get full event details by ID (times, location, description, participants).",
+    description: "Get full event details by ID.",
     parameters: {
       type: "object",
-      properties: {
-        eventId: { type: "string", description: "Event ID" },
-      },
+      properties: { eventId: { type: "string", description: "Event ID" } },
       required: ["eventId"],
     },
     async execute(_id: string, params: { eventId: string }) {
-      const text = await runCli(["event", params.eventId]);
-      return { content: [{ type: "text", text }] };
+      const client = await getClient();
+      return { content: [{ type: "text", text: formatEvent(await client.callTool("get_calendar_event", { eventId: params.eventId })) }] };
     },
   });
 
-  api.registerTool(
-    {
-      name: "fastmail_create_event",
-      description: "Create a new calendar event.",
-      parameters: {
-        type: "object",
-        properties: {
-          calendarId: { type: "string", description: "Calendar ID" },
-          title: { type: "string", description: "Event title" },
-          start: {
-            type: "string",
-            description: "Start time (ISO 8601)",
-          },
-          end: {
-            type: "string",
-            description: "End time (ISO 8601)",
-          },
-          description: { type: "string", description: "Event description" },
-          location: { type: "string", description: "Event location" },
-        },
-        required: ["calendarId", "title", "start", "end"],
+  api.registerTool({
+    name: "fastmail_create_event",
+    description: "Create a new calendar event.",
+    parameters: {
+      type: "object",
+      properties: {
+        calendarId: { type: "string" },
+        title: { type: "string" },
+        start: { type: "string", description: "ISO 8601" },
+        end: { type: "string", description: "ISO 8601" },
+        description: { type: "string" },
+        location: { type: "string" },
       },
-      async execute(_id: string, params: Record<string, any>) {
-        const args = [
-          "event",
-          "create",
-          "--calendar",
-          params.calendarId,
-          "--title",
-          params.title,
-          "--start",
-          params.start,
-          "--end",
-          params.end,
-        ];
-        if (params.description) args.push("--description", params.description);
-        if (params.location) args.push("--location", params.location);
-        const text = await runCli(args);
-        return { content: [{ type: "text", text }] };
-      },
+      required: ["calendarId", "title", "start", "end"],
     },
-    { optional: true },
-  );
+    async execute(_id: string, params: Record<string, any>) {
+      const client = await getClient();
+      const data = await client.callTool("create_calendar_event", params);
+      return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }] };
+    },
+  }, { optional: true });
 }

@@ -3,25 +3,26 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
+    "required": ["workerUrl", "bearerToken"],
     "properties": {
-      "cliCommand": {
+      "workerUrl": {
         "type": "string",
-        "description": "Path or alias for the fastmail CLI (default: \"fastmail\")"
+        "description": "Fastmail MCP Worker URL (e.g. https://fastmail-mcp.example.com)"
       },
-      "timeout": {
-        "type": "integer",
-        "description": "CLI command timeout in milliseconds (default: 30000)"
+      "bearerToken": {
+        "type": "string",
+        "description": "Bearer token from 'fastmail auth'. Each user needs their own token."
       }
     }
   },
   "uiHints": {
-    "cliCommand": {
-      "label": "CLI Command",
-      "placeholder": "fastmail"
+    "workerUrl": {
+      "label": "Worker URL",
+      "placeholder": "https://fastmail-mcp.example.com"
     },
-    "timeout": {
-      "label": "Timeout (ms)",
-      "placeholder": "30000"
+    "bearerToken": {
+      "label": "Bearer Token",
+      "placeholder": "Token from 'fastmail auth'"
     }
   },
   "skills": [

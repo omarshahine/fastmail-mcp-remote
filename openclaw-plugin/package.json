@@ -23,6 +23,9 @@
     "url": "git+https://github.com/omarshahine/fastmail-mcp-remote.git",
     "directory": "openclaw-plugin"
   },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0"
+  },
   "devDependencies": {
     "@types/node": "^25.0.8",
     "typescript": "^5.9.0"

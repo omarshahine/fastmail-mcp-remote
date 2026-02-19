@@ -1,6 +1,6 @@
 # fastmail-cli
 
-OpenClaw plugin for Fastmail email, contacts, and calendar. Provides 36 agent tools that shell out to the `fastmail` CLI for compact, token-efficient output (5-7x savings vs raw JSON).
+OpenClaw plugin for Fastmail email, contacts, and calendar. Provides 36 agent tools backed by a persistent in-process MCP connection for token-efficient output (5-7x savings vs raw JSON).
 
 ## Installation
 
@@ -12,26 +12,25 @@ openclaw install fastmail-cli
 
 1. **Remote MCP Server**: Deploy the [fastmail-mcp-remote](https://github.com/omarshahine/fastmail-mcp-remote) Worker to Cloudflare.
 
-2. **Install and authenticate the CLI**:
+2. **Get a Bearer Token**: Authenticate via the CLI to obtain a token:
 
    ```bash
-   # Add alias to ~/.zshrc
    alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
-
-   # Authenticate (tokens last 30 days)
    fastmail auth --url https://your-worker.example.com --team myteam
    ```
 
-   The plugin shells out to the `fastmail` CLI, which handles auth, MCP connection, and formatting.
+   The token is saved to `~/.config/fastmail-cli/config.json`. Copy the `bearerToken` value for plugin configuration.
 
 ## Configuration
 
-Configuration is optional. The plugin uses the `fastmail` command by default.
+Both fields are **required** in your OpenClaw workspace config:
 
-| Key | Description | Default |
-|-----|-------------|---------|
-| `cliCommand` | Path or alias for the fastmail CLI | `"fastmail"` |
-| `timeout` | CLI command timeout in milliseconds | `30000` |
+| Key | Description |
+|-----|-------------|
+| `workerUrl` | URL of your deployed Fastmail MCP Worker |
+| `bearerToken` | Bearer token from `fastmail auth` (each user needs their own) |
+
+Each workspace can have different credentials, enabling multi-user setups on the same machine.
 
 ## Tools
 
@@ -95,16 +94,16 @@ Configuration is optional. The plugin uses the `fastmail` command by default.
 ## Architecture
 
 ```
-Agent -> OpenClaw Plugin -> fastmail CLI -> Remote Worker -> Fastmail JMAP API
+Agent -> OpenClaw Plugin -> MCP SDK (in-process) -> Remote Worker -> Fastmail JMAP API
 ```
 
-The plugin is a thin CLI wrapper:
+The plugin maintains a persistent MCP connection per workspace:
 1. Registers OpenClaw tools with JSON Schema parameters
-2. On tool call, spawns `fastmail` with args via `execFile` (no shell injection risk)
-3. The CLI handles auth, MCP connection, formatting, and cleanup
-4. Returns the CLI's compact text output to the agent
+2. On first tool call, connects to the remote Worker via MCP SDK with Bearer token auth
+3. All subsequent calls reuse the same connection (no per-call overhead)
+4. Responses are formatted in-process using compact text formatters
 
-Zero runtime dependencies (only `@types/node` and `typescript` for dev).
+One runtime dependency: `@modelcontextprotocol/sdk`.
 
 ## Development
 

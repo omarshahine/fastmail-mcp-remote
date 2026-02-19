@@ -1,53 +1,43 @@
 /**
  * Contact tools for the Fastmail OpenClaw plugin.
- *
- * Registers 3 read-only tools for listing, getting, and searching contacts.
+ * 3 read-only tools.
  */
 
-import { runCli } from "../cli-runner.js";
+import type { GetClientFn } from "../../index.js";
+import { formatContacts, formatContact } from "../formatters.js";
 
-export function registerContactTools(api: any) {
+export function registerContactTools(api: any, getClient: GetClientFn) {
   api.registerTool({
     name: "fastmail_list_contacts",
     description: "List contacts with names, emails, and phone numbers.",
     parameters: {
       type: "object",
-      properties: {
-        limit: {
-          type: "integer",
-          default: 50,
-          description: "Max contacts to return",
-        },
-      },
+      properties: { limit: { type: "integer", default: 50, description: "Max contacts" } },
     },
     async execute(_id: string, params: { limit?: number }) {
-      const args = ["contacts"];
-      if (params.limit) args.push("--limit", String(params.limit));
-      const text = await runCli(args);
-      return { content: [{ type: "text", text }] };
+      const client = await getClient();
+      const data = await client.callTool("list_contacts", { limit: params.limit ?? 50 });
+      return { content: [{ type: "text", text: Array.isArray(data) ? formatContacts(data) : String(data) }] };
     },
   });
 
   api.registerTool({
     name: "fastmail_get_contact",
-    description:
-      "Get full contact details by ID (emails, phones, addresses, company, notes).",
+    description: "Get full contact details by ID.",
     parameters: {
       type: "object",
-      properties: {
-        contactId: { type: "string", description: "Contact ID" },
-      },
+      properties: { contactId: { type: "string", description: "Contact ID" } },
       required: ["contactId"],
     },
     async execute(_id: string, params: { contactId: string }) {
-      const text = await runCli(["contact", params.contactId]);
-      return { content: [{ type: "text", text }] };
+      const client = await getClient();
+      return { content: [{ type: "text", text: formatContact(await client.callTool("get_contact", { contactId: params.contactId })) }] };
     },
   });
 
   api.registerTool({
     name: "fastmail_search_contacts",
-    description: "Search contacts by name or email address.",
+    description: "Search contacts by name or email.",
     parameters: {
       type: "object",
       properties: {
@@ -57,10 +47,9 @@ export function registerContactTools(api: any) {
       required: ["query"],
     },
     async execute(_id: string, params: { query: string; limit?: number }) {
-      const args = ["contacts", "search", params.query];
-      if (params.limit) args.push("--limit", String(params.limit));
-      const text = await runCli(args);
-      return { content: [{ type: "text", text }] };
+      const client = await getClient();
+      const data = await client.callTool("search_contacts", { query: params.query, limit: params.limit ?? 20 });
+      return { content: [{ type: "text", text: Array.isArray(data) ? formatContacts(data) : String(data) }] };
     },
   });
 }
