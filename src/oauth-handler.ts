@@ -83,13 +83,33 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 		return new Response('Invalid code_challenge_method', { status: 400 });
 	}
 
-	// Validate redirect URI (allow HTTPS, localhost, or OOB URIs for headless flows)
+	// Validate redirect URI (allow HTTPS, localhost, OOB, or custom schemes for native apps)
 	const isOOBUri = redirectUri === 'urn:ietf:wg:oauth:2.0:oob' || redirectUri.startsWith('oob:');
 	if (!isOOBUri) {
 		try {
 			const redirectUrl = new URL(redirectUri);
-			if (redirectUrl.protocol !== 'https:' && redirectUrl.hostname !== 'localhost' && redirectUrl.hostname !== '127.0.0.1') {
-				return new Response('Invalid redirect_uri', { status: 400 });
+			const proto = redirectUrl.protocol;
+
+			// Look up dynamically-registered client to validate redirect_uri
+			const clientJson = await env.OAUTH_KV.get(`client:${clientId}`);
+			if (clientJson) {
+				// Client was dynamically registered — redirect_uri must match one of the registered URIs
+				const clientData = JSON.parse(clientJson) as OAuthClientData;
+				if (!clientData.redirect_uris.includes(redirectUri)) {
+					return new Response('Invalid redirect_uri', { status: 400 });
+				}
+			} else {
+				// No registration record — fall back to scheme validation
+				// Allow https, localhost HTTP, and custom schemes for native apps (RFC 8252)
+				const isHttps = proto === 'https:';
+				const isLocalhost =
+					(proto === 'http:' || proto === 'https:') &&
+					(redirectUrl.hostname === 'localhost' || redirectUrl.hostname === '127.0.0.1');
+				const isCustomScheme = proto !== 'http:' && proto !== 'https:';
+
+				if (!isHttps && !isLocalhost && !isCustomScheme) {
+					return new Response('Invalid redirect_uri', { status: 400 });
+				}
 			}
 		} catch {
 			return new Response('Invalid redirect_uri', { status: 400 });
