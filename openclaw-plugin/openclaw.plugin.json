@@ -1,0 +1,30 @@
+{
+  "id": "fastmail-cli",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "cliCommand": {
+        "type": "string",
+        "description": "Path or alias for the fastmail CLI (default: \"fastmail\")"
+      },
+      "timeout": {
+        "type": "integer",
+        "description": "CLI command timeout in milliseconds (default: 30000)"
+      }
+    }
+  },
+  "uiHints": {
+    "cliCommand": {
+      "label": "CLI Command",
+      "placeholder": "fastmail"
+    },
+    "timeout": {
+      "label": "Timeout (ms)",
+      "placeholder": "30000"
+    }
+  },
+  "skills": [
+    "./skills"
+  ]
+}
