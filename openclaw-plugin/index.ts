@@ -1,7 +1,7 @@
 /**
  * OpenClaw plugin entry point for Fastmail.
  *
- * Registers agent tools that proxy to the remote Fastmail MCP Worker
+ * Registers 36 agent tools that proxy to the remote Fastmail MCP Worker
  * via a persistent in-process MCP SDK connection. Responses are formatted
  * using compact text formatters for token efficiency.
  *
@@ -15,6 +15,17 @@ import { registerEmailTools } from "./src/tools/email.js";
 import { registerContactTools } from "./src/tools/contacts.js";
 import { registerCalendarTools } from "./src/tools/calendar.js";
 import { registerMemoTools } from "./src/tools/memo.js";
+
+/** Minimal typed interface for the OpenClaw plugin API. */
+export interface OpenClawApi {
+  registerTool(tool: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+    execute: (_id: string, params: any) => Promise<{ content: Array<{ type: string; text: string }> }>;
+  }, opts?: { optional: boolean }): void;
+  config?: Record<string, unknown>;
+}
 
 export type GetClientFn = () => Promise<FastmailMcpClient>;
 
@@ -36,8 +47,8 @@ function lazyClientFactory(pluginConfig: {
   };
 }
 
-export default function register(api: any) {
-  const pluginConfig = api.config || {};
+export default function register(api: OpenClawApi) {
+  const pluginConfig = (api.config || {}) as { workerUrl?: string; bearerToken?: string };
   const getClient = lazyClientFactory(pluginConfig);
 
   registerEmailTools(api, getClient);

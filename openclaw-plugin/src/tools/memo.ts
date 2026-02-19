@@ -3,10 +3,10 @@
  * 1 read-only + 2 optional (create, delete).
  */
 
-import type { GetClientFn } from "../../index.js";
+import type { OpenClawApi, GetClientFn } from "../../index.js";
 import { formatMemo } from "../formatters.js";
 
-export function registerMemoTools(api: any, getClient: GetClientFn) {
+export function registerMemoTools(api: OpenClawApi, getClient: GetClientFn) {
   api.registerTool({
     name: "fastmail_get_memo",
     description: "Get the private memo on an email, if one exists.",

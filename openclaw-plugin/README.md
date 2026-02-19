@@ -15,7 +15,7 @@ openclaw install fastmail-cli
 2. **Get a Bearer Token**: Authenticate via the CLI to obtain a token:
 
    ```bash
-   alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
+   alias fastmail="npx tsx ~/path/to/fastmail-mcp-remote/cli/main.ts"
    fastmail auth --url https://your-worker.example.com --team myteam
    ```
 

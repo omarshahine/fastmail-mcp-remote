@@ -15,6 +15,9 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
  * The server wraps external data in [UNTRUSTED_EXTERNAL_DATA_xxx] markers
  * and prepends a preamble paragraph. These are useful for LLM safety but
  * noise in a plugin context.
+ *
+ * Coupled to the marker format in src/prompt-guard.ts on the server.
+ * If the server format changes, these regexes must be updated to match.
  */
 function stripDatamarking(text: string): string {
   let cleaned = text.replace(
@@ -81,13 +84,31 @@ export class FastmailMcpClient {
    * Call an MCP tool on the remote server and return the parsed result.
    * JSON responses are parsed; text responses returned as strings.
    * Datamarking is stripped automatically.
+   *
+   * If the transport has dropped since the last call, resets the connection
+   * and retries once to handle server restarts or network interruptions.
    */
   async callTool(
     name: string,
     args: Record<string, unknown> = {},
   ): Promise<any> {
-    const client = await this.ensureConnected();
-    const result = await client.callTool({ name, arguments: args });
+    let client = await this.ensureConnected();
+    let result;
+    try {
+      result = await client.callTool({ name, arguments: args });
+    } catch (err: any) {
+      // On transport-level errors, reset and retry once
+      const msg = err?.message ?? "";
+      if (msg.includes("ECONNREFUSED") || msg.includes("ECONNRESET") ||
+          msg.includes("fetch failed") || msg.includes("transport") ||
+          msg.includes("closed") || msg.includes("network")) {
+        this.client = null;
+        client = await this.ensureConnected();
+        result = await client.callTool({ name, arguments: args });
+      } else {
+        throw err;
+      }
+    }
 
     const textParts = (result.content as any[])
       ?.filter((c) => c.type === "text")
@@ -98,10 +119,12 @@ export class FastmailMcpClient {
     try {
       return JSON.parse(cleaned);
     } catch {
-      // Not JSON
+      // Not JSON — try fallback below
     }
 
-    // Try finding JSON after preamble remnants
+    // Sometimes datamarking leaves a preamble paragraph before the JSON payload.
+    // Walk backwards through double-newline-separated sections to find the
+    // largest trailing chunk that parses as valid JSON.
     const parts = cleaned.split("\n\n");
     for (let i = parts.length - 1; i > 0; i--) {
       const candidate = parts.slice(i).join("\n\n");
@@ -110,7 +133,7 @@ export class FastmailMcpClient {
         try {
           return JSON.parse(trimmed);
         } catch {
-          // Keep looking
+          // Keep looking at smaller slices
         }
       }
     }

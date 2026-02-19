@@ -9,8 +9,7 @@
     "noEmit": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "declaration": false,
-    "outDir": "dist"
+    "declaration": false
   },
   "include": ["index.ts", "src/**/*.ts"]
 }

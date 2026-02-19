@@ -3,15 +3,15 @@
  * 3 read-only + 1 optional (create).
  */
 
-import type { GetClientFn } from "../../index.js";
+import type { OpenClawApi, GetClientFn } from "../../index.js";
 import { formatCalendars, formatEvents, formatEvent } from "../formatters.js";
 
-export function registerCalendarTools(api: any, getClient: GetClientFn) {
+export function registerCalendarTools(api: OpenClawApi, getClient: GetClientFn) {
   api.registerTool({
     name: "fastmail_list_calendars",
     description: "List all calendars with IDs and names.",
     parameters: { type: "object", properties: {} },
-    async execute() {
+    async execute(_id: string, _params: Record<string, never>) {
       const client = await getClient();
       return { content: [{ type: "text", text: formatCalendars(await client.callTool("list_calendars")) }] };
     },
@@ -63,9 +63,14 @@ export function registerCalendarTools(api: any, getClient: GetClientFn) {
       },
       required: ["calendarId", "title", "start", "end"],
     },
-    async execute(_id: string, params: Record<string, any>) {
+    async execute(_id: string, params: { calendarId: string; title: string; start: string; end: string; description?: string; location?: string }) {
       const client = await getClient();
-      const data = await client.callTool("create_calendar_event", params);
+      const data = await client.callTool("create_calendar_event", {
+        calendarId: params.calendarId, title: params.title,
+        start: params.start, end: params.end,
+        ...(params.description && { description: params.description }),
+        ...(params.location && { location: params.location }),
+      });
       return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }] };
     },
   }, { optional: true });

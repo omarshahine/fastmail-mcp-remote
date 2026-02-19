@@ -3,10 +3,10 @@
  * 3 read-only tools.
  */
 
-import type { GetClientFn } from "../../index.js";
+import type { OpenClawApi, GetClientFn } from "../../index.js";
 import { formatContacts, formatContact } from "../formatters.js";
 
-export function registerContactTools(api: any, getClient: GetClientFn) {
+export function registerContactTools(api: OpenClawApi, getClient: GetClientFn) {
   api.registerTool({
     name: "fastmail_list_contacts",
     description: "List contacts with names, emails, and phone numbers.",

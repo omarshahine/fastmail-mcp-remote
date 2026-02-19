@@ -1,11 +1,11 @@
 /**
  * Email tools for the Fastmail OpenClaw plugin.
  *
- * 11 read + 3 write + 6 organize + 6 bulk = 26 tools.
+ * 11 read + 3 write + 6 organize + 6 bulk = 26 tools total.
  * Write/organize/bulk tools use { optional: true }.
  */
 
-import type { GetClientFn } from "../../index.js";
+import type { OpenClawApi, GetClientFn } from "../../index.js";
 import {
   formatEmailList,
   formatEmail,
@@ -17,7 +17,7 @@ import {
   formatInboxUpdates,
 } from "../formatters.js";
 
-export function registerEmailTools(api: any, getClient: GetClientFn) {
+export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
   // -- Read (11 tools) ------------------------------------------------
 
   api.registerTool({
@@ -126,7 +126,7 @@ export function registerEmailTools(api: any, getClient: GetClientFn) {
     name: "fastmail_list_mailboxes",
     description: "List all mailboxes with IDs, names, roles, and email counts.",
     parameters: { type: "object", properties: {} },
-    async execute() {
+    async execute(_id: string, _params: Record<string, never>) {
       const client = await getClient();
       return { content: [{ type: "text", text: formatMailboxes(await client.callTool("list_mailboxes")) }] };
     },
@@ -151,7 +151,7 @@ export function registerEmailTools(api: any, getClient: GetClientFn) {
     name: "fastmail_get_account_summary",
     description: "Get account overview: mailbox count, identity count, total/unread emails.",
     parameters: { type: "object", properties: {} },
-    async execute() {
+    async execute(_id: string, _params: Record<string, never>) {
       const client = await getClient();
       return { content: [{ type: "text", text: formatAccountSummary(await client.callTool("get_account_summary")) }] };
     },
@@ -161,7 +161,7 @@ export function registerEmailTools(api: any, getClient: GetClientFn) {
     name: "fastmail_list_identities",
     description: "List sending identities (email addresses and names).",
     parameters: { type: "object", properties: {} },
-    async execute() {
+    async execute(_id: string, _params: Record<string, never>) {
       const client = await getClient();
       return { content: [{ type: "text", text: formatIdentities(await client.callTool("list_identities")) }] };
     },
@@ -242,9 +242,17 @@ export function registerEmailTools(api: any, getClient: GetClientFn) {
       },
       required: ["to", "subject"],
     },
-    async execute(_id: string, params: Record<string, any>) {
+    async execute(_id: string, params: { to: string[]; subject: string; textBody?: string; htmlBody?: string; markdownBody?: string; cc?: string[]; bcc?: string[]; from?: string }) {
       const client = await getClient();
-      const data = await client.callTool("send_email", params);
+      const data = await client.callTool("send_email", {
+        to: params.to, subject: params.subject,
+        ...(params.textBody && { textBody: params.textBody }),
+        ...(params.htmlBody && { htmlBody: params.htmlBody }),
+        ...(params.markdownBody && { markdownBody: params.markdownBody }),
+        ...(params.cc && { cc: params.cc }),
+        ...(params.bcc && { bcc: params.bcc }),
+        ...(params.from && { from: params.from }),
+      });
       return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }] };
     },
   }, { optional: true });
@@ -266,9 +274,17 @@ export function registerEmailTools(api: any, getClient: GetClientFn) {
       },
       required: ["to", "subject"],
     },
-    async execute(_id: string, params: Record<string, any>) {
+    async execute(_id: string, params: { to: string[]; subject: string; textBody?: string; htmlBody?: string; markdownBody?: string; cc?: string[]; bcc?: string[]; from?: string }) {
       const client = await getClient();
-      const data = await client.callTool("create_draft", params);
+      const data = await client.callTool("create_draft", {
+        to: params.to, subject: params.subject,
+        ...(params.textBody && { textBody: params.textBody }),
+        ...(params.htmlBody && { htmlBody: params.htmlBody }),
+        ...(params.markdownBody && { markdownBody: params.markdownBody }),
+        ...(params.cc && { cc: params.cc }),
+        ...(params.bcc && { bcc: params.bcc }),
+        ...(params.from && { from: params.from }),
+      });
       return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }] };
     },
   }, { optional: true });
@@ -290,9 +306,17 @@ export function registerEmailTools(api: any, getClient: GetClientFn) {
       },
       required: ["emailId", "body"],
     },
-    async execute(_id: string, params: Record<string, any>) {
+    async execute(_id: string, params: { emailId: string; body: string; htmlBody?: string; markdownBody?: string; from?: string; replyAll?: boolean; sendImmediately?: boolean; excludeQuote?: boolean }) {
       const client = await getClient();
-      const data = await client.callTool("reply_to_email", params);
+      const data = await client.callTool("reply_to_email", {
+        emailId: params.emailId, body: params.body,
+        ...(params.htmlBody && { htmlBody: params.htmlBody }),
+        ...(params.markdownBody && { markdownBody: params.markdownBody }),
+        ...(params.from && { from: params.from }),
+        ...(params.replyAll !== undefined && { replyAll: params.replyAll }),
+        ...(params.sendImmediately !== undefined && { sendImmediately: params.sendImmediately }),
+        ...(params.excludeQuote !== undefined && { excludeQuote: params.excludeQuote }),
+      });
       return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }] };
     },
   }, { optional: true });
@@ -367,7 +391,7 @@ export function registerEmailTools(api: any, getClient: GetClientFn) {
     },
     async execute(_id: string, params: { emailId: string; targetMailboxId: string }) {
       const client = await getClient();
-      const data = await client.callTool("move_email", params);
+      const data = await client.callTool("move_email", { emailId: params.emailId, targetMailboxId: params.targetMailboxId });
       return { content: [{ type: "text", text: typeof data === "string" ? data : "Moved" }] };
     },
   }, { optional: true });
@@ -462,7 +486,7 @@ export function registerEmailTools(api: any, getClient: GetClientFn) {
     },
     async execute(_id: string, params: { emailIds: string[]; targetMailboxId: string }) {
       const client = await getClient();
-      const data = await client.callTool("bulk_move", params);
+      const data = await client.callTool("bulk_move", { emailIds: params.emailIds, targetMailboxId: params.targetMailboxId });
       return { content: [{ type: "text", text: typeof data === "string" ? data : `${params.emailIds.length} moved` }] };
     },
   }, { optional: true });
