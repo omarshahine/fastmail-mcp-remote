@@ -1,6 +1,6 @@
-# Fastmail MCP Remote Server
+# Fastmail Remote
 
-A Cloudflare Worker that provides MCP (Model Context Protocol) access to Fastmail email, contacts, and calendar via Cloudflare Access OAuth authentication.
+A remote MCP server and token-efficient CLI for Fastmail email, contacts, and calendar. The MCP server runs on Cloudflare Workers with Cloudflare Access OAuth. The CLI calls the remote server and formats responses as compact text, saving 5-7x tokens.
 
 ## Quick Reference
 
@@ -14,6 +14,9 @@ npm run deploy               # Deploy to Cloudflare Workers
 # Type checking
 npm run type-check           # Run TypeScript type checker
 npm run cf-typegen           # Regenerate Cloudflare types
+
+# CLI
+npm run cli -- inbox         # Run CLI (or use alias: fastmail inbox)
 ```
 
 ## Project Structure
@@ -30,6 +33,18 @@ src/
 ├── oauth-utils.ts        # OAuth utilities (token generation, validation, PKCE)
 ├── fastmail-auth.ts      # Fastmail authentication helpers
 └── favicon.ts            # Favicon SVG for the worker
+
+cli/
+├── main.ts              # CLI entry point, commander setup, LazyClient
+├── mcp-client.ts        # MCP SDK client (StreamableHTTPClientTransport + Bearer auth)
+├── auth.ts              # PKCE OAuth flow + token caching (~/.config/fastmail-cli/)
+├── formatters.ts        # Compact text output formatters
+├── commands/
+│   ├── email.ts         # Email, bulk, mailbox, account, identities commands
+│   ├── contacts.ts      # Contact commands
+│   ├── calendar.ts      # Calendar commands
+│   └── memo.ts          # Memo commands
+└── skill.md             # Claude Code skill documentation
 ```
 
 ## Architecture
@@ -72,15 +87,24 @@ src/
 
 4. **Get Fastmail API Token** at https://www.fastmail.com/settings/security/tokens
 
-5. **Set production secrets**:
+5. **Set production secrets and vars**:
    ```bash
+   # Secrets (encrypted)
    npx wrangler secret put ACCESS_CLIENT_ID
    npx wrangler secret put ACCESS_CLIENT_SECRET
-   npx wrangler secret put ACCESS_TEAM_NAME
-   npx wrangler secret put ALLOWED_USERS
    npx wrangler secret put FASTMAIL_API_TOKEN
    npx wrangler secret put WORKER_URL
    ```
+
+   Add plaintext vars in `wrangler.jsonc` (gitignored):
+   ```jsonc
+   "vars": {
+     "ACCESS_TEAM_NAME": "yourteam",
+     "ALLOWED_USERS": "user1@example.com,user2@example.com"
+   }
+   ```
+
+   > **Warning**: Deploying without the `vars` section wipes all dashboard-set plaintext vars.
 
 6. **Deploy**:
    ```bash
@@ -138,10 +162,11 @@ npx @modelcontextprotocol/inspector@latest
 
 ## User Access Control
 
-Set `ALLOWED_USERS` as a Cloudflare secret (comma-separated email list):
-```bash
-npx wrangler secret put ALLOWED_USERS
-# Enter: user1@example.com,user2@example.com
+`ALLOWED_USERS` is a plaintext var in `wrangler.jsonc` (comma-separated email list):
+```jsonc
+"vars": {
+  "ALLOWED_USERS": "user1@example.com,user2@example.com"
+}
 ```
 
 For local development, add to `.dev.vars`:
@@ -149,16 +174,23 @@ For local development, add to `.dev.vars`:
 ALLOWED_USERS=user1@example.com,user2@example.com
 ```
 
-## Secrets Required
+## Configuration Reference
+
+### Secrets (encrypted, set via `wrangler secret put`)
 
 | Secret | Description |
 |--------|-------------|
 | `ACCESS_CLIENT_ID` | Cloudflare Access SaaS app client ID |
 | `ACCESS_CLIENT_SECRET` | Cloudflare Access SaaS app client secret |
-| `ACCESS_TEAM_NAME` | Cloudflare Zero Trust team name |
-| `ALLOWED_USERS` | Comma-separated list of allowed email addresses |
 | `FASTMAIL_API_TOKEN` | Fastmail API token with required scopes |
 | `WORKER_URL` | Your deployed worker URL (for download links) |
+
+### Plaintext Vars (in `wrangler.jsonc`, gitignored)
+
+| Variable | Description |
+|----------|-------------|
+| `ACCESS_TEAM_NAME` | Cloudflare Zero Trust team name |
+| `ALLOWED_USERS` | Comma-separated list of allowed email addresses |
 
 ## KV Keys
 
@@ -189,6 +221,27 @@ claude mcp add --scope user --transport http fastmail "https://<your-worker-doma
 ```
 
 Complete OAuth via `/mcp` in Claude Code when prompted.
+
+## CLI Usage
+
+The CLI (`cli/`) is a token-efficient alternative to MCP tools. It calls the same remote Worker but formats responses as compact text.
+
+```bash
+# Setup
+alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
+fastmail auth --url https://your-worker.example.com --team yourteam
+
+# Common commands
+fastmail inbox                          # Recent inbox emails
+fastmail email <id>                     # Read email
+fastmail email search "query"           # Search
+fastmail email reply <id> --body "..."  # Reply
+fastmail contacts                       # List contacts
+fastmail calendars                      # List calendars
+```
+
+Config stored at `~/.config/fastmail-cli/config.json` (Bearer token, 30-day TTL).
+Skill file at `cli/skill.md` — teaches Claude the full command surface.
 
 ## Code Hygiene
 

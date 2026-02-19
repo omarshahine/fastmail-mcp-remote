@@ -1,6 +1,6 @@
-# Fastmail MCP Remote Server
+# Fastmail Remote
 
-A remote MCP (Model Context Protocol) server for Fastmail email, contacts, and calendar access, deployed on Cloudflare Workers with Cloudflare Access OAuth authentication.
+A remote MCP server and token-efficient CLI for Fastmail email, contacts, and calendar access. The MCP server runs on Cloudflare Workers with Cloudflare Access OAuth authentication. The CLI calls the remote server and formats responses as compact text, saving 5-7x tokens when used with AI assistants.
 
 ## Architecture
 
@@ -9,6 +9,78 @@ A remote MCP (Model Context Protocol) server for Fastmail email, contacts, and c
 │  Claude.ai  │  ───────────►    │  Cloudflare Worker   │  ────────────────►  │   Fastmail   │
 │ (MCP Client)│  (CF Access)     │  (Remote MCP Server) │  (stored as secret) │     API      │
 └─────────────┘                  └──────────────────────┘                     └──────────────┘
+
+┌─────────────┐   Bearer Token   ┌──────────────────────┐      API Token      ┌──────────────┐
+│ fastmail CLI│  ───────────►    │  Cloudflare Worker   │  ────────────────►  │   Fastmail   │
+│   (local)   │  (PKCE OAuth)    │  (Remote MCP Server) │  (stored as secret) │     API      │
+└─────────────┘                  └──────────────────────┘                     └──────────────┘
+```
+
+## Fastmail CLI
+
+A token-efficient CLI that calls the remote MCP server and formats responses as compact text, saving 5-7x tokens compared to raw MCP tool calls.
+
+### Quick Start
+
+```bash
+# Add alias to ~/.zshrc
+alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
+
+# Authenticate (one-time, tokens last 30 days)
+fastmail auth --url https://your-worker.example.com --team yourteam
+fastmail auth status
+```
+
+### Commands
+
+```bash
+# Inbox & reading
+fastmail inbox                          # 10 most recent inbox emails
+fastmail inbox --limit 20               # More emails
+fastmail email <id>                     # Read email (markdown format)
+fastmail email thread <threadId>        # Full conversation thread
+
+# Searching
+fastmail email search "query"           # Text search
+fastmail email search "invoice" --from billing@example.com
+
+# Composing
+fastmail email send --to user@example.com --subject "Hi" --body "Hello!"
+fastmail email draft --to user@example.com --subject "Draft" --body "..."
+fastmail email reply <id> --body "Thanks!" --send
+
+# Actions & bulk
+fastmail email read|unread|flag|unflag|delete <id>
+fastmail bulk read|delete|flag <id1> <id2> <id3>
+
+# Mailboxes, contacts, calendar
+fastmail mailboxes
+fastmail contacts
+fastmail calendars
+fastmail events
+
+# Memos (private notes)
+fastmail memo <emailId>
+fastmail memo create <emailId> --text "Note"
+fastmail memo delete <emailId>
+```
+
+All commands support `--json` for raw JSON output.
+
+### CLI Structure
+
+```
+cli/
+├── main.ts              # Entry point, commander setup
+├── mcp-client.ts        # MCP SDK client (StreamableHTTPClientTransport)
+├── auth.ts              # PKCE OAuth flow + token caching
+├── formatters.ts        # Compact text output formatters
+├── commands/
+│   ├── email.ts         # Email, bulk, mailbox, account commands
+│   ├── contacts.ts      # Contact commands
+│   ├── calendar.ts      # Calendar commands
+│   └── memo.ts          # Memo commands
+└── skill.md             # Claude Code skill documentation
 ```
 
 ## Available Tools
@@ -212,16 +284,21 @@ Create a Cloudflare Access SaaS application for OAuth:
 
 ### 3. Configure Environment Variables
 
-Set these as Cloudflare secrets (never put PII in `wrangler.jsonc` — it's tracked by git):
-```bash
-npx wrangler secret put ACCESS_TEAM_NAME    # Your Zero Trust team name
-npx wrangler secret put ALLOWED_USERS       # Comma-separated email list
+Add `ACCESS_TEAM_NAME` and `ALLOWED_USERS` as plaintext vars in your `wrangler.jsonc` (gitignored — PII stays local):
+
+```jsonc
+"vars": {
+  "ACCESS_TEAM_NAME": "yourteam",
+  "ALLOWED_USERS": "user1@example.com,user2@example.com"
+}
 ```
 
 - **ACCESS_TEAM_NAME**: Your Cloudflare Zero Trust team name (the subdomain before `.cloudflareaccess.com`)
 - **ALLOWED_USERS**: Comma-separated list of email addresses allowed to access the server
 
-For local development, add these to `.dev.vars` (gitignored).
+For local development, also add these to `.dev.vars` (gitignored).
+
+> **Warning**: Deploying without the `vars` section in `wrangler.jsonc` will wipe all dashboard-set plaintext vars. Always keep `vars` in your local config.
 
 ### 4. Get Fastmail API Token
 
@@ -269,24 +346,25 @@ npx wrangler deploy
 
 ```bash
 npx wrangler secret put ACCESS_CLIENT_ID
-# Paste your Cloudflare Access client ID
-
 npx wrangler secret put ACCESS_CLIENT_SECRET
-# Paste your Cloudflare Access client secret
-
 npx wrangler secret put FASTMAIL_API_TOKEN
-# Paste your Fastmail API token
-```
-
-### 9. Set WORKER_URL Secret
-
-Set the worker URL for download links:
-```bash
 npx wrangler secret put WORKER_URL
-# Paste: https://your-worker.example.com
 ```
 
-### 10. Add to MCP Client
+### 9. Connect Clients
+
+#### Fastmail CLI
+
+```bash
+# Add alias to ~/.zshrc
+alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
+
+# Authenticate (opens browser for CF Access login)
+fastmail auth --url https://your-worker.example.com --team yourteam
+
+# Test
+fastmail inbox
+```
 
 #### Claude.ai
 
@@ -329,18 +407,6 @@ GitHub Copilot CLI doesn't support automatic OAuth client registration, so you n
    - **Client ID**: Paste the `client_id` from step 1
    - **Client Type**: Select `[1] Public (no secret)`
    - Press `Ctrl+S` to save and authenticate
-
-## User Access Control
-
-Allowed users are configured via the `ALLOWED_USERS` environment variable in `wrangler.jsonc`:
-
-```jsonc
-"vars": {
-  "ALLOWED_USERS": "user1@example.com,user2@example.com"
-}
-```
-
-This is a comma-separated list of email addresses. Users not in this list will be denied access after authenticating via Cloudflare Access.
 
 ## Security Notes
 
@@ -431,16 +497,22 @@ npx wrangler kv key put --binding=OAUTH_KV "config:permissions" '{
 - Verify Cloudflare Access redirect URI matches your worker URL exactly
 - Check that ACCESS_CLIENT_ID and ACCESS_CLIENT_SECRET are set correctly
 - Ensure KV namespace is created and bound
-- Verify ACCESS_TEAM_NAME in `wrangler.jsonc` matches your Zero Trust team name
+- Verify `ACCESS_TEAM_NAME` in `wrangler.jsonc` vars matches your Zero Trust team name
 
 **Tools not appearing**
 - Check worker logs: Cloudflare Dashboard → Workers → Logs
 - Verify tools are registered in the `init()` method
 - Test with MCP Inspector first
 
-**"Unauthorized" after login**
-- Verify your email is in the ALLOWED_USERS set in `src/oauth-utils.ts`
+**"User not authorized" after login**
+- Verify your email is in `ALLOWED_USERS` in `wrangler.jsonc` vars
 - Check the user email matches exactly (case-insensitive)
+- Ensure `wrangler.jsonc` has a `vars` section — deploying without it wipes plaintext vars
+
+**CLI "Not authenticated"**
+- Run `fastmail auth --url <url> --team <team>` to authenticate
+- Run `fastmail auth status` to check token validity
+- Tokens expire after 30 days — re-run `fastmail auth` to refresh
 
 **Fastmail API errors**
 - Verify FASTMAIL_API_TOKEN is set as a secret

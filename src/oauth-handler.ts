@@ -101,6 +101,12 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 	const combinedState = clientState ? `${state}:${clientState}` : state;
 	const expiresAt = getExpiresAt(STATE_TTL_SECONDS);
 
+	// Resolve team name: env var takes priority, then query param from CLI
+	const teamName = env.ACCESS_TEAM_NAME || url.searchParams.get('team_name');
+	if (!teamName) {
+		return new Response('ACCESS_TEAM_NAME not configured and no team_name parameter provided', { status: 500 });
+	}
+
 	const stateData: OAuthStateData = {
 		client_id: clientId,
 		redirect_uri: redirectUri,
@@ -108,6 +114,7 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 		code_challenge: codeChallenge,
 		code_challenge_method: codeChallengeMethod,
 		expires_at: expiresAt,
+		team_name: teamName,
 	};
 
 	await env.OAUTH_KV.put(`state:${state}`, JSON.stringify(stateData), {
@@ -115,10 +122,7 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 	});
 
 	// Build Cloudflare Access OAuth URL
-	if (!env.ACCESS_TEAM_NAME) {
-		return new Response('ACCESS_TEAM_NAME not configured', { status: 500 });
-	}
-	const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME);
+	const accessBaseUrl = getAccessBaseUrl(teamName);
 	const accessAuthUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/authorization`;
 	const accessParams = new URLSearchParams({
 		client_id: env.ACCESS_CLIENT_ID,
@@ -179,7 +183,12 @@ export async function handleCallback(request: Request, env: Env, url: URL): Prom
 
 	try {
 		// Exchange code for tokens with Cloudflare Access
-		const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME!);
+		// Use team_name from stored state (set during authorize), falling back to env var
+		const teamName = stateResult.team_name || env.ACCESS_TEAM_NAME;
+		if (!teamName) {
+			throw new Error('ACCESS_TEAM_NAME not available');
+		}
+		const accessBaseUrl = getAccessBaseUrl(teamName);
 		const tokenUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/token`;
 		const tokenResponse = await fetch(tokenUrl, {
 			method: 'POST',
@@ -771,18 +780,24 @@ function renderOOBPage(authCode: string, clientState: string | null, _unused: nu
 
 // Initiates direct token flow - redirects to Cloudflare Access
 export async function handleGetToken(request: Request, env: Env, url: URL): Promise<Response> {
-	if (!env.ACCESS_CLIENT_ID || !env.ACCESS_TEAM_NAME) {
+	if (!env.ACCESS_CLIENT_ID) {
 		return new Response('OAuth not configured', { status: 500 });
 	}
 
-	// Generate state for CSRF protection
+	// Resolve team name: env var takes priority, then query param
+	const teamName = env.ACCESS_TEAM_NAME || url.searchParams.get('team_name');
+	if (!teamName) {
+		return new Response('ACCESS_TEAM_NAME not configured and no team_name parameter provided', { status: 500 });
+	}
+
+	// Generate state for CSRF protection (store team_name so callback can use it)
 	const state = generateState();
-	await env.OAUTH_KV.put(`direct-token-state:${state}`, 'pending', {
+	await env.OAUTH_KV.put(`direct-token-state:${state}`, JSON.stringify({ team_name: teamName }), {
 		expirationTtl: STATE_TTL_SECONDS,
 	});
 
 	// Redirect to Cloudflare Access
-	const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME);
+	const accessBaseUrl = getAccessBaseUrl(teamName);
 	const accessAuthUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/authorization`;
 	const accessParams = new URLSearchParams({
 		client_id: env.ACCESS_CLIENT_ID,
@@ -816,16 +831,29 @@ export async function handleGetTokenCallback(request: Request, env: Env, url: UR
 		return new Response('Missing code or state', { status: 400 });
 	}
 
-	// Validate state
-	const stateData = await env.OAUTH_KV.get(`direct-token-state:${state}`);
-	if (!stateData) {
+	// Validate state and extract stored data (includes team_name)
+	const stateDataJson = await env.OAUTH_KV.get(`direct-token-state:${state}`);
+	if (!stateDataJson) {
 		return new Response('Invalid or expired state', { status: 400 });
 	}
 	await env.OAUTH_KV.delete(`direct-token-state:${state}`);
 
+	// Parse stored state — may be 'pending' (legacy) or JSON with team_name
+	let storedTeamName: string | null = null;
+	try {
+		const parsed = JSON.parse(stateDataJson);
+		storedTeamName = parsed.team_name || null;
+	} catch {
+		// Legacy format: plain string 'pending'
+	}
+
 	try {
 		// Exchange code for tokens with Cloudflare Access
-		const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME!);
+		const teamName = storedTeamName || env.ACCESS_TEAM_NAME;
+		if (!teamName) {
+			throw new Error('ACCESS_TEAM_NAME not available');
+		}
+		const accessBaseUrl = getAccessBaseUrl(teamName);
 		const tokenUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/token`;
 		const tokenResponse = await fetch(tokenUrl, {
 			method: 'POST',
