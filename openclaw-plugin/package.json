@@ -1,0 +1,38 @@
+{
+  "name": "fastmail-cli",
+  "version": "1.0.0",
+  "description": "OpenClaw plugin for Fastmail email, contacts, and calendar",
+  "type": "module",
+  "files": [
+    "index.ts",
+    "src",
+    "skills",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "keywords": [
+    "openclaw",
+    "fastmail",
+    "email",
+    "mcp",
+    "agent-tools"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/omarshahine/fastmail-mcp-remote.git",
+    "directory": "openclaw-plugin"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.8",
+    "typescript": "^5.9.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

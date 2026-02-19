@@ -1,0 +1,31 @@
+{
+  "id": "fastmail-cli",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["workerUrl", "bearerToken"],
+    "properties": {
+      "workerUrl": {
+        "type": "string",
+        "description": "Fastmail MCP Worker URL (e.g. https://fastmail-mcp.example.com)"
+      },
+      "bearerToken": {
+        "type": "string",
+        "description": "Bearer token from 'fastmail auth'. Each user needs their own token."
+      }
+    }
+  },
+  "uiHints": {
+    "workerUrl": {
+      "label": "Worker URL",
+      "placeholder": "https://fastmail-mcp.example.com"
+    },
+    "bearerToken": {
+      "label": "Bearer Token",
+      "placeholder": "Token from 'fastmail auth'"
+    }
+  },
+  "skills": [
+    "./skills"
+  ]
+}
