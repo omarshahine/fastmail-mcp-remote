@@ -2,7 +2,7 @@
 
 Fastmail has a powerful API ([JMAP](https://jmap.io/)) and supports IMAP, but it doesn't offer a native [MCP](https://modelcontextprotocol.io/) server. That means AI assistants like Claude, Copilot, and OpenClaw can't talk to your Fastmail account out of the box.
 
-**Fastmail Remote bridges this gap.** It's a remote MCP server that runs on Cloudflare Workers, translating MCP tool calls into Fastmail JMAP API requests. Your Fastmail API token is stored as an encrypted Cloudflare secret, and all access is protected by [Cloudflare Zero Trust](https://www.cloudflare.com/zero-trust/) authentication. You deploy it once, and any MCP client can connect via OAuth.
+**Fastmail Remote bridges this gap.** It's a remote MCP server that runs on Cloudflare Workers, translating MCP tool calls into Fastmail JMAP API requests. Your Fastmail API token is stored as an encrypted Cloudflare secret, and all access is protected by [Cloudflare Zero Trust](https://developers.cloudflare.com/cloudflare-one/) authentication. You deploy it once, and any MCP client can connect via OAuth.
 
 ### Client Interfaces
 
