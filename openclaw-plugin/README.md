@@ -5,7 +5,7 @@ OpenClaw plugin for Fastmail email, contacts, and calendar. Provides 36 agent to
 ## Installation
 
 ```bash
-openclaw install fastmail-cli
+openclaw plugins install fastmail-cli
 ```
 
 ## Prerequisites
