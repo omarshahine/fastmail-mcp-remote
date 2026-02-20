@@ -1,6 +1,6 @@
 {
 	"name": "fastmail-mcp-remote",
-	"version": "1.9.0",
+	"version": "1.9.1",
 	"description": "Remote MCP server and CLI for Fastmail on Cloudflare Workers with Cloudflare Access OAuth",
 	"private": true,
 	"bin": {

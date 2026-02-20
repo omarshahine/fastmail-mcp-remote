@@ -1,6 +1,6 @@
 {
   "name": "fastmail-cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "OpenClaw plugin for Fastmail email, contacts, and calendar",
   "type": "module",
   "files": [
