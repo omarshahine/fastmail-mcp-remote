@@ -28,7 +28,12 @@ alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
 
 # Authenticate (one-time, tokens last 30 days)
 fastmail auth --url https://your-worker.example.com --team yourteam
-fastmail auth status
+fastmail auth status     # Shows authenticated user, token expiry
+fastmail auth logout     # Remove cached credentials
+
+# Headless auth (SSH / no-browser environments)
+fastmail auth --headless --url https://your-worker.example.com
+# Prints a URL to open in any browser, then paste the token back
 ```
 
 ### Commands
@@ -362,6 +367,9 @@ alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
 # Authenticate (opens browser for CF Access login)
 fastmail auth --url https://your-worker.example.com --team yourteam
 
+# Or headless auth for SSH / no-browser environments
+fastmail auth --headless --url https://your-worker.example.com
+
 # Test
 fastmail inbox
 ```
@@ -511,8 +519,10 @@ npx wrangler kv key put --binding=OAUTH_KV "config:permissions" '{
 
 **CLI "Not authenticated"**
 - Run `fastmail auth --url <url> --team <team>` to authenticate
-- Run `fastmail auth status` to check token validity
+- Run `fastmail auth --headless` for SSH / no-browser environments
+- Run `fastmail auth status` to check token validity and authenticated user
 - Tokens expire after 30 days — re-run `fastmail auth` to refresh
+- Run `fastmail auth logout` to clear cached credentials
 
 **Fastmail API errors**
 - Verify FASTMAIL_API_TOKEN is set as a secret

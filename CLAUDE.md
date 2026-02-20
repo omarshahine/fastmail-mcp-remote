@@ -230,6 +230,9 @@ The CLI (`cli/`) is a token-efficient alternative to MCP tools. It calls the sam
 # Setup
 alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
 fastmail auth --url https://your-worker.example.com --team yourteam
+fastmail auth --headless --url https://your-worker.example.com  # SSH / no-browser
+fastmail auth status                    # Shows user, server, token expiry
+fastmail auth logout                    # Remove cached credentials
 
 # Common commands
 fastmail inbox                          # Recent inbox emails

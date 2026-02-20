@@ -15,7 +15,11 @@ alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
 
 # Authenticate (one-time, tokens last 30 days)
 fastmail auth --url https://your-worker.example.com --team myteam
-fastmail auth status   # Check token validity
+fastmail auth status    # Check token validity and authenticated user
+fastmail auth logout    # Remove cached credentials
+
+# Headless auth (SSH / no-browser environments)
+fastmail auth --headless --url https://your-worker.example.com
 ```
 
 ## Quick Reference
@@ -174,3 +178,4 @@ fastmail email move M5 <archiveId>    # Archive one
 - **"Token expired"** → Run `fastmail auth` (re-authenticates, preserves URL)
 - **Connection errors** → Check if the MCP worker is running
 - **Permission denied** → Your user role may not have access to that tool
+- **No browser available** → Use `fastmail auth --headless` for SSH environments
