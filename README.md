@@ -1,6 +1,14 @@
 # Fastmail Remote
 
-A remote MCP server and token-efficient CLI for Fastmail email, contacts, and calendar access. The MCP server runs on Cloudflare Workers with Cloudflare Access OAuth authentication. The CLI calls the remote server and formats responses as compact text, saving 5-7x tokens when used with AI assistants.
+Fastmail has a powerful API ([JMAP](https://jmap.io/)) and supports IMAP, but it doesn't offer a native [MCP](https://modelcontextprotocol.io/) server. That means AI assistants like Claude, Copilot, and OpenClaw can't talk to your Fastmail account out of the box.
+
+**Fastmail Remote bridges this gap.** It's a remote MCP server that runs on Cloudflare Workers, translating MCP tool calls into Fastmail JMAP API requests. You deploy it once with your Fastmail API token, and any MCP client can connect to it via OAuth.
+
+### Client Interfaces
+
+- **Any MCP client** (Claude.ai, Claude Code, GitHub Copilot) connects directly to the Worker via OAuth
+- **[Fastmail CLI](cli/)** — a local command-line tool that calls the Worker and formats responses as compact text, saving 5-7x tokens
+- **[Fastmail CLI for OpenClaw](openclaw-plugin/)** — an OpenClaw plugin (36 agent tools) published as [`fastmail-cli` on npm](https://www.npmjs.com/package/fastmail-cli)
 
 ## Architecture
 
