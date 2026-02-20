@@ -22,6 +22,7 @@ export interface Config {
   teamName: string;
   token: string;
   tokenExpiresAt: string;
+  userLogin?: string;
 }
 
 export async function loadConfig(): Promise<Config | null> {
@@ -114,7 +115,57 @@ function prompt(question: string): Promise<string> {
 }
 
 /**
- * Run the full PKCE OAuth flow:
+ * Resolve the base URL and team name from CLI args + saved config.
+ * Shared by both browser and headless flows.
+ */
+async function resolveAuthParams(
+  url?: string,
+  teamName?: string,
+): Promise<{ baseUrl: string; teamName: string; config: Config | null }> {
+  const config = await loadConfig();
+  const baseUrl = url || config?.url;
+
+  if (!baseUrl) {
+    console.error(
+      "Error: No URL provided. Run: fastmail auth --url <your-worker-url>",
+    );
+    process.exit(1);
+  }
+
+  let resolvedTeamName = teamName || config?.teamName;
+  if (!resolvedTeamName) {
+    resolvedTeamName = await prompt(
+      "Cloudflare Access team name (e.g. 'myteam' from myteam.cloudflareaccess.com): ",
+    );
+    if (!resolvedTeamName) {
+      console.error("Error: Team name is required for authentication.");
+      process.exit(1);
+    }
+  }
+
+  return { baseUrl, teamName: resolvedTeamName, config };
+}
+
+/**
+ * Save token + metadata to config and print success message.
+ */
+async function saveAndReport(
+  baseUrl: string,
+  teamName: string,
+  clientId: string,
+  token: string,
+  expiresAt: string,
+  userLogin?: string,
+): Promise<void> {
+  await saveConfig({ url: baseUrl, clientId, teamName, token, tokenExpiresAt: expiresAt, userLogin });
+  console.log("Authentication successful!");
+  console.log(
+    `Token expires: ${new Date(expiresAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`,
+  );
+}
+
+/**
+ * Run the full PKCE OAuth flow (requires a local browser):
  * 1. Register a client (if first time)
  * 2. Start localhost callback server
  * 3. Open browser → CF Access auth
@@ -126,27 +177,7 @@ export async function authenticate(
   url?: string,
   teamName?: string,
 ): Promise<void> {
-  let config = await loadConfig();
-  const baseUrl = url || config?.url;
-
-  if (!baseUrl) {
-    console.error(
-      "Error: No URL provided. Run: fastmail auth --url <your-worker-url>",
-    );
-    process.exit(1);
-  }
-
-  // Resolve team name: CLI option > saved config > prompt
-  let resolvedTeamName = teamName || config?.teamName;
-  if (!resolvedTeamName) {
-    resolvedTeamName = await prompt(
-      "Cloudflare Access team name (e.g. 'myteam' from myteam.cloudflareaccess.com): ",
-    );
-    if (!resolvedTeamName) {
-      console.error("Error: Team name is required for authentication.");
-      process.exit(1);
-    }
-  }
+  const { baseUrl, teamName: resolvedTeamName, config } = await resolveAuthParams(url, teamName);
 
   // Register client if needed
   let clientId = config?.clientId;
@@ -223,24 +254,84 @@ export async function authenticate(
   const tokenData = (await tokenResponse.json()) as {
     access_token: string;
     expires_in: number;
+    user_login?: string;
   };
 
-  // Save config
   const expiresAt = new Date(
     Date.now() + tokenData.expires_in * 1000,
   ).toISOString();
-  await saveConfig({
-    url: baseUrl,
-    clientId,
-    teamName: resolvedTeamName,
-    token: tokenData.access_token,
-    tokenExpiresAt: expiresAt,
+  await saveAndReport(baseUrl, resolvedTeamName, clientId, tokenData.access_token, expiresAt, tokenData.user_login);
+}
+
+/**
+ * Headless authentication for SSH / no-browser environments.
+ *
+ * Uses the server's /get-token direct token flow:
+ * 1. Print a URL the user opens in any browser (even on another machine)
+ * 2. User authenticates via Cloudflare Access in that browser
+ * 3. Server generates a Bearer token and displays it on the page
+ * 4. User copies the token and pastes it back into the terminal
+ * 5. CLI validates the token against the server and caches it
+ */
+export async function authenticateHeadless(
+  url?: string,
+  teamName?: string,
+): Promise<void> {
+  const { baseUrl, teamName: resolvedTeamName } = await resolveAuthParams(url, teamName);
+
+  // Build the /get-token URL
+  const tokenUrl = `${baseUrl}/get-token?team_name=${encodeURIComponent(resolvedTeamName)}`;
+
+  console.log("Headless authentication mode");
+  console.log("\u2500".repeat(50));
+  console.log("");
+  console.log("Open this URL in any browser (can be on another machine):");
+  console.log("");
+  console.log(`  ${tokenUrl}`);
+  console.log("");
+  console.log("After authenticating, copy the Bearer token shown on the page.");
+  console.log("");
+
+  const token = await prompt("Paste your Bearer token here: ");
+  if (!token) {
+    console.error("Error: No token provided.");
+    process.exit(1);
+  }
+
+  // Validate the token against the server
+  console.log("Validating token...");
+  const validateResponse = await fetch(`${baseUrl}/mcp`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        clientInfo: { name: "fastmail-cli", version: "1.0.0" },
+      },
+    }),
   });
 
-  console.log("Authentication successful!");
-  console.log(
-    `Token expires: ${new Date(expiresAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}`,
-  );
+  if (!validateResponse.ok) {
+    const status = validateResponse.status;
+    if (status === 401 || status === 403) {
+      console.error("Error: Invalid or expired token. Please try again.");
+    } else {
+      console.error(`Error: Server returned ${status}. Check the URL and try again.`);
+    }
+    process.exit(1);
+  }
+
+  // Token is valid — save with 30-day expiry (matches server TTL)
+  const TOKEN_TTL_SECONDS = 86400 * 30;
+  const expiresAt = new Date(Date.now() + TOKEN_TTL_SECONDS * 1000).toISOString();
+  await saveAndReport(baseUrl, resolvedTeamName, "direct-token", token, expiresAt);
 }
 
 /** Load and validate the cached token, or exit with an error. */
@@ -276,11 +367,32 @@ export async function checkAuthStatus(): Promise<void> {
     (expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
   );
 
-  console.log(`Status: ${daysLeft > 0 ? "Authenticated" : "Expired"}`);
-  console.log(`Server: ${config.url}`);
-  console.log(`Team:   ${config.teamName || "(not set)"}`);
-  console.log(`Client: ${config.clientId}`);
+  console.log(`Status:  ${daysLeft > 0 ? "Authenticated" : "Expired"}`);
+  if (config.userLogin) {
+    console.log(`User:    ${config.userLogin}`);
+  }
+  console.log(`Server:  ${config.url}`);
+  console.log(`Team:    ${config.teamName || "(not set)"}`);
+  console.log(`Client:  ${config.clientId}`);
   console.log(
     `Expires: ${expiresAt.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })} (${daysLeft > 0 ? `${daysLeft} days left` : "expired"})`,
   );
+}
+
+/** Remove cached credentials and log out. */
+export async function logout(): Promise<void> {
+  const config = await loadConfig();
+  if (!config?.token) {
+    console.log("Not authenticated — nothing to log out of.");
+    return;
+  }
+
+  const { unlink } = await import("node:fs/promises");
+  try {
+    await unlink(CONFIG_FILE);
+  } catch {
+    // File already gone — that's fine
+  }
+
+  console.log("Logged out. Cached credentials removed.");
 }

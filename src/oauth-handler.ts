@@ -368,6 +368,7 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
 			token_type: 'Bearer',
 			expires_in: TOKEN_TTL_SECONDS,
 			scope: authCode.scope,
+			user_login: authCode.user_login,
 		}),
 		{
 			status: 200,

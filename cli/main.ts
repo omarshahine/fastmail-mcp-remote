@@ -14,7 +14,7 @@
  */
 
 import { Command } from "commander";
-import { authenticate, checkAuthStatus, getToken } from "./auth.js";
+import { authenticate, authenticateHeadless, checkAuthStatus, logout, getToken } from "./auth.js";
 import { FastmailMcpClient } from "./mcp-client.js";
 import { registerEmailCommands } from "./commands/email.js";
 import { registerContactCommands } from "./commands/contacts.js";
@@ -36,9 +36,14 @@ const auth = program
   .description("Authenticate with the Fastmail MCP server")
   .option("--url <url>", "Worker URL (required on first run)")
   .option("--team <name>", "Cloudflare Access team name (e.g. 'myteam')")
+  .option("--headless", "Token paste flow for SSH / no-browser environments")
   .action(async (opts) => {
     try {
-      await authenticate(opts.url, opts.team);
+      if (opts.headless) {
+        await authenticateHeadless(opts.url, opts.team);
+      } else {
+        await authenticate(opts.url, opts.team);
+      }
     } catch (err: any) {
       console.error(`Auth failed: ${err.message}`);
       process.exit(1);
@@ -50,6 +55,13 @@ auth
   .description("Check authentication status")
   .action(async () => {
     await checkAuthStatus();
+  });
+
+auth
+  .command("logout")
+  .description("Remove cached credentials and log out")
+  .action(async () => {
+    await logout();
   });
 
 // ── All other commands need an MCP client ──────────────────
