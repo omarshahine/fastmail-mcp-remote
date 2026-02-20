@@ -277,10 +277,23 @@ export async function authenticateHeadless(
   url?: string,
   teamName?: string,
 ): Promise<void> {
-  const { baseUrl, teamName: resolvedTeamName } = await resolveAuthParams(url, teamName);
+  const config = await loadConfig();
+  const baseUrl = url || config?.url;
 
-  // Build the /get-token URL
-  const tokenUrl = `${baseUrl}/get-token?team_name=${encodeURIComponent(resolvedTeamName)}`;
+  if (!baseUrl) {
+    console.error(
+      "Error: No URL provided. Run: fastmail auth --headless --url <your-worker-url>",
+    );
+    process.exit(1);
+  }
+
+  // Team name is optional — the server uses its ACCESS_TEAM_NAME env var as default.
+  // Only include it in the URL if explicitly provided via CLI arg or saved config.
+  const resolvedTeamName = teamName || config?.teamName;
+  const tokenParams = resolvedTeamName
+    ? `?team_name=${encodeURIComponent(resolvedTeamName)}`
+    : "";
+  const tokenUrl = `${baseUrl}/get-token${tokenParams}`;
 
   console.log("Headless authentication mode");
   console.log("\u2500".repeat(50));
@@ -332,7 +345,7 @@ export async function authenticateHeadless(
   // Token is valid — save with 30-day expiry (matches server TTL)
   const TOKEN_TTL_SECONDS = 86400 * 30;
   const expiresAt = new Date(Date.now() + TOKEN_TTL_SECONDS * 1000).toISOString();
-  await saveAndReport(baseUrl, resolvedTeamName, "direct-token", token, expiresAt);
+  await saveAndReport(baseUrl, resolvedTeamName || "", "direct-token", token, expiresAt);
 }
 
 /** Load and validate the cached token, or exit with an error. */
