@@ -298,12 +298,13 @@ export async function authenticateHeadless(
     process.exit(1);
   }
 
-  // Validate the token against the server
+  // Validate the token against the server using MCP Streamable HTTP transport
   console.log("Validating token...");
   const validateResponse = await fetch(`${baseUrl}/mcp`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
