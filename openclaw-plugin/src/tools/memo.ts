@@ -3,10 +3,10 @@
  * 1 read-only + 2 optional (create, delete).
  */
 
-import type { OpenClawApi, GetClientFn } from "../../index.js";
-import { formatMemo } from "../formatters.js";
+import type { OpenClawApi } from "../../index.js";
+import { buildArgs, runTool } from "../cli-runner.js";
 
-export function registerMemoTools(api: OpenClawApi, getClient: GetClientFn) {
+export function registerMemoTools(api: OpenClawApi, cli: string) {
   api.registerTool({
     name: "fastmail_get_memo",
     description: "Get the private memo on an email, if one exists.",
@@ -15,10 +15,8 @@ export function registerMemoTools(api: OpenClawApi, getClient: GetClientFn) {
       properties: { emailId: { type: "string", description: "Email ID" } },
       required: ["emailId"],
     },
-    async execute(_id: string, params: { emailId: string }) {
-      const client = await getClient();
-      return { content: [{ type: "text", text: formatMemo(await client.callTool("get_memo", { emailId: params.emailId })) }] };
-    },
+    execute: (_id, params: { emailId: string }) =>
+      runTool(["memo", params.emailId], cli),
   });
 
   api.registerTool({
@@ -32,11 +30,8 @@ export function registerMemoTools(api: OpenClawApi, getClient: GetClientFn) {
       },
       required: ["emailId", "text"],
     },
-    async execute(_id: string, params: { emailId: string; text: string }) {
-      const client = await getClient();
-      const data = await client.callTool("create_memo", params);
-      return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }] };
-    },
+    execute: (_id, params: { emailId: string; text: string }) =>
+      runTool(buildArgs(["memo", "create", params.emailId], { text: params.text }), cli),
   }, { optional: true });
 
   api.registerTool({
@@ -47,10 +42,7 @@ export function registerMemoTools(api: OpenClawApi, getClient: GetClientFn) {
       properties: { emailId: { type: "string", description: "Email ID" } },
       required: ["emailId"],
     },
-    async execute(_id: string, params: { emailId: string }) {
-      const client = await getClient();
-      const data = await client.callTool("delete_memo", { emailId: params.emailId });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }] };
-    },
+    execute: (_id, params: { emailId: string }) =>
+      runTool(["memo", "delete", params.emailId], cli),
   }, { optional: true });
 }

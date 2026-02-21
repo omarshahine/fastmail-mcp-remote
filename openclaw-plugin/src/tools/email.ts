@@ -5,19 +5,10 @@
  * Write/organize/bulk tools use { optional: true }.
  */
 
-import type { OpenClawApi, GetClientFn } from "../../index.js";
-import {
-  formatEmailList,
-  formatEmail,
-  formatMailboxes,
-  formatMailboxStats,
-  formatAccountSummary,
-  formatIdentities,
-  formatAttachments,
-  formatInboxUpdates,
-} from "../formatters.js";
+import type { OpenClawApi } from "../../index.js";
+import { buildArgs, runTool } from "../cli-runner.js";
 
-export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
+export function registerEmailTools(api: OpenClawApi, cli: string) {
   // -- Read (11 tools) ------------------------------------------------
 
   api.registerTool({
@@ -30,15 +21,8 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
         mailboxName: { type: "string", default: "inbox", description: "Mailbox name" },
       },
     },
-    async execute(_id: string, params: { limit?: number; mailboxName?: string }) {
-      const client = await getClient();
-      const data = await client.callTool("get_recent_emails", {
-        limit: params.limit ?? 10,
-        mailboxName: params.mailboxName ?? "inbox",
-      });
-      const text = Array.isArray(data) ? formatEmailList(data, params.mailboxName ?? "inbox") : String(data);
-      return { content: [{ type: "text", text }] };
-    },
+    execute: (_id, params: { limit?: number; mailboxName?: string }) =>
+      runTool(buildArgs(["inbox"], { limit: params.limit, mailbox: params.mailboxName }), cli),
   });
 
   api.registerTool({
@@ -52,14 +36,8 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
       },
       required: ["emailId"],
     },
-    async execute(_id: string, params: { emailId: string; format?: string }) {
-      const client = await getClient();
-      const data = await client.callTool("get_email", {
-        emailId: params.emailId,
-        format: params.format ?? "markdown",
-      });
-      return { content: [{ type: "text", text: formatEmail(data) }] };
-    },
+    execute: (_id, params: { emailId: string; format?: string }) =>
+      runTool(buildArgs(["email", params.emailId], { raw: params.format === "html" }), cli),
   });
 
   api.registerTool({
@@ -81,23 +59,18 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
       },
       required: ["query"],
     },
-    async execute(_id: string, params: Record<string, any>) {
-      const client = await getClient();
-      const hasFilters = params.from || params.to || params.subject || params.after || params.before || params.isUnread || params.hasAttachment || params.mailboxId;
-      const tool = hasFilters ? "advanced_search" : "search_emails";
-      const data = await client.callTool(tool, {
-        query: params.query,
-        limit: params.limit ?? 20,
-        ...(hasFilters && {
-          from: params.from, to: params.to, subject: params.subject,
-          after: params.after, before: params.before,
-          isUnread: params.isUnread, hasAttachment: params.hasAttachment,
-          mailboxId: params.mailboxId,
-        }),
-      });
-      const text = Array.isArray(data) ? formatEmailList(data, `Search: ${params.query}`) : String(data);
-      return { content: [{ type: "text", text }] };
-    },
+    execute: (_id, params: Record<string, any>) =>
+      runTool(buildArgs(["email", "search", params.query], {
+        limit: params.limit,
+        from: params.from,
+        to: params.to,
+        subject: params.subject,
+        after: params.after,
+        before: params.before,
+        unread: params.isUnread,
+        attachments: params.hasAttachment,
+        mailbox: params.mailboxId,
+      }), cli),
   });
 
   api.registerTool({
@@ -111,25 +84,15 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
       },
       required: ["threadId"],
     },
-    async execute(_id: string, params: { threadId: string; format?: string }) {
-      const client = await getClient();
-      const data = await client.callTool("get_thread", { threadId: params.threadId, format: params.format ?? "markdown" });
-      let text: string;
-      if (typeof data === "string") text = data;
-      else if (Array.isArray(data)) text = data.map(formatEmail).join("\n\n---\n\n");
-      else text = JSON.stringify(data, null, 2);
-      return { content: [{ type: "text", text }] };
-    },
+    execute: (_id, params: { threadId: string; format?: string }) =>
+      runTool(buildArgs(["email", "thread", params.threadId], { raw: params.format === "html" }), cli),
   });
 
   api.registerTool({
     name: "fastmail_list_mailboxes",
     description: "List all mailboxes with IDs, names, roles, and email counts.",
     parameters: { type: "object", properties: {} },
-    async execute(_id: string, _params: Record<string, never>) {
-      const client = await getClient();
-      return { content: [{ type: "text", text: formatMailboxes(await client.callTool("list_mailboxes")) }] };
-    },
+    execute: () => runTool(["mailboxes"], cli),
   });
 
   api.registerTool({
@@ -139,32 +102,22 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
       type: "object",
       properties: { mailboxId: { type: "string", description: "Mailbox ID (omit for all)" } },
     },
-    async execute(_id: string, params: { mailboxId?: string }) {
-      const client = await getClient();
-      const args: Record<string, unknown> = {};
-      if (params.mailboxId) args.mailboxId = params.mailboxId;
-      return { content: [{ type: "text", text: formatMailboxStats(await client.callTool("get_mailbox_stats", args)) }] };
-    },
+    execute: (_id, params: { mailboxId?: string }) =>
+      runTool(buildArgs(params.mailboxId ? ["mailbox-stats", params.mailboxId] : ["mailbox-stats"]), cli),
   });
 
   api.registerTool({
     name: "fastmail_get_account_summary",
     description: "Get account overview: mailbox count, identity count, total/unread emails.",
     parameters: { type: "object", properties: {} },
-    async execute(_id: string, _params: Record<string, never>) {
-      const client = await getClient();
-      return { content: [{ type: "text", text: formatAccountSummary(await client.callTool("get_account_summary")) }] };
-    },
+    execute: () => runTool(["account"], cli),
   });
 
   api.registerTool({
     name: "fastmail_list_identities",
     description: "List sending identities (email addresses and names).",
     parameters: { type: "object", properties: {} },
-    async execute(_id: string, _params: Record<string, never>) {
-      const client = await getClient();
-      return { content: [{ type: "text", text: formatIdentities(await client.callTool("list_identities")) }] };
-    },
+    execute: () => runTool(["identities"], cli),
   });
 
   api.registerTool({
@@ -175,11 +128,8 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
       properties: { emailId: { type: "string", description: "Email ID" } },
       required: ["emailId"],
     },
-    async execute(_id: string, params: { emailId: string }) {
-      const client = await getClient();
-      const data = await client.callTool("get_email_attachments", { emailId: params.emailId });
-      return { content: [{ type: "text", text: Array.isArray(data) ? formatAttachments(data) : String(data) }] };
-    },
+    execute: (_id, params: { emailId: string }) =>
+      runTool(["email", "attachments", params.emailId], cli),
   });
 
   api.registerTool({
@@ -194,13 +144,8 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
       },
       required: ["emailId", "attachmentId"],
     },
-    async execute(_id: string, params: { emailId: string; attachmentId: string; inline?: boolean }) {
-      const client = await getClient();
-      const data = await client.callTool("download_attachment", {
-        emailId: params.emailId, attachmentId: params.attachmentId, inline: params.inline ?? false,
-      });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data, null, 2) }] };
-    },
+    execute: (_id, params: { emailId: string; attachmentId: string; inline?: boolean }) =>
+      runTool(buildArgs(["email", "download", params.emailId, params.attachmentId], { inline: params.inline }), cli),
   });
 
   api.registerTool({
@@ -214,13 +159,8 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
         limit: { type: "integer", default: 100, description: "Max results" },
       },
     },
-    async execute(_id: string, params: { sinceQueryState?: string; mailboxId?: string; limit?: number }) {
-      const client = await getClient();
-      const data = await client.callTool("get_inbox_updates", {
-        sinceQueryState: params.sinceQueryState, mailboxId: params.mailboxId, limit: params.limit ?? 100,
-      });
-      return { content: [{ type: "text", text: typeof data === "object" && data !== null ? formatInboxUpdates(data) : String(data) }] };
-    },
+    execute: (_id, params: { sinceQueryState?: string; mailboxId?: string; limit?: number }) =>
+      runTool(buildArgs(["updates"], { since: params.sinceQueryState, mailbox: params.mailboxId, limit: params.limit }), cli),
   });
 
   // -- Write (3 tools, optional) --------------------------------------
@@ -242,19 +182,12 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
       },
       required: ["to", "subject"],
     },
-    async execute(_id: string, params: { to: string[]; subject: string; textBody?: string; htmlBody?: string; markdownBody?: string; cc?: string[]; bcc?: string[]; from?: string }) {
-      const client = await getClient();
-      const data = await client.callTool("send_email", {
+    execute: (_id, params: { to: string[]; subject: string; textBody?: string; htmlBody?: string; markdownBody?: string; cc?: string[]; bcc?: string[]; from?: string }) =>
+      runTool(buildArgs(["email", "send"], {
         to: params.to, subject: params.subject,
-        ...(params.textBody && { textBody: params.textBody }),
-        ...(params.htmlBody && { htmlBody: params.htmlBody }),
-        ...(params.markdownBody && { markdownBody: params.markdownBody }),
-        ...(params.cc && { cc: params.cc }),
-        ...(params.bcc && { bcc: params.bcc }),
-        ...(params.from && { from: params.from }),
-      });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }] };
-    },
+        body: params.textBody, html: params.htmlBody, markdown: params.markdownBody,
+        cc: params.cc, bcc: params.bcc, from: params.from,
+      }), cli),
   }, { optional: true });
 
   api.registerTool({
@@ -274,19 +207,12 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
       },
       required: ["to", "subject"],
     },
-    async execute(_id: string, params: { to: string[]; subject: string; textBody?: string; htmlBody?: string; markdownBody?: string; cc?: string[]; bcc?: string[]; from?: string }) {
-      const client = await getClient();
-      const data = await client.callTool("create_draft", {
+    execute: (_id, params: { to: string[]; subject: string; textBody?: string; htmlBody?: string; markdownBody?: string; cc?: string[]; bcc?: string[]; from?: string }) =>
+      runTool(buildArgs(["email", "draft"], {
         to: params.to, subject: params.subject,
-        ...(params.textBody && { textBody: params.textBody }),
-        ...(params.htmlBody && { htmlBody: params.htmlBody }),
-        ...(params.markdownBody && { markdownBody: params.markdownBody }),
-        ...(params.cc && { cc: params.cc }),
-        ...(params.bcc && { bcc: params.bcc }),
-        ...(params.from && { from: params.from }),
-      });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }] };
-    },
+        body: params.textBody, html: params.htmlBody, markdown: params.markdownBody,
+        cc: params.cc, bcc: params.bcc, from: params.from,
+      }), cli),
   }, { optional: true });
 
   api.registerTool({
@@ -306,19 +232,12 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
       },
       required: ["emailId", "body"],
     },
-    async execute(_id: string, params: { emailId: string; body: string; htmlBody?: string; markdownBody?: string; from?: string; replyAll?: boolean; sendImmediately?: boolean; excludeQuote?: boolean }) {
-      const client = await getClient();
-      const data = await client.callTool("reply_to_email", {
-        emailId: params.emailId, body: params.body,
-        ...(params.htmlBody && { htmlBody: params.htmlBody }),
-        ...(params.markdownBody && { markdownBody: params.markdownBody }),
-        ...(params.from && { from: params.from }),
-        ...(params.replyAll !== undefined && { replyAll: params.replyAll }),
-        ...(params.sendImmediately !== undefined && { sendImmediately: params.sendImmediately }),
-        ...(params.excludeQuote !== undefined && { excludeQuote: params.excludeQuote }),
-      });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }] };
-    },
+    execute: (_id, params: { emailId: string; body: string; htmlBody?: string; markdownBody?: string; from?: string; replyAll?: boolean; sendImmediately?: boolean; excludeQuote?: boolean }) =>
+      runTool(buildArgs(["email", "reply", params.emailId], {
+        body: params.body, html: params.htmlBody, markdown: params.markdownBody,
+        from: params.from, all: params.replyAll, send: params.sendImmediately,
+        "no-quote": params.excludeQuote,
+      }), cli),
   }, { optional: true });
 
   // -- Organize (6 tools, optional) -----------------------------------
@@ -327,55 +246,35 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
     name: "fastmail_mark_read",
     description: "Mark an email as read.",
     parameters: { type: "object", properties: { emailId: { type: "string" } }, required: ["emailId"] },
-    async execute(_id: string, params: { emailId: string }) {
-      const client = await getClient();
-      const data = await client.callTool("mark_email_read", { emailId: params.emailId, read: true });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : "Marked as read" }] };
-    },
+    execute: (_id, params: { emailId: string }) => runTool(["email", "read", params.emailId], cli),
   }, { optional: true });
 
   api.registerTool({
     name: "fastmail_mark_unread",
     description: "Mark an email as unread.",
     parameters: { type: "object", properties: { emailId: { type: "string" } }, required: ["emailId"] },
-    async execute(_id: string, params: { emailId: string }) {
-      const client = await getClient();
-      const data = await client.callTool("mark_email_read", { emailId: params.emailId, read: false });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : "Marked as unread" }] };
-    },
+    execute: (_id, params: { emailId: string }) => runTool(["email", "unread", params.emailId], cli),
   }, { optional: true });
 
   api.registerTool({
     name: "fastmail_flag",
     description: "Flag (star) an email.",
     parameters: { type: "object", properties: { emailId: { type: "string" } }, required: ["emailId"] },
-    async execute(_id: string, params: { emailId: string }) {
-      const client = await getClient();
-      const data = await client.callTool("flag_email", { emailId: params.emailId, flagged: true });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : "Flagged" }] };
-    },
+    execute: (_id, params: { emailId: string }) => runTool(["email", "flag", params.emailId], cli),
   }, { optional: true });
 
   api.registerTool({
     name: "fastmail_unflag",
     description: "Unflag (unstar) an email.",
     parameters: { type: "object", properties: { emailId: { type: "string" } }, required: ["emailId"] },
-    async execute(_id: string, params: { emailId: string }) {
-      const client = await getClient();
-      const data = await client.callTool("flag_email", { emailId: params.emailId, flagged: false });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : "Unflagged" }] };
-    },
+    execute: (_id, params: { emailId: string }) => runTool(["email", "unflag", params.emailId], cli),
   }, { optional: true });
 
   api.registerTool({
     name: "fastmail_delete",
     description: "Delete an email (move to trash).",
     parameters: { type: "object", properties: { emailId: { type: "string" } }, required: ["emailId"] },
-    async execute(_id: string, params: { emailId: string }) {
-      const client = await getClient();
-      const data = await client.callTool("delete_email", { emailId: params.emailId });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : "Deleted" }] };
-    },
+    execute: (_id, params: { emailId: string }) => runTool(["email", "delete", params.emailId], cli),
   }, { optional: true });
 
   api.registerTool({
@@ -389,11 +288,8 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
       },
       required: ["emailId", "targetMailboxId"],
     },
-    async execute(_id: string, params: { emailId: string; targetMailboxId: string }) {
-      const client = await getClient();
-      const data = await client.callTool("move_email", { emailId: params.emailId, targetMailboxId: params.targetMailboxId });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : "Moved" }] };
-    },
+    execute: (_id, params: { emailId: string; targetMailboxId: string }) =>
+      runTool(["email", "move", params.emailId, params.targetMailboxId], cli),
   }, { optional: true });
 
   // -- Bulk (6 tools, optional) ---------------------------------------
@@ -403,14 +299,11 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
     description: "Mark multiple emails as read.",
     parameters: {
       type: "object",
-      properties: { emailIds: { type: "array", items: { type: "string" } } },
+      properties: { emailIds: { type: "array", items: { type: "string" }, minItems: 1 } },
       required: ["emailIds"],
     },
-    async execute(_id: string, params: { emailIds: string[] }) {
-      const client = await getClient();
-      const data = await client.callTool("bulk_mark_read", { emailIds: params.emailIds, read: true });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : `${params.emailIds.length} marked read` }] };
-    },
+    execute: (_id, params: { emailIds: string[] }) =>
+      runTool(["bulk", "read", ...params.emailIds], cli),
   }, { optional: true });
 
   api.registerTool({
@@ -418,14 +311,11 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
     description: "Mark multiple emails as unread.",
     parameters: {
       type: "object",
-      properties: { emailIds: { type: "array", items: { type: "string" } } },
+      properties: { emailIds: { type: "array", items: { type: "string" }, minItems: 1 } },
       required: ["emailIds"],
     },
-    async execute(_id: string, params: { emailIds: string[] }) {
-      const client = await getClient();
-      const data = await client.callTool("bulk_mark_read", { emailIds: params.emailIds, read: false });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : `${params.emailIds.length} marked unread` }] };
-    },
+    execute: (_id, params: { emailIds: string[] }) =>
+      runTool(["bulk", "unread", ...params.emailIds], cli),
   }, { optional: true });
 
   api.registerTool({
@@ -433,14 +323,11 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
     description: "Flag multiple emails.",
     parameters: {
       type: "object",
-      properties: { emailIds: { type: "array", items: { type: "string" } } },
+      properties: { emailIds: { type: "array", items: { type: "string" }, minItems: 1 } },
       required: ["emailIds"],
     },
-    async execute(_id: string, params: { emailIds: string[] }) {
-      const client = await getClient();
-      const data = await client.callTool("bulk_flag", { emailIds: params.emailIds, flagged: true });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : `${params.emailIds.length} flagged` }] };
-    },
+    execute: (_id, params: { emailIds: string[] }) =>
+      runTool(["bulk", "flag", ...params.emailIds], cli),
   }, { optional: true });
 
   api.registerTool({
@@ -448,14 +335,11 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
     description: "Unflag multiple emails.",
     parameters: {
       type: "object",
-      properties: { emailIds: { type: "array", items: { type: "string" } } },
+      properties: { emailIds: { type: "array", items: { type: "string" }, minItems: 1 } },
       required: ["emailIds"],
     },
-    async execute(_id: string, params: { emailIds: string[] }) {
-      const client = await getClient();
-      const data = await client.callTool("bulk_flag", { emailIds: params.emailIds, flagged: false });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : `${params.emailIds.length} unflagged` }] };
-    },
+    execute: (_id, params: { emailIds: string[] }) =>
+      runTool(["bulk", "unflag", ...params.emailIds], cli),
   }, { optional: true });
 
   api.registerTool({
@@ -463,14 +347,11 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
     description: "Delete multiple emails.",
     parameters: {
       type: "object",
-      properties: { emailIds: { type: "array", items: { type: "string" } } },
+      properties: { emailIds: { type: "array", items: { type: "string" }, minItems: 1 } },
       required: ["emailIds"],
     },
-    async execute(_id: string, params: { emailIds: string[] }) {
-      const client = await getClient();
-      const data = await client.callTool("bulk_delete", { emailIds: params.emailIds });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : `${params.emailIds.length} deleted` }] };
-    },
+    execute: (_id, params: { emailIds: string[] }) =>
+      runTool(["bulk", "delete", ...params.emailIds], cli),
   }, { optional: true });
 
   api.registerTool({
@@ -479,15 +360,12 @@ export function registerEmailTools(api: OpenClawApi, getClient: GetClientFn) {
     parameters: {
       type: "object",
       properties: {
-        emailIds: { type: "array", items: { type: "string" } },
+        emailIds: { type: "array", items: { type: "string" }, minItems: 1 },
         targetMailboxId: { type: "string", description: "Target mailbox ID" },
       },
       required: ["emailIds", "targetMailboxId"],
     },
-    async execute(_id: string, params: { emailIds: string[]; targetMailboxId: string }) {
-      const client = await getClient();
-      const data = await client.callTool("bulk_move", { emailIds: params.emailIds, targetMailboxId: params.targetMailboxId });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : `${params.emailIds.length} moved` }] };
-    },
+    execute: (_id, params: { emailIds: string[]; targetMailboxId: string }) =>
+      runTool(["bulk", "move", params.targetMailboxId, ...params.emailIds], cli),
   }, { optional: true });
 }
