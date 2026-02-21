@@ -299,7 +299,7 @@ export function registerEmailTools(api: OpenClawApi, cli: string) {
     description: "Mark multiple emails as read.",
     parameters: {
       type: "object",
-      properties: { emailIds: { type: "array", items: { type: "string" } } },
+      properties: { emailIds: { type: "array", items: { type: "string" }, minItems: 1 } },
       required: ["emailIds"],
     },
     execute: (_id, params: { emailIds: string[] }) =>
@@ -311,7 +311,7 @@ export function registerEmailTools(api: OpenClawApi, cli: string) {
     description: "Mark multiple emails as unread.",
     parameters: {
       type: "object",
-      properties: { emailIds: { type: "array", items: { type: "string" } } },
+      properties: { emailIds: { type: "array", items: { type: "string" }, minItems: 1 } },
       required: ["emailIds"],
     },
     execute: (_id, params: { emailIds: string[] }) =>
@@ -323,7 +323,7 @@ export function registerEmailTools(api: OpenClawApi, cli: string) {
     description: "Flag multiple emails.",
     parameters: {
       type: "object",
-      properties: { emailIds: { type: "array", items: { type: "string" } } },
+      properties: { emailIds: { type: "array", items: { type: "string" }, minItems: 1 } },
       required: ["emailIds"],
     },
     execute: (_id, params: { emailIds: string[] }) =>
@@ -335,7 +335,7 @@ export function registerEmailTools(api: OpenClawApi, cli: string) {
     description: "Unflag multiple emails.",
     parameters: {
       type: "object",
-      properties: { emailIds: { type: "array", items: { type: "string" } } },
+      properties: { emailIds: { type: "array", items: { type: "string" }, minItems: 1 } },
       required: ["emailIds"],
     },
     execute: (_id, params: { emailIds: string[] }) =>
@@ -347,7 +347,7 @@ export function registerEmailTools(api: OpenClawApi, cli: string) {
     description: "Delete multiple emails.",
     parameters: {
       type: "object",
-      properties: { emailIds: { type: "array", items: { type: "string" } } },
+      properties: { emailIds: { type: "array", items: { type: "string" }, minItems: 1 } },
       required: ["emailIds"],
     },
     execute: (_id, params: { emailIds: string[] }) =>
@@ -360,7 +360,7 @@ export function registerEmailTools(api: OpenClawApi, cli: string) {
     parameters: {
       type: "object",
       properties: {
-        emailIds: { type: "array", items: { type: "string" } },
+        emailIds: { type: "array", items: { type: "string" }, minItems: 1 },
         targetMailboxId: { type: "string", description: "Target mailbox ID" },
       },
       required: ["emailIds", "targetMailboxId"],

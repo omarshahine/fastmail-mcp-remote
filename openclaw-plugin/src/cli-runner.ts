@@ -18,7 +18,7 @@ export function execCli(args: string[], cli: string): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(cli, args, { timeout: 30_000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
       if (err) {
-        const msg = stderr.trim() || (err as any).message || "CLI command failed";
+        const msg = stderr.trim() || err.message || "CLI command failed";
         reject(new Error(msg));
       } else {
         resolve(stdout);

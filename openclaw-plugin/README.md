@@ -109,6 +109,21 @@ The plugin is a thin adapter layer:
 
 Zero runtime dependencies. The CLI must be installed and authenticated separately.
 
+## Upgrading from v1.x
+
+v2.0 replaces the in-process MCP SDK with CLI shelling. The `workerUrl` and `bearerToken` config fields are removed.
+
+1. **Install and authenticate the CLI** (if not already):
+   ```bash
+   fastmail auth --url https://your-worker.example.com --team myteam
+   ```
+
+2. **Remove old config**: Delete `workerUrl` and `bearerToken` from your OpenClaw workspace plugin settings.
+
+3. **Verify**: `fastmail auth status` should show your user and token expiry.
+
+That's it — all 36 tools work identically, just backed by the CLI now.
+
 ## Development
 
 ```bash
