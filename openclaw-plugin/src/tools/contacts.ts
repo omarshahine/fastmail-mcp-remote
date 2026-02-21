@@ -3,10 +3,10 @@
  * 3 read-only tools.
  */
 
-import type { OpenClawApi, GetClientFn } from "../../index.js";
-import { formatContacts, formatContact } from "../formatters.js";
+import type { OpenClawApi } from "../../index.js";
+import { buildArgs, runTool } from "../cli-runner.js";
 
-export function registerContactTools(api: OpenClawApi, getClient: GetClientFn) {
+export function registerContactTools(api: OpenClawApi, cli: string) {
   api.registerTool({
     name: "fastmail_list_contacts",
     description: "List contacts with names, emails, and phone numbers.",
@@ -14,11 +14,8 @@ export function registerContactTools(api: OpenClawApi, getClient: GetClientFn) {
       type: "object",
       properties: { limit: { type: "integer", default: 50, description: "Max contacts" } },
     },
-    async execute(_id: string, params: { limit?: number }) {
-      const client = await getClient();
-      const data = await client.callTool("list_contacts", { limit: params.limit ?? 50 });
-      return { content: [{ type: "text", text: Array.isArray(data) ? formatContacts(data) : String(data) }] };
-    },
+    execute: (_id, params: { limit?: number }) =>
+      runTool(buildArgs(["contacts"], { limit: params.limit }), cli),
   });
 
   api.registerTool({
@@ -29,10 +26,8 @@ export function registerContactTools(api: OpenClawApi, getClient: GetClientFn) {
       properties: { contactId: { type: "string", description: "Contact ID" } },
       required: ["contactId"],
     },
-    async execute(_id: string, params: { contactId: string }) {
-      const client = await getClient();
-      return { content: [{ type: "text", text: formatContact(await client.callTool("get_contact", { contactId: params.contactId })) }] };
-    },
+    execute: (_id, params: { contactId: string }) =>
+      runTool(["contact", params.contactId], cli),
   });
 
   api.registerTool({
@@ -46,10 +41,7 @@ export function registerContactTools(api: OpenClawApi, getClient: GetClientFn) {
       },
       required: ["query"],
     },
-    async execute(_id: string, params: { query: string; limit?: number }) {
-      const client = await getClient();
-      const data = await client.callTool("search_contacts", { query: params.query, limit: params.limit ?? 20 });
-      return { content: [{ type: "text", text: Array.isArray(data) ? formatContacts(data) : String(data) }] };
-    },
+    execute: (_id, params: { query: string; limit?: number }) =>
+      runTool(buildArgs(["contacts", "search", params.query], { limit: params.limit }), cli),
   });
 }

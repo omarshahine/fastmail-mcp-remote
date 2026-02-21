@@ -47,13 +47,11 @@ cli/
 └── skill.md             # Claude Code skill documentation
 
 openclaw-plugin/                     # OpenClaw plugin: "fastmail-cli" on npm
-├── index.ts                         # Entry point, lazy MCP client factory
+├── index.ts                         # Entry point, registers tools with CLI command
 ├── openclaw.plugin.json             # Plugin manifest + configSchema
-├── package.json                     # npm: fastmail-cli
+├── package.json                     # npm: fastmail-cli (zero runtime deps)
 ├── src/
-│   ├── mcp-client.ts                # MCP SDK client (shared pattern with cli/)
-│   ├── auth.ts                      # Credential resolution from plugin config
-│   ├── formatters.ts                # Compact text formatters (shared with cli/)
+│   ├── cli-runner.ts                # execFile wrapper, buildArgs, runTool helpers
 │   └── tools/
 │       ├── email.ts                 # 26 email tools (read + write + organize + bulk)
 │       ├── contacts.ts              # 3 contact tools
@@ -144,7 +142,15 @@ curl https://<your-worker-domain>/
 
 ## OpenClaw Plugin (npm: fastmail-cli)
 
-The `openclaw-plugin/` directory is published to npm as `fastmail-cli`. It registers 36 OpenClaw agent tools that proxy to the remote Worker via MCP SDK.
+The `openclaw-plugin/` directory is published to npm as `fastmail-cli`. It registers 36 OpenClaw agent tools that shell out to the `fastmail` CLI. Zero runtime dependencies — the CLI handles MCP connection, auth, and formatting.
+
+```
+Agent -> Plugin -> execFile(fastmail, args) -> CLI -> MCP SDK -> Remote Worker -> Fastmail JMAP
+```
+
+### Prerequisites
+
+The `fastmail` CLI must be installed and authenticated: `fastmail auth status`
 
 ### Publishing to npm
 
@@ -162,12 +168,12 @@ npm publish --access public
 ### When to bump the version
 
 - New tools added → minor bump
-- Tool parameter changes, formatter fixes → patch bump
+- Tool parameter changes, CLI arg mapping fixes → patch bump
 - Breaking changes (renamed tools, removed tools) → major bump
 
 ### Plugin config
 
-Users configure `workerUrl` and `bearerToken` in their OpenClaw workspace. The plugin does NOT read `~/.config/fastmail-cli/config.json` — credentials are fully explicit via plugin config for multi-user support.
+Optional `cliCommand` (default: `"fastmail"`) in OpenClaw workspace config. The CLI reads credentials from `~/.config/fastmail-cli/config.json` — no tokens needed in plugin config.
 
 ## Local Development
 

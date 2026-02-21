@@ -1,6 +1,6 @@
 # fastmail-cli
 
-OpenClaw plugin for Fastmail email, contacts, and calendar. Provides 36 agent tools backed by a persistent in-process MCP connection for token-efficient output (5-7x savings vs raw JSON).
+OpenClaw plugin for Fastmail email, contacts, and calendar. Provides 36 agent tools that shell out to the `fastmail` CLI for token-efficient output (5-7x savings vs raw JSON). Zero runtime dependencies.
 
 ## Installation
 
@@ -12,25 +12,29 @@ openclaw plugins install fastmail-cli
 
 1. **Remote MCP Server**: Deploy the [fastmail-mcp-remote](https://github.com/omarshahine/fastmail-mcp-remote) Worker to Cloudflare.
 
-2. **Get a Bearer Token**: Authenticate via the CLI to obtain a token:
+2. **Install and authenticate the CLI**:
 
    ```bash
-   alias fastmail="npx tsx ~/path/to/fastmail-mcp-remote/cli/main.ts"
+   # Install globally (or use npx tsx path/to/cli/main.ts)
+   npm install -g fastmail-cli
+
+   # Authenticate (opens browser for Cloudflare Access login)
    fastmail auth --url https://your-worker.example.com --team myteam
    ```
 
-   The token is saved to `~/.config/fastmail-cli/config.json`. Copy the `bearerToken` value for plugin configuration.
+   Credentials are stored at `~/.config/fastmail-cli/config.json` (Bearer token, 30-day TTL).
+
+3. **Verify**: `fastmail auth status` should show your user and token expiry.
 
 ## Configuration
 
-Both fields are **required** in your OpenClaw workspace config:
+All fields are **optional**:
 
-| Key | Description |
-|-----|-------------|
-| `workerUrl` | URL of your deployed Fastmail MCP Worker |
-| `bearerToken` | Bearer token from `fastmail auth` (each user needs their own) |
+| Key | Default | Description |
+|-----|---------|-------------|
+| `cliCommand` | `"fastmail"` | Path or alias for the fastmail CLI binary |
 
-Each workspace can have different credentials, enabling multi-user setups on the same machine.
+The CLI handles all authentication. No credentials are needed in the plugin config.
 
 ## Tools
 
@@ -94,16 +98,16 @@ Each workspace can have different credentials, enabling multi-user setups on the
 ## Architecture
 
 ```
-Agent -> OpenClaw Plugin -> MCP SDK (in-process) -> Remote Worker -> Fastmail JMAP API
+Agent -> OpenClaw Plugin -> execFile(fastmail, args) -> CLI -> MCP SDK -> Remote Worker -> Fastmail JMAP
 ```
 
-The plugin maintains a persistent MCP connection per workspace:
+The plugin is a thin adapter layer:
 1. Registers OpenClaw tools with JSON Schema parameters
-2. On first tool call, connects to the remote Worker via MCP SDK with Bearer token auth
-3. All subsequent calls reuse the same connection (no per-call overhead)
-4. Responses are formatted in-process using compact text formatters
+2. On tool call, spawns `fastmail <command> [args]` via `execFile` (no shell, no injection risk)
+3. Returns the CLI's compact text output directly as the tool response
+4. CLI handles MCP connection, auth, and formatting
 
-One runtime dependency: `@modelcontextprotocol/sdk`.
+Zero runtime dependencies. The CLI must be installed and authenticated separately.
 
 ## Development
 
@@ -112,10 +116,7 @@ One runtime dependency: `@modelcontextprotocol/sdk`.
 git clone https://github.com/omarshahine/fastmail-mcp-remote.git
 cd fastmail-mcp-remote/openclaw-plugin
 
-# Install dependencies
-npm install --legacy-peer-deps
-
-# Type check
+# Type check (no build step needed)
 npx tsc --noEmit
 
 # Local test (symlink into OpenClaw extensions)

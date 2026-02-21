@@ -3,18 +3,15 @@
  * 3 read-only + 1 optional (create).
  */
 
-import type { OpenClawApi, GetClientFn } from "../../index.js";
-import { formatCalendars, formatEvents, formatEvent } from "../formatters.js";
+import type { OpenClawApi } from "../../index.js";
+import { buildArgs, runTool } from "../cli-runner.js";
 
-export function registerCalendarTools(api: OpenClawApi, getClient: GetClientFn) {
+export function registerCalendarTools(api: OpenClawApi, cli: string) {
   api.registerTool({
     name: "fastmail_list_calendars",
     description: "List all calendars with IDs and names.",
     parameters: { type: "object", properties: {} },
-    async execute(_id: string, _params: Record<string, never>) {
-      const client = await getClient();
-      return { content: [{ type: "text", text: formatCalendars(await client.callTool("list_calendars")) }] };
-    },
+    execute: () => runTool(["calendars"], cli),
   });
 
   api.registerTool({
@@ -27,11 +24,8 @@ export function registerCalendarTools(api: OpenClawApi, getClient: GetClientFn) 
         limit: { type: "integer", default: 50, description: "Max events" },
       },
     },
-    async execute(_id: string, params: { calendarId?: string; limit?: number }) {
-      const client = await getClient();
-      const data = await client.callTool("list_calendar_events", { calendarId: params.calendarId, limit: params.limit ?? 50 });
-      return { content: [{ type: "text", text: Array.isArray(data) ? formatEvents(data) : String(data) }] };
-    },
+    execute: (_id, params: { calendarId?: string; limit?: number }) =>
+      runTool(buildArgs(["events"], { calendar: params.calendarId, limit: params.limit }), cli),
   });
 
   api.registerTool({
@@ -42,10 +36,8 @@ export function registerCalendarTools(api: OpenClawApi, getClient: GetClientFn) 
       properties: { eventId: { type: "string", description: "Event ID" } },
       required: ["eventId"],
     },
-    async execute(_id: string, params: { eventId: string }) {
-      const client = await getClient();
-      return { content: [{ type: "text", text: formatEvent(await client.callTool("get_calendar_event", { eventId: params.eventId })) }] };
-    },
+    execute: (_id, params: { eventId: string }) =>
+      runTool(["event", params.eventId], cli),
   });
 
   api.registerTool({
@@ -63,15 +55,11 @@ export function registerCalendarTools(api: OpenClawApi, getClient: GetClientFn) 
       },
       required: ["calendarId", "title", "start", "end"],
     },
-    async execute(_id: string, params: { calendarId: string; title: string; start: string; end: string; description?: string; location?: string }) {
-      const client = await getClient();
-      const data = await client.callTool("create_calendar_event", {
-        calendarId: params.calendarId, title: params.title,
+    execute: (_id, params: { calendarId: string; title: string; start: string; end: string; description?: string; location?: string }) =>
+      runTool(buildArgs(["event", "create"], {
+        calendar: params.calendarId, title: params.title,
         start: params.start, end: params.end,
-        ...(params.description && { description: params.description }),
-        ...(params.location && { location: params.location }),
-      });
-      return { content: [{ type: "text", text: typeof data === "string" ? data : JSON.stringify(data) }] };
-    },
+        description: params.description, location: params.location,
+      }), cli),
   }, { optional: true });
 }
