@@ -92,6 +92,9 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
 	// EMAIL_READ (incremental sync)
 	get_inbox_updates: 'EMAIL_READ',
 
+	// ACTION URLS (signed URLs for browser-based email actions)
+	generate_email_action_urls: 'INBOX_MANAGE',
+
 	// META
 	check_function_availability: 'META',
 };

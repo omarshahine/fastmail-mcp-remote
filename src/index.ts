@@ -19,6 +19,7 @@ import {
 import { validateAccessToken } from "./oauth-utils";
 import { checkMcpPermissions, filterToolsListResponse, getPermissionsConfig, getUserConfig, getVisibleTools, isToolAllowed, TOOL_CATEGORIES } from "./permissions";
 import { markToolResult, markUntrustedText, isExternalDataTool, getDatamarkingPreamble } from "./prompt-guard";
+import { generateActionUrls, verifyAction, nonceKey } from "./action-urls";
 
 export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<string, never>> {
   server = new McpServer({
@@ -1051,6 +1052,27 @@ ${quotedContent}
     // =====================
 
     this.server.tool(
+      "generate_email_action_urls",
+      "Generate signed action URLs for email archive/delete operations. " +
+        "Returns pre-signed URLs that can be embedded in HTML pages to perform " +
+        "email actions without requiring authentication. URLs expire after 24 hours.",
+      {
+        emailIds: z.array(z.string()).describe("Array of email IDs to generate URLs for"),
+        archiveMailboxId: z.string().describe("Target mailbox ID for archive action (e.g., Archive folder ID)"),
+      },
+      async ({ emailIds, archiveMailboxId }) => {
+        const denied = await this.checkToolPermission("generate_email_action_urls");
+        if (denied) return denied;
+
+        const workerUrl = this.env.WORKER_URL;
+        const urls = await generateActionUrls(emailIds, archiveMailboxId, workerUrl, this.env.ACTION_SIGNING_KEY, this.env.OAUTH_KV);
+        return {
+          content: [{ text: JSON.stringify(urls, null, 2), type: "text" }],
+        };
+      },
+    );
+
+    this.server.tool(
       "check_function_availability",
       "Check which MCP functions are available based on account permissions",
       {},
@@ -1100,6 +1122,7 @@ ${quotedContent}
           "create_memo",
           "get_memo",
           "delete_memo",
+          "generate_email_action_urls",
         ];
 
         const allContactsFunctions = ["list_contacts", "get_contact", "search_contacts"];
@@ -1316,6 +1339,82 @@ app.get("/download/:token", async (c) => {
       "Content-Length": tokenData.size.toString(),
     },
   });
+});
+
+// ─── Email Action Endpoints (HMAC-signed, no OAuth) ───────────────────────
+// These endpoints are called directly from the reading-digest HTML page.
+// Auth is via HMAC signature in the URL — no Bearer token or CF Access needed.
+
+function corsHeaders(): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Content-Type": "application/json",
+  };
+}
+
+// CORS preflight (defensive — simple POST won't trigger preflight, but browsers vary)
+app.options("/api/action/:action/:emailId", (c) => {
+  return new Response(null, { status: 204, headers: corsHeaders() });
+});
+
+// Execute email action (archive or delete)
+app.post("/api/action/:action/:emailId", async (c) => {
+  const action = c.req.param("action");
+  const emailId = c.req.param("emailId");
+  const mid = c.req.query("mid") || "";
+  const expStr = c.req.query("exp") || "0";
+  const sig = c.req.query("sig") || "";
+  const exp = parseInt(expStr, 10);
+
+  // Validate action type
+  if (action !== "archive" && action !== "delete") {
+    return c.json({ ok: false, error: "Invalid action. Must be 'archive' or 'delete'." }, { status: 400, headers: corsHeaders() });
+  }
+
+  // Archive requires a mailbox ID
+  if (action === "archive" && !mid) {
+    return c.json({ ok: false, error: "Archive action requires 'mid' (mailbox ID) parameter." }, { status: 400, headers: corsHeaders() });
+  }
+
+  // Verify HMAC signature + expiry
+  const signingKey = c.env.ACTION_SIGNING_KEY;
+  if (!signingKey) {
+    console.error("[action] ACTION_SIGNING_KEY not configured");
+    return c.json({ ok: false, error: "Server misconfigured." }, { status: 500, headers: corsHeaders() });
+  }
+
+  const valid = await verifyAction(action, emailId, mid, exp, sig, signingKey);
+  if (!valid) {
+    return c.json({ ok: false, error: "Invalid or expired signature." }, { status: 403, headers: corsHeaders() });
+  }
+
+  // Single-use enforcement: consume the nonce (reject if already used)
+  const nonce = await c.env.OAUTH_KV.get(nonceKey(sig));
+  if (!nonce) {
+    return c.json({ ok: false, error: "Action URL already used." }, { status: 409, headers: corsHeaders() });
+  }
+  await c.env.OAUTH_KV.delete(nonceKey(sig));
+
+  // Execute the action using a direct JmapClient (no Durable Object needed)
+  try {
+    const auth = new FastmailAuth({ apiToken: c.env.FASTMAIL_API_TOKEN });
+    const client = new JmapClient(auth);
+
+    if (action === "archive") {
+      await client.moveEmail(emailId, mid);
+      await client.flagEmail(emailId, false);
+    } else {
+      await client.deleteEmail(emailId);
+    }
+
+    return c.json({ ok: true, action, emailId }, { status: 200, headers: corsHeaders() });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[action] Failed to ${action} email ${emailId}: ${message}`);
+    return c.json({ ok: false, error: `Failed to ${action} email: ${message}` }, { status: 502, headers: corsHeaders() });
+  }
 });
 
 // Favicon - Fastmail app icon (64x64 PNG)
