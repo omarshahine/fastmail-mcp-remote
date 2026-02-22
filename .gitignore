@@ -180,3 +180,4 @@ worker-configuration.d.ts
 !.dev.vars.example
 !.env.example
 .DS_Store
+notes.md
