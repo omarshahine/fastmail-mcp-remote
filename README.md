@@ -104,7 +104,7 @@ cli/
 - `get_email` - Get a specific email by ID (includes threading: messageId, inReplyTo, references, threadId)
 - `send_email` - Send an email (supports attachments and reply threading)
 - `create_draft` - Create a draft email (supports attachments and reply threading)
-- `reply_to_email` - **NEW:** Reply to an email with automatic threading and quoting (like Fastmail's reply button)
+- `reply_to_email` - Reply to an email with automatic threading and quoting (like Fastmail's reply button)
 - `search_emails` - Search emails
 - `get_recent_emails` - Get most recent emails
 - `mark_email_read` - Mark email as read/unread
@@ -125,6 +125,7 @@ cli/
 - `create_memo` - Add a private note (memo) to an email, rendered as a yellow inline annotation in Fastmail
 - `get_memo` - Get the memo attached to an email
 - `delete_memo` - Delete a memo from an email
+- `generate_email_action_urls` - Generate HMAC-signed URLs for email archive/delete actions (24h expiry, single-use)
 
 ### Email Body Formats
 
@@ -260,6 +261,7 @@ Add private notes to emails that render as yellow inline annotations in Fastmail
 
 ### Utility
 - `check_function_availability` - Check available functions
+- `generate_email_action_urls` - Generate pre-signed action URLs for email operations
 
 ## Setup Instructions
 
@@ -362,6 +364,8 @@ npx wrangler secret put ACCESS_CLIENT_ID
 npx wrangler secret put ACCESS_CLIENT_SECRET
 npx wrangler secret put FASTMAIL_API_TOKEN
 npx wrangler secret put WORKER_URL
+npx wrangler secret put ACTION_SIGNING_KEY
+# Generate a 256-bit hex key: openssl rand -hex 32
 ```
 
 ### 9. Connect Clients
@@ -431,6 +435,7 @@ GitHub Copilot CLI doesn't support automatic OAuth client registration, so you n
 - OAuth tokens stored in Cloudflare KV with TTL expiration
 - All traffic over HTTPS
 - Email-based allowlist for access control
+- Email action URLs use HMAC-SHA256 signatures with 24-hour expiry and single-use nonces
 
 ## Delegate Access (Role-Based Permissions)
 
@@ -454,7 +459,7 @@ The server supports role-based access control with two layers:
 | `CONTACTS` | list_contacts, get_contact, search_contacts | Yes | Yes |
 | `CALENDAR_READ` | list_calendars, list_calendar_events, get_calendar_event | Yes | Yes |
 | `CALENDAR_WRITE` | create_calendar_event | Yes | No |
-| `INBOX_MANAGE` | mark_email_read, flag_email, delete_email, move_email, bulk_mark_read, bulk_move, bulk_delete, bulk_flag, create_memo, delete_memo | Yes | Yes |
+| `INBOX_MANAGE` | mark_email_read, flag_email, delete_email, move_email, bulk_mark_read, bulk_move, bulk_delete, bulk_flag, create_memo, delete_memo, generate_email_action_urls | Yes | Yes |
 | `DRAFT` | create_draft | Yes | Yes |
 | `REPLY` | reply_to_email | Yes | Yes* |
 | `SEND` | send_email | Yes | No |

@@ -232,6 +232,7 @@ ALLOWED_USERS=user1@example.com,user2@example.com
 | `ACCESS_CLIENT_SECRET` | Cloudflare Access SaaS app client secret |
 | `FASTMAIL_API_TOKEN` | Fastmail API token with required scopes |
 | `WORKER_URL` | Your deployed worker URL (for download links) |
+| `ACTION_SIGNING_KEY` | 256-bit hex key for HMAC-signed email action URLs (`openssl rand -hex 32`) |
 
 ### Plaintext Vars (in `wrangler.jsonc`, gitignored)
 
