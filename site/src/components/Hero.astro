@@ -1,12 +1,13 @@
 ---
-
+import pkg from '../../../package.json';
+const version = `v${pkg.version}`;
 ---
 
 <section id="hero" class="pt-32 pb-20 px-4 sm:px-6 lg:px-8">
   <div class="max-w-4xl mx-auto text-center" data-animate>
     <!-- Badges -->
     <div class="flex flex-wrap justify-center gap-3 mb-8">
-      <span class="bg-card border border-border rounded-full px-3 py-1 text-xs text-muted">v1.10.0</span>
+      <span class="bg-card border border-border rounded-full px-3 py-1 text-xs text-muted">{version}</span>
       <span class="bg-card border border-border rounded-full px-3 py-1 text-xs text-muted">MIT License</span>
       <span class="bg-card border border-border rounded-full px-3 py-1 text-xs text-muted">Free & Open Source</span>
     </div>
