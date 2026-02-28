@@ -1,0 +1,52 @@
+---
+
+---
+
+<section id="architecture" class="py-24 px-4 sm:px-6 lg:px-8">
+  <div class="max-w-5xl mx-auto">
+    <!-- Section heading -->
+    <h2 class="text-3xl sm:text-4xl font-bold text-center mb-4 text-foreground">How It Works</h2>
+    <p class="text-muted text-center mb-16">Three components, one seamless pipeline</p>
+
+    <!-- Architecture flow -->
+    <div class="flex flex-col md:flex-row items-center justify-center gap-4 md:gap-6" data-animate>
+      <!-- Box 1: MCP Client -->
+      <div class="bg-card border border-border rounded-xl p-6 text-center flex-1 max-w-xs">
+        <div class="text-2xl mb-2">💻</div>
+        <div class="font-semibold text-foreground">MCP Client</div>
+        <div class="text-sm text-muted">Claude Code, CLI, or OpenClaw</div>
+      </div>
+
+      <!-- Arrow 1 -->
+      <div class="text-accent text-2xl font-bold">
+        <span class="hidden md:block">&rarr;</span>
+        <span class="block md:hidden">&darr;</span>
+      </div>
+
+      <!-- Box 2: Cloudflare Worker -->
+      <div class="bg-card border border-border rounded-xl p-6 text-center flex-1 max-w-xs">
+        <div class="text-2xl mb-2">⚡</div>
+        <div class="font-semibold text-foreground">Cloudflare Worker</div>
+        <div class="text-sm text-muted">OAuth, routing, permissions</div>
+      </div>
+
+      <!-- Arrow 2 -->
+      <div class="text-accent text-2xl font-bold">
+        <span class="hidden md:block">&rarr;</span>
+        <span class="block md:hidden">&darr;</span>
+      </div>
+
+      <!-- Box 3: Fastmail JMAP -->
+      <div class="bg-card border border-border rounded-xl p-6 text-center flex-1 max-w-xs">
+        <div class="text-2xl mb-2">📧</div>
+        <div class="font-semibold text-foreground">Fastmail JMAP</div>
+        <div class="text-sm text-muted">Email, contacts, calendar</div>
+      </div>
+    </div>
+
+    <!-- Note -->
+    <p class="text-xs text-muted text-center mt-8">
+      Deployed globally on Cloudflare's edge network — sub-50ms latency worldwide
+    </p>
+  </div>
+</section>

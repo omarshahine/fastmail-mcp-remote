@@ -1,0 +1,78 @@
+---
+const categories = [
+  {
+    name: 'Email Read',
+    count: 14,
+    tools: [
+      'get_recent_emails', 'get_email', 'list_emails', 'search_emails', 'advanced_search',
+      'get_email_attachments', 'download_attachment', 'get_thread', 'get_inbox_updates',
+      'get_mailbox_stats', 'get_account_summary', 'list_mailboxes', 'list_identities',
+      'check_function_availability',
+    ],
+  },
+  {
+    name: 'Email Write',
+    count: 3,
+    tools: ['send_email', 'create_draft', 'reply_to_email'],
+  },
+  {
+    name: 'Email Organize',
+    count: 5,
+    tools: ['move_email', 'delete_email', 'mark_email_read', 'flag_email', 'generate_email_action_urls'],
+  },
+  {
+    name: 'Bulk Ops',
+    count: 4,
+    tools: ['bulk_move', 'bulk_delete', 'bulk_mark_read', 'bulk_flag'],
+  },
+  {
+    name: 'Contacts',
+    count: 3,
+    tools: ['search_contacts', 'get_contact', 'list_contacts'],
+  },
+  {
+    name: 'Calendar',
+    count: 4,
+    tools: ['list_calendars', 'list_calendar_events', 'get_calendar_event', 'create_calendar_event'],
+  },
+  {
+    name: 'Memos',
+    count: 3,
+    tools: ['create_memo', 'get_memo', 'delete_memo'],
+  },
+];
+---
+
+<section id="tools" class="py-24 px-4 sm:px-6 lg:px-8">
+  <div class="max-w-4xl mx-auto">
+    <!-- Section heading -->
+    <h2 class="text-3xl sm:text-4xl font-bold text-center mb-4 text-foreground">36 Tools, 7 Categories</h2>
+    <p class="text-muted text-center mb-16">Every email operation you need, from inbox to bulk actions</p>
+
+    <!-- Category pill bar -->
+    <div class="flex flex-wrap justify-center gap-2 mb-12">
+      {categories.map((cat) => (
+        <span class="bg-card border border-border rounded-full px-4 py-1.5 text-sm">
+          <span class="text-foreground">{cat.name}</span>{' '}
+          <span class="text-accent font-mono">{cat.count}</span>
+        </span>
+      ))}
+    </div>
+
+    <!-- Tool grid -->
+    <div class="space-y-6">
+      {categories.map((cat) => (
+        <div class="bg-card border border-border rounded-xl p-6" data-animate>
+          <h3 class="font-semibold text-foreground text-lg mb-3">{cat.name}</h3>
+          <div class="flex flex-wrap gap-2">
+            {cat.tools.map((tool) => (
+              <span class="bg-background border border-border rounded-md px-3 py-1 text-sm font-mono text-muted">
+                {tool}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>

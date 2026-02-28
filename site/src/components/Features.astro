@@ -1,0 +1,48 @@
+---
+import FeatureCard from './FeatureCard.astro';
+---
+
+<section id="features" class="py-24 px-4 sm:px-6 lg:px-8">
+  <div class="max-w-6xl mx-auto">
+    <!-- Section heading -->
+    <h2 class="text-3xl sm:text-4xl font-bold text-center mb-4 text-foreground">Everything You Need</h2>
+    <p class="text-muted text-center mb-16 max-w-2xl mx-auto">
+      A complete MCP toolkit for Fastmail with 36 tools across email, contacts, calendar, and memos.
+    </p>
+
+    <!-- Bento grid -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <FeatureCard
+        icon="🛠️"
+        title="36 MCP Tools"
+        description="Full coverage of email, contacts, calendar, and memo operations. Read, write, search, organize, and bulk process."
+        span="wide"
+      />
+      <FeatureCard
+        icon="🔌"
+        title="3 Client Options"
+        description="Use with Claude Code MCP, the token-efficient CLI, or the OpenClaw plugin — pick what fits your workflow."
+      />
+      <FeatureCard
+        icon="🔒"
+        title="Secure OAuth"
+        description="Cloudflare Access OAuth with Zero Trust. GitHub or OTP login, per-user allowlists, and encrypted tokens."
+      />
+      <FeatureCard
+        icon="⚡"
+        title="Token Efficient"
+        description="CLI saves 5-7x tokens vs raw MCP. Compact text output designed for LLM consumption."
+      />
+      <FeatureCard
+        icon="☁️"
+        title="Zero Maintenance"
+        description="Runs on Cloudflare Workers — no servers to manage, automatic scaling, global edge deployment."
+      />
+      <FeatureCard
+        icon="📝"
+        title="Private Memos"
+        description="Attach private notes to any email. Yellow inline annotations visible only to you, searchable via has:memo."
+      />
+    </div>
+  </div>
+</section>
