@@ -295,6 +295,38 @@ fastmail calendars                      # List calendars
 Config stored at `~/.config/fastmail-cli/config.json` (Bearer token, 30-day TTL).
 Skill file at `cli/skill.md` — teaches Claude the full command surface.
 
+## Cloudflare Plugin & Skills
+
+The `cloudflare@cloudflare` plugin is enabled for this project. `CLOUDFLARE_ACCOUNT_ID` is set globally in `~/.claude/settings.json` — no need to prefix wrangler commands.
+
+### MCP Servers (`.mcp.json`)
+
+| Server | Purpose |
+|--------|---------|
+| `cloudflare-docs` | Semantic search of Cloudflare documentation |
+| `cloudflare-bindings` | KV, D1, R2, Hyperdrive CRUD operations |
+| `cloudflare-builds` | Build logs and deployment debugging |
+
+### Available Skills
+
+| Skill | Use When |
+|-------|----------|
+| `/cloudflare:cloudflare` | General CF platform questions (Workers, Pages, D1, R2, KV, AI) |
+| `/cloudflare:workers-best-practices` | Reviewing or writing Workers code against production patterns |
+| `/cloudflare:wrangler` | CLI reference for wrangler commands (deploy, KV, D1, secrets) |
+| `/cloudflare:durable-objects` | Stateful coordination, RPC, SQLite storage, alarms, WebSockets |
+| `/cloudflare:agents-sdk` | Building AI agents with state management and real-time features |
+| `/cloudflare:build-mcp` | Scaffolding remote MCP servers with OAuth on Workers |
+| `/cloudflare:build-agent` | Scaffolding AI agents on Workers |
+| `/cloudflare:sandbox-sdk` | Sandboxed code execution environments |
+| `/cloudflare:web-perf` | Core Web Vitals analysis and performance auditing |
+
+### Account Configuration
+
+- **Account ID**: Set globally via `CLOUDFLARE_ACCOUNT_ID` env var in `~/.claude/settings.json`
+- **MCP auth**: Each MCP server handles its own OAuth — authenticate on first use per session
+- **Bindings MCP**: Can list/query KV namespaces and Durable Objects directly
+
 ## Code Hygiene
 
 - **Config files** (`wrangler.jsonc`, `wrangler.toml`, `*.d.ts`, `.env*`, `*.json`): No real email addresses - use `wrangler secret put` for PII

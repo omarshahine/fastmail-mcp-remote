@@ -1,6 +1,7 @@
 {
   "enabledPlugins": {
     "typescript-lsp@claude-plugins-official": true,
-    "greptile@claude-plugins-official": true
+    "greptile@claude-plugins-official": true,
+    "cloudflare@cloudflare": true
   }
 }
