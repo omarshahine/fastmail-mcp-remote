@@ -72,7 +72,7 @@ const steps = [
               if (line.type === 'comment') return <span class="text-muted">{line.text}</span>;
               if (line.type === 'url') return <span class="text-accent">{line.text}</span>;
               return <span class="text-foreground">{line.text}</span>;
-            }).reduce((acc: any[], el, i) => {
+            }).reduce((acc: (string | HTMLElement)[], el, i) => {
               if (i > 0) acc.push('\n');
               acc.push(el);
               return acc;

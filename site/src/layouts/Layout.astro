@@ -38,24 +38,28 @@ const {
     <slot />
 
     <script>
-      const elements = document.querySelectorAll('[data-animate]');
+      const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-      const observer = new IntersectionObserver(
-        (entries) => {
-          entries.forEach((entry) => {
-            if (entry.isIntersecting) {
-              entry.target.classList.add('animate-fade-in-up');
-              observer.unobserve(entry.target);
-            }
-          });
-        },
-        { threshold: 0.1 }
-      );
+      if (!prefersReducedMotion) {
+        const elements = document.querySelectorAll('[data-animate]');
 
-      elements.forEach((el) => {
-        (el as HTMLElement).style.opacity = '0';
-        observer.observe(el);
-      });
+        const observer = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry) => {
+              if (entry.isIntersecting) {
+                entry.target.classList.add('animate-fade-in-up');
+                observer.unobserve(entry.target);
+              }
+            });
+          },
+          { threshold: 0.1 }
+        );
+
+        elements.forEach((el) => {
+          (el as HTMLElement).style.opacity = '0';
+          observer.observe(el);
+        });
+      }
     </script>
   </body>
 </html>
