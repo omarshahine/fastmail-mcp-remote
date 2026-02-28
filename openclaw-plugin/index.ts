@@ -9,6 +9,7 @@
  * category is disabled, so agents only see tools they can actually use.
  */
 
+import { execFileSync } from "node:child_process";
 import { registerEmailTools } from "./src/tools/email.js";
 import { registerContactTools } from "./src/tools/contacts.js";
 import { registerCalendarTools } from "./src/tools/calendar.js";
@@ -83,6 +84,25 @@ const TOOL_CATEGORIES: Record<string, string> = {
   fastmail_send_email: "SEND",
 };
 
+/**
+ * Query the remote server for disabled categories via `fastmail permissions --json`.
+ * Uses execFileSync because OpenClaw's register() must be synchronous.
+ * Returns [] on any failure (CLI missing, not authenticated, server down).
+ */
+function discoverDisabledCategories(cli: string): string[] {
+  try {
+    const stdout = execFileSync(cli, ["permissions", "--json"], {
+      timeout: 5000,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const parsed = JSON.parse(stdout.trim());
+    return Array.isArray(parsed.disabledCategories) ? parsed.disabledCategories : [];
+  } catch {
+    return [];
+  }
+}
+
 /** Wrap the API to silently skip tools whose category is disabled. */
 function withCategoryFilter(api: OpenClawApi, disabled: Set<string>): OpenClawApi {
   if (disabled.size === 0) return api;
@@ -98,8 +118,11 @@ function withCategoryFilter(api: OpenClawApi, disabled: Set<string>): OpenClawAp
 
 export default function register(api: OpenClawApi) {
   const cli = (api.config?.cliCommand as string) ?? "fastmail";
-  const disabledList = (api.config?.disabledCategories as string[]) ?? [];
-  const disabled = new Set(disabledList);
+  const staticDisabled = (api.config?.disabledCategories as string[]) ?? [];
+  const autoDiscover = (api.config?.autoDiscover as boolean) ?? true;
+
+  const discovered = autoDiscover ? discoverDisabledCategories(cli) : [];
+  const disabled = new Set([...staticDisabled, ...discovered]);
 
   const filtered = withCategoryFilter(api, disabled);
 

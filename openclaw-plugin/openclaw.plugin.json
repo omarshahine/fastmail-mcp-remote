@@ -9,6 +9,11 @@
         "default": "fastmail",
         "description": "Path or alias for the fastmail CLI (default: 'fastmail')"
       },
+      "autoDiscover": {
+        "type": "boolean",
+        "default": true,
+        "description": "Auto-discover disabled categories from server at startup (requires authenticated CLI)"
+      },
       "disabledCategories": {
         "type": "array",
         "items": {
