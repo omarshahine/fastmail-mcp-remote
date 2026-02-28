@@ -2,8 +2,8 @@ import { defineConfig } from 'astro/config';
 import tailwind from '@astrojs/tailwind';
 
 export default defineConfig({
-  site: 'https://omarshahine.github.io',
-  base: '/fastmail-mcp-remote',
+  site: 'https://fastmail.omarknows.app',
+  base: '/',
   output: 'static',
   integrations: [tailwind()],
 });
