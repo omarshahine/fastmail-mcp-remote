@@ -1123,6 +1123,8 @@ ${quotedContent}
           "get_memo",
           "delete_memo",
           "generate_email_action_urls",
+          "reply_to_email",
+          "list_identities",
         ];
 
         const allContactsFunctions = ["list_contacts", "get_contact", "search_contacts"];

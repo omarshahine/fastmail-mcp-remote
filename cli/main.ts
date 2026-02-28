@@ -64,6 +64,63 @@ auth
     await logout();
   });
 
+// ── permissions command (queries server for tool availability) ───
+
+program
+  .command("permissions")
+  .description("Show available tool categories based on account permissions")
+  .option("--json", "Output as JSON for machine parsing")
+  .action(async (opts) => {
+    try {
+      const result = await client.callTool("check_function_availability");
+      const disabled: string[] = [];
+
+      // Map server response → disabled category list
+      if (!result.contacts?.available) disabled.push("CONTACTS");
+      if (!result.calendar?.available) {
+        disabled.push("CALENDAR_READ", "CALENDAR_WRITE");
+      } else if (!result.calendar?.functions?.includes("create_calendar_event")) {
+        disabled.push("CALENDAR_WRITE");
+      }
+      if (!result.email?.available) {
+        disabled.push("EMAIL_READ", "INBOX_MANAGE", "DRAFT", "REPLY", "SEND");
+      } else {
+        if (!result.email?.functions?.includes("send_email")) disabled.push("SEND");
+        if (!result.email?.functions?.includes("create_draft")) disabled.push("DRAFT");
+        if (!result.email?.functions?.includes("reply_to_email")) disabled.push("REPLY");
+        if (!result.email?.functions?.includes("mark_email_read")) disabled.push("INBOX_MANAGE");
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify({ disabledCategories: disabled }));
+      } else {
+        console.log(`Role: ${result.role}`);
+        console.log(`User: ${result.authenticatedUser}`);
+
+        const allCategories = [
+          "EMAIL_READ", "CONTACTS", "CALENDAR_READ", "CALENDAR_WRITE",
+          "INBOX_MANAGE", "DRAFT", "REPLY", "SEND",
+        ];
+        const disabledSet = new Set(disabled);
+        const enabled = allCategories.filter((c) => !disabledSet.has(c));
+
+        console.log(`\nEnabled: ${enabled.join(", ") || "none"}`);
+        if (disabled.length) {
+          console.log(`Disabled: ${disabled.join(", ")}`);
+        } else {
+          console.log(`\nAll categories enabled.`);
+        }
+      }
+    } catch (err: any) {
+      if (opts.json) {
+        console.log(JSON.stringify({ disabledCategories: [], error: err.message }));
+      } else {
+        console.error(`Failed to check permissions: ${err.message}`);
+      }
+      process.exit(1);
+    }
+  });
+
 // ── All other commands need an MCP client ──────────────────
 // We need a way to inject the client into command registrations.
 // Since Commander parses synchronously but actions are async,
