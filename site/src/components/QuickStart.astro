@@ -1,0 +1,85 @@
+---
+const steps = [
+  {
+    number: 1,
+    title: 'Claude Code',
+    label: 'Recommended',
+    lines: [
+      { type: 'comment', text: '# Add the MCP server' },
+      { type: 'command', text: 'claude mcp add --transport http fastmail \\' },
+      { type: 'url', text: '  "https://your-worker.example.com/mcp"' },
+      { type: 'blank', text: '' },
+      { type: 'comment', text: '# Authenticate when prompted via /mcp' },
+      { type: 'comment', text: '# Then use Fastmail tools directly in Claude Code' },
+    ],
+  },
+  {
+    number: 2,
+    title: 'CLI',
+    label: 'Token Efficient',
+    lines: [
+      { type: 'comment', text: '# Install and authenticate' },
+      { type: 'command', text: 'alias fastmail="npx tsx cli/main.ts"' },
+      { type: 'command', text: 'fastmail auth --url ' },
+      { type: 'url', text: 'https://your-worker.example.com' },
+      { type: 'blank', text: '' },
+      { type: 'comment', text: '# Check your inbox' },
+      { type: 'command', text: 'fastmail inbox' },
+      { type: 'command', text: 'fastmail email search "from:team@example.com"' },
+    ],
+  },
+  {
+    number: 3,
+    title: 'OpenClaw Plugin',
+    label: 'npm Package',
+    lines: [
+      { type: 'comment', text: '# Install the plugin' },
+      { type: 'command', text: 'npm install -g fastmail-cli' },
+      { type: 'blank', text: '' },
+      { type: 'comment', text: '# Configure in OpenClaw workspace' },
+      { type: 'comment', text: '# The CLI handles auth automatically' },
+      { type: 'command', text: 'fastmail auth status' },
+    ],
+  },
+];
+---
+
+<section id="quickstart" class="py-24 px-4 sm:px-6 lg:px-8">
+  <div class="max-w-3xl mx-auto">
+    <!-- Section heading -->
+    <h2 class="text-3xl sm:text-4xl font-bold text-center mb-4 text-foreground">Quick Start</h2>
+    <p class="text-muted text-center mb-12">Three ways to get started — pick your preferred setup</p>
+
+    <!-- Setup cards -->
+    <div class="space-y-6">
+      {steps.map((step) => (
+        <div class="bg-card border border-border rounded-xl p-6" data-animate>
+          <!-- Header -->
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-8 h-8 rounded-full bg-accent/10 text-accent flex items-center justify-center text-sm font-bold">
+              {step.number}
+            </div>
+            <span class="font-semibold text-foreground text-lg">{step.title}</span>
+            <span class="text-xs text-muted bg-card border border-border rounded-full px-2 py-0.5">
+              {step.label}
+            </span>
+          </div>
+
+          <!-- Code block -->
+          <div class="bg-[#0d0d0d] border border-border rounded-lg p-4 font-mono text-sm overflow-x-auto">
+            <pre><code>{step.lines.map((line) => {
+              if (line.type === 'blank') return '\n';
+              if (line.type === 'comment') return <span class="text-muted">{line.text}</span>;
+              if (line.type === 'url') return <span class="text-accent">{line.text}</span>;
+              return <span class="text-foreground">{line.text}</span>;
+            }).reduce((acc: any[], el, i) => {
+              if (i > 0) acc.push('\n');
+              acc.push(el);
+              return acc;
+            }, [])}</code></pre>
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
