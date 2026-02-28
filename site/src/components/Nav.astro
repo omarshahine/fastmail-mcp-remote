@@ -67,8 +67,10 @@ const navLinks = [
       <!-- Mobile Menu Button -->
       <button
         id="mobile-menu-btn"
+        type="button"
         class="md:hidden text-muted hover:text-foreground transition-colors p-1"
         aria-label="Toggle menu"
+        aria-expanded="false"
       >
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5">
           <line x1="3" y1="6" x2="21" y2="6"></line>
@@ -79,7 +81,7 @@ const navLinks = [
     </div>
 
     <!-- Mobile Menu -->
-    <div id="mobile-menu" class="hidden md:hidden mt-3 pt-3 border-t border-border">
+    <div id="mobile-menu" class="hidden md:hidden mt-3 pt-3 border-t border-border transition-all duration-200 ease-in-out">
       <div class="flex flex-col gap-1">
         {navLinks.map((link) => (
           <a
@@ -111,26 +113,39 @@ const navLinks = [
 </nav>
 
 <script>
-  // Mobile menu toggle
   const btn = document.getElementById('mobile-menu-btn');
   const menu = document.getElementById('mobile-menu');
 
-  btn?.addEventListener('click', () => {
-    menu?.classList.toggle('hidden');
-  });
+  function closeMenu() {
+    menu?.classList.add('hidden');
+    btn?.setAttribute('aria-expanded', 'false');
+  }
+
+  function toggleMenu() {
+    const isHidden = menu?.classList.toggle('hidden');
+    btn?.setAttribute('aria-expanded', String(!isHidden));
+  }
+
+  btn?.addEventListener('click', toggleMenu);
 
   // Close mobile menu on link click
   document.querySelectorAll('.mobile-link').forEach((link) => {
-    link.addEventListener('click', () => {
-      menu?.classList.add('hidden');
-    });
+    link.addEventListener('click', closeMenu);
   });
 
   // Close mobile menu on click outside
   document.addEventListener('click', (e) => {
     const nav = document.querySelector('nav');
     if (nav && !nav.contains(e.target as Node)) {
-      menu?.classList.add('hidden');
+      closeMenu();
+    }
+  });
+
+  // Close on Escape key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !menu?.classList.contains('hidden')) {
+      closeMenu();
+      btn?.focus();
     }
   });
 </script>
