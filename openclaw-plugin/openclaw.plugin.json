@@ -8,6 +8,25 @@
         "type": "string",
         "default": "fastmail",
         "description": "Path or alias for the fastmail CLI (default: 'fastmail')"
+      },
+      "disabledCategories": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "EMAIL_READ",
+            "CONTACTS",
+            "CALENDAR_READ",
+            "CALENDAR_WRITE",
+            "INBOX_MANAGE",
+            "DRAFT",
+            "REPLY",
+            "SEND",
+            "META"
+          ]
+        },
+        "default": [],
+        "description": "Tool categories to hide (must match server permissions config)"
       }
     }
   },
