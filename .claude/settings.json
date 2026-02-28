@@ -1,7 +1,15 @@
 {
   "enabledPlugins": {
-    "typescript-lsp@claude-plugins-official": true,
+    "cloudflare@cloudflare": true,
+    "code-review@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+    "context7@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
     "greptile@claude-plugins-official": true,
-    "cloudflare@cloudflare": true
+    "plugin-dev@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true,
+    "typescript-lsp@claude-plugins-official": true
   }
 }
