@@ -5,6 +5,8 @@
 import { Command } from "commander";
 import type { FastmailMcpClient } from "../mcp-client.js";
 import { formatContacts, formatContact } from "../formatters.js";
+import { validateIds, validateQuery, validatePositiveInt } from "../validate.js";
+import { output } from "../helpers.js";
 
 export function registerContactCommands(
   program: Command,
@@ -17,15 +19,11 @@ export function registerContactCommands(
     .description("List contacts")
     .option("-l, --limit <n>", "Max results", "50")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (opts) => {
-      const data = await client.callTool("list_contacts", {
-        limit: parseInt(opts.limit),
-      });
-      if (opts.json) {
-        console.log(JSON.stringify(data, null, 2));
-      } else {
-        console.log(formatContacts(data));
-      }
+      const limit = validatePositiveInt(opts.limit, "limit");
+      const data = await client.callTool("list_contacts", { limit });
+      output(data, formatContacts, opts.json, opts.fields);
     });
 
   // ── contacts search ──────────────────────────────────────
@@ -35,16 +33,12 @@ export function registerContactCommands(
     .description("Search contacts by name or email")
     .option("-l, --limit <n>", "Max results", "20")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (query, opts) => {
-      const data = await client.callTool("search_contacts", {
-        query,
-        limit: parseInt(opts.limit),
-      });
-      if (opts.json) {
-        console.log(JSON.stringify(data, null, 2));
-      } else {
-        console.log(formatContacts(data));
-      }
+      validateQuery(query, "search query");
+      const limit = validatePositiveInt(opts.limit, "limit");
+      const data = await client.callTool("search_contacts", { query, limit });
+      output(data, formatContacts, opts.json, opts.fields);
     });
 
   // ── contact (single) ────────────────────────────────────
@@ -53,12 +47,10 @@ export function registerContactCommands(
     .command("contact <id>")
     .description("Get a specific contact by ID")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (id, opts) => {
+      validateIds(id, "contact ID");
       const data = await client.callTool("get_contact", { contactId: id });
-      if (opts.json) {
-        console.log(JSON.stringify(data, null, 2));
-      } else {
-        console.log(formatContact(data));
-      }
+      output(data, formatContact, opts.json, opts.fields);
     });
 }

@@ -72,7 +72,7 @@ export class FastmailMcpClient {
       this.client = null;
       if (err?.message?.includes("401") || err?.message?.includes("Unauthorized")) {
         console.error("Authentication failed. Run: fastmail auth");
-        process.exit(1);
+        process.exit(2); // EXIT.AUTH — avoid circular import from exit-codes
       }
       throw err;
     }
@@ -125,6 +125,20 @@ export class FastmailMcpClient {
     }
 
     return cleaned;
+  }
+
+  /**
+   * List all available MCP tools with their schemas.
+   * Used by the `describe` command for runtime schema introspection.
+   */
+  async listTools(): Promise<{ name: string; description?: string; inputSchema: any }[]> {
+    const client = await this.ensureConnected();
+    const result = await client.listTools();
+    return (result.tools || []).map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    }));
   }
 
   async close(): Promise<void> {
