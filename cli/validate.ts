@@ -58,10 +58,11 @@ function validateEmail(addr: string, label: string): void {
 
 // ── Date validation ────────────────────────────────────────
 
+const ISO8601_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?$/;
+
 function validateDate(value: string, label: string): void {
   rejectControlChars(value, label);
-  const d = new Date(value);
-  if (isNaN(d.getTime())) {
+  if (!ISO8601_RE.test(value) || isNaN(new Date(value).getTime())) {
     fatal(
       `Invalid ${label}: "${value}" is not a valid ISO 8601 date.`,
       EXIT.INPUT,
@@ -127,8 +128,8 @@ export function validateQuery(value: string, label = "query"): void {
 
 /** Validate a positive integer (limit, etc.). */
 export function validatePositiveInt(value: string, label = "number"): number {
-  const n = parseInt(value, 10);
-  if (isNaN(n) || n < 1 || n > 10000) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > 10000) {
     fatal(`Invalid ${label}: "${value}" — must be a positive integer (1-10000).`, EXIT.INPUT);
   }
   return n;

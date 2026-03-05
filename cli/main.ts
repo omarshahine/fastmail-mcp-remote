@@ -114,10 +114,8 @@ program
     } catch (err: any) {
       if (opts.json) {
         console.log(JSON.stringify({ disabledCategories: [], error: err.message }));
-      } else {
-        console.error(`Failed to check permissions: ${err.message}`);
       }
-      process.exit(EXIT.SERVER);
+      fatal(`Failed to check permissions: ${err.message}`, EXIT.SERVER);
     }
   });
 
@@ -152,11 +150,8 @@ program
         const suggestions = tools
           .filter((t) => t.name.includes(toolName))
           .map((t) => t.name);
-        console.error(`Unknown tool: ${toolName}`);
-        if (suggestions.length) {
-          console.error(`Did you mean: ${suggestions.join(", ")}?`);
-        }
-        process.exit(EXIT.INPUT);
+        const hint = suggestions.length ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+        fatal(`Unknown tool: ${toolName}.${hint}`, EXIT.INPUT);
       }
 
       if (opts.json) {
@@ -178,8 +173,7 @@ program
         }
       }
     } catch (err: any) {
-      console.error(`Failed to describe tools: ${err.message}`);
-      process.exit(EXIT.SERVER);
+      fatal(`Failed to describe tools: ${err.message}`, EXIT.SERVER);
     }
   });
 
@@ -233,20 +227,32 @@ registerMemoCommands(program, client);
 // ── Parse and execute ──────────────────────────────────────
 
 async function main() {
+  let exitCode: number = 0;
   try {
     await program.parseAsync(process.argv);
   } catch (err: any) {
     if (err.code === "commander.helpDisplayed") return;
-    const msg = err.message || String(err);
-    if (msg.includes("401") || msg.includes("Unauthorized") || msg.includes("Not authenticated")) {
-      fatal(`Error: ${msg}`, EXIT.AUTH);
-    } else if (msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT") || msg.includes("fetch failed")) {
-      fatal(`Error: ${msg}`, EXIT.SERVER);
+
+    // fatal() throws with an exitCode property — propagate it
+    if (err.exitCode !== undefined) {
+      exitCode = err.exitCode;
+    } else {
+      const msg = err.message || String(err);
+      if (msg.includes("401") || msg.includes("Unauthorized") || msg.includes("Not authenticated")) {
+        console.error(`Error: ${msg}`);
+        exitCode = EXIT.AUTH;
+      } else if (msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT") || msg.includes("fetch failed")) {
+        console.error(`Error: ${msg}`);
+        exitCode = EXIT.SERVER;
+      } else {
+        console.error(`Error: ${msg}`);
+        exitCode = EXIT.ERROR;
+      }
     }
-    fatal(`Error: ${msg}`, EXIT.ERROR);
   } finally {
     await client.close();
   }
+  if (exitCode !== 0) process.exit(exitCode);
 }
 
 main();

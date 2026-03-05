@@ -72,7 +72,7 @@ export class FastmailMcpClient {
       this.client = null;
       if (err?.message?.includes("401") || err?.message?.includes("Unauthorized")) {
         console.error("Authentication failed. Run: fastmail auth");
-        process.exit(1);
+        process.exit(2); // EXIT.AUTH — avoid circular import from exit-codes
       }
       throw err;
     }

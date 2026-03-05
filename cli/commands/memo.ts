@@ -6,12 +6,7 @@ import { Command } from "commander";
 import type { FastmailMcpClient } from "../mcp-client.js";
 import { formatMemo } from "../formatters.js";
 import { validateIds, validateTextArg } from "../validate.js";
-
-/** Format a dry-run preview for a mutation command. */
-function dryRunOutput(toolName: string, args: Record<string, unknown>): void {
-  console.log(`[dry-run] Would call: ${toolName}`);
-  console.log(JSON.stringify(args, null, 2));
-}
+import { dryRunOutput } from "../helpers.js";
 
 export function registerMemoCommands(
   program: Command,

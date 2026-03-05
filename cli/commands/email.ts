@@ -25,43 +25,7 @@ import {
   validateQuery,
   validatePositiveInt,
 } from "../validate.js";
-import { EXIT } from "../exit-codes.js";
-
-/** Helper: output JSON (optionally filtered by --fields) or formatted text. */
-function output(data: any, formatter: (d: any) => string, json: boolean, fields?: string) {
-  if (json) {
-    const filtered = fields ? filterFields(data, fields) : data;
-    console.log(JSON.stringify(filtered, null, 2));
-  } else {
-    console.log(formatter(data));
-  }
-}
-
-/** Filter JSON output to only the requested fields (comma-separated). */
-function filterFields(data: any, fields: string): any {
-  const keys = new Set(fields.split(",").map((f) => f.trim()));
-  if (Array.isArray(data)) {
-    return data.map((item) => pick(item, keys));
-  }
-  if (data && typeof data === "object") {
-    return pick(data, keys);
-  }
-  return data;
-}
-
-function pick(obj: Record<string, any>, keys: Set<string>): Record<string, any> {
-  const result: Record<string, any> = {};
-  for (const key of keys) {
-    if (key in obj) result[key] = obj[key];
-  }
-  return result;
-}
-
-/** Format a dry-run preview for a mutation command. */
-function dryRunOutput(toolName: string, args: Record<string, unknown>): void {
-  console.log(`[dry-run] Would call: ${toolName}`);
-  console.log(JSON.stringify(args, null, 2));
-}
+import { output, filterFields, dryRunOutput } from "../helpers.js";
 
 export function registerEmailCommands(
   program: Command,
@@ -154,6 +118,7 @@ export function registerEmailCommands(
       const limit = validatePositiveInt(opts.limit, "limit");
       if (opts.from) validateTextArg(opts.from, "from filter");
       if (opts.to) validateTextArg(opts.to, "to filter");
+      if (opts.subject) validateTextArg(opts.subject, "subject filter");
       if (opts.after) validateDateArg(opts.after, "after date");
       if (opts.before) validateDateArg(opts.before, "before date");
       if (opts.mailbox) validateIds(opts.mailbox, "mailbox ID");
@@ -202,6 +167,8 @@ export function registerEmailCommands(
       validateEmails(opts.to, "recipient");
       validateTextArg(opts.subject, "subject");
       if (opts.body) validateTextArg(opts.body, "body");
+      if (opts.html) validateTextArg(opts.html, "HTML body");
+      if (opts.markdown) validateTextArg(opts.markdown, "markdown body");
       if (opts.cc) validateEmails(opts.cc, "CC recipient");
       if (opts.bcc) validateEmails(opts.bcc, "BCC recipient");
       if (opts.from) validateEmails(opts.from, "sender address");
@@ -241,6 +208,8 @@ export function registerEmailCommands(
       validateEmails(opts.to, "recipient");
       validateTextArg(opts.subject, "subject");
       if (opts.body) validateTextArg(opts.body, "body");
+      if (opts.html) validateTextArg(opts.html, "HTML body");
+      if (opts.markdown) validateTextArg(opts.markdown, "markdown body");
       if (opts.cc) validateEmails(opts.cc, "CC recipient");
       if (opts.bcc) validateEmails(opts.bcc, "BCC recipient");
       if (opts.from) validateEmails(opts.from, "sender address");
@@ -278,6 +247,8 @@ export function registerEmailCommands(
     .action(async (emailId, opts) => {
       validateIds(emailId, "email ID");
       validateTextArg(opts.body, "reply body");
+      if (opts.html) validateTextArg(opts.html, "HTML reply body");
+      if (opts.markdown) validateTextArg(opts.markdown, "markdown reply body");
       if (opts.from) validateEmails(opts.from, "sender address");
 
       const args = {

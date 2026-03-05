@@ -21,8 +21,10 @@ export const EXIT = {
 
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
 
-/** Print to stderr and exit with the given code. */
+/** Print to stderr and throw with an exit code (allows finally blocks to run). */
 export function fatal(message: string, code: ExitCode = EXIT.ERROR): never {
   console.error(message);
-  process.exit(code);
+  const err = new Error(message) as Error & { exitCode: ExitCode };
+  err.exitCode = code;
+  throw err;
 }
