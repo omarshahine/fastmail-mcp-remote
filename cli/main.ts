@@ -20,6 +20,7 @@ import { registerEmailCommands } from "./commands/email.js";
 import { registerContactCommands } from "./commands/contacts.js";
 import { registerCalendarCommands } from "./commands/calendar.js";
 import { registerMemoCommands } from "./commands/memo.js";
+import { EXIT, fatal } from "./exit-codes.js";
 
 const program = new Command("fastmail")
   .version("1.0.0")
@@ -45,8 +46,7 @@ const auth = program
         await authenticate(opts.url, opts.team);
       }
     } catch (err: any) {
-      console.error(`Auth failed: ${err.message}`);
-      process.exit(1);
+      fatal(`Auth failed: ${err.message}`, EXIT.AUTH);
     }
   });
 
@@ -117,7 +117,69 @@ program
       } else {
         console.error(`Failed to check permissions: ${err.message}`);
       }
-      process.exit(1);
+      process.exit(EXIT.SERVER);
+    }
+  });
+
+// ── describe command (runtime schema introspection) ─────────
+// Ref: https://justin.poehnelt.com/posts/rewrite-your-cli-for-ai-agents/
+
+program
+  .command("describe")
+  .description("Show schema for a tool (or list all tools). Runtime introspection for agents.")
+  .argument("[toolName]", "Tool name (omit to list all)")
+  .option("--json", "JSON output")
+  .action(async (toolName, opts) => {
+    try {
+      const tools = await client.listTools();
+
+      if (!toolName) {
+        // List all tools
+        if (opts.json) {
+          console.log(JSON.stringify(tools, null, 2));
+        } else {
+          console.log(`# Available Tools (${tools.length})\n`);
+          for (const t of tools) {
+            console.log(`${t.name}  ${t.description || ""}`);
+          }
+        }
+        return;
+      }
+
+      // Find specific tool
+      const tool = tools.find((t) => t.name === toolName);
+      if (!tool) {
+        const suggestions = tools
+          .filter((t) => t.name.includes(toolName))
+          .map((t) => t.name);
+        console.error(`Unknown tool: ${toolName}`);
+        if (suggestions.length) {
+          console.error(`Did you mean: ${suggestions.join(", ")}?`);
+        }
+        process.exit(EXIT.INPUT);
+      }
+
+      if (opts.json) {
+        console.log(JSON.stringify(tool, null, 2));
+      } else {
+        console.log(`# ${tool.name}\n`);
+        if (tool.description) console.log(`${tool.description}\n`);
+        const schema = tool.inputSchema;
+        if (schema?.properties) {
+          console.log("Parameters:");
+          const required = new Set(schema.required || []);
+          for (const [name, prop] of Object.entries<any>(schema.properties)) {
+            const req = required.has(name) ? " (required)" : "";
+            const type = prop.type || "any";
+            const desc = prop.description ? ` — ${prop.description}` : "";
+            const def = prop.default !== undefined ? ` [default: ${JSON.stringify(prop.default)}]` : "";
+            console.log(`  ${name}: ${type}${req}${desc}${def}`);
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error(`Failed to describe tools: ${err.message}`);
+      process.exit(EXIT.SERVER);
     }
   });
 
@@ -134,15 +196,25 @@ class LazyClient extends FastmailMcpClient {
     super("", "");
   }
 
-  override async callTool(
-    name: string,
-    args: Record<string, unknown> = {},
-  ): Promise<any> {
+  private async ensureReal(): Promise<FastmailMcpClient> {
     if (!this.realClient) {
       const { url, token } = await getToken();
       this.realClient = new FastmailMcpClient(url, token);
     }
-    return this.realClient.callTool(name, args);
+    return this.realClient;
+  }
+
+  override async callTool(
+    name: string,
+    args: Record<string, unknown> = {},
+  ): Promise<any> {
+    const c = await this.ensureReal();
+    return c.callTool(name, args);
+  }
+
+  override async listTools(): Promise<{ name: string; description?: string; inputSchema: any }[]> {
+    const c = await this.ensureReal();
+    return c.listTools();
   }
 
   override async close(): Promise<void> {
@@ -165,8 +237,13 @@ async function main() {
     await program.parseAsync(process.argv);
   } catch (err: any) {
     if (err.code === "commander.helpDisplayed") return;
-    console.error(`Error: ${err.message}`);
-    process.exit(1);
+    const msg = err.message || String(err);
+    if (msg.includes("401") || msg.includes("Unauthorized") || msg.includes("Not authenticated")) {
+      fatal(`Error: ${msg}`, EXIT.AUTH);
+    } else if (msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT") || msg.includes("fetch failed")) {
+      fatal(`Error: ${msg}`, EXIT.SERVER);
+    }
+    fatal(`Error: ${msg}`, EXIT.ERROR);
   } finally {
     await client.close();
   }

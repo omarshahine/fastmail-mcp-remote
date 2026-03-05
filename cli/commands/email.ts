@@ -17,14 +17,50 @@ import {
   formatAttachments,
   formatInboxUpdates,
 } from "../formatters.js";
+import {
+  validateIds,
+  validateEmails,
+  validateDateArg,
+  validateTextArg,
+  validateQuery,
+  validatePositiveInt,
+} from "../validate.js";
+import { EXIT } from "../exit-codes.js";
 
-/** Helper: output JSON or formatted text based on --json flag */
-function output(data: any, formatter: (d: any) => string, json: boolean) {
+/** Helper: output JSON (optionally filtered by --fields) or formatted text. */
+function output(data: any, formatter: (d: any) => string, json: boolean, fields?: string) {
   if (json) {
-    console.log(JSON.stringify(data, null, 2));
+    const filtered = fields ? filterFields(data, fields) : data;
+    console.log(JSON.stringify(filtered, null, 2));
   } else {
     console.log(formatter(data));
   }
+}
+
+/** Filter JSON output to only the requested fields (comma-separated). */
+function filterFields(data: any, fields: string): any {
+  const keys = new Set(fields.split(",").map((f) => f.trim()));
+  if (Array.isArray(data)) {
+    return data.map((item) => pick(item, keys));
+  }
+  if (data && typeof data === "object") {
+    return pick(data, keys);
+  }
+  return data;
+}
+
+function pick(obj: Record<string, any>, keys: Set<string>): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const key of keys) {
+    if (key in obj) result[key] = obj[key];
+  }
+  return result;
+}
+
+/** Format a dry-run preview for a mutation command. */
+function dryRunOutput(toolName: string, args: Record<string, unknown>): void {
+  console.log(`[dry-run] Would call: ${toolName}`);
+  console.log(JSON.stringify(args, null, 2));
 }
 
 export function registerEmailCommands(
@@ -39,12 +75,15 @@ export function registerEmailCommands(
     .option("-l, --limit <n>", "Number of emails", "10")
     .option("-m, --mailbox <name>", "Mailbox name", "inbox")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (opts) => {
+      const limit = validatePositiveInt(opts.limit, "limit");
+      validateTextArg(opts.mailbox, "mailbox name");
       const data = await client.callTool("get_recent_emails", {
-        limit: parseInt(opts.limit),
+        limit,
         mailboxName: opts.mailbox,
       });
-      output(data, (d) => formatEmailList(d, `${opts.mailbox}`), opts.json);
+      output(data, (d) => formatEmailList(d, `${opts.mailbox}`), opts.json, opts.fields);
     });
 
   // ── email (group + default get) ──────────────────────────
@@ -55,14 +94,16 @@ export function registerEmailCommands(
     .argument("[id]", "Email ID to read")
     .option("--raw", "Return raw JMAP JSON instead of markdown")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (id, opts) => {
       if (!id) return email.help();
+      validateIds(id, "email ID");
       const format = opts.raw ? "html" : "markdown";
       const data = await client.callTool("get_email", {
         emailId: id,
         format,
       });
-      output(data, formatEmail, opts.json || opts.raw);
+      output(data, formatEmail, opts.json || opts.raw, opts.fields);
     });
 
   // ── email thread ─────────────────────────────────────────
@@ -72,14 +113,17 @@ export function registerEmailCommands(
     .description("Get all emails in a conversation thread")
     .option("--raw", "Raw JMAP JSON")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (threadId, opts) => {
+      validateIds(threadId, "thread ID");
       const format = opts.raw ? "html" : "markdown";
       const data = await client.callTool("get_thread", {
         threadId,
         format,
       });
       if (opts.json || opts.raw) {
-        console.log(JSON.stringify(data, null, 2));
+        const filtered = opts.fields ? filterFields(data, opts.fields) : data;
+        console.log(JSON.stringify(filtered, null, 2));
       } else if (typeof data === "string") {
         console.log(data);
       } else if (Array.isArray(data)) {
@@ -104,7 +148,16 @@ export function registerEmailCommands(
     .option("--attachments", "Only emails with attachments")
     .option("--mailbox <id>", "Search within mailbox")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (query, opts) => {
+      validateQuery(query, "search query");
+      const limit = validatePositiveInt(opts.limit, "limit");
+      if (opts.from) validateTextArg(opts.from, "from filter");
+      if (opts.to) validateTextArg(opts.to, "to filter");
+      if (opts.after) validateDateArg(opts.after, "after date");
+      if (opts.before) validateDateArg(opts.before, "before date");
+      if (opts.mailbox) validateIds(opts.mailbox, "mailbox ID");
+
       // Use advanced_search if any filter options are provided
       const hasFilters = opts.from || opts.to || opts.subject || opts.after || opts.before || opts.unread || opts.attachments || opts.mailbox;
 
@@ -119,15 +172,15 @@ export function registerEmailCommands(
           isUnread: opts.unread || undefined,
           hasAttachment: opts.attachments || undefined,
           mailboxId: opts.mailbox,
-          limit: parseInt(opts.limit),
+          limit,
         });
-        output(data, (d) => formatEmailList(d, `Search: ${query}`), opts.json);
+        output(data, (d) => formatEmailList(d, `Search: ${query}`), opts.json, opts.fields);
       } else {
         const data = await client.callTool("search_emails", {
           query,
-          limit: parseInt(opts.limit),
+          limit,
         });
-        output(data, (d) => formatEmailList(d, `Search: ${query}`), opts.json);
+        output(data, (d) => formatEmailList(d, `Search: ${query}`), opts.json, opts.fields);
       }
     });
 
@@ -144,8 +197,16 @@ export function registerEmailCommands(
     .option("--cc <addrs...>", "CC recipients")
     .option("--bcc <addrs...>", "BCC recipients")
     .option("--from <addr>", "Sender address")
+    .option("--dry-run", "Preview what would be sent without sending")
     .action(async (opts) => {
-      const result = await client.callTool("send_email", {
+      validateEmails(opts.to, "recipient");
+      validateTextArg(opts.subject, "subject");
+      if (opts.body) validateTextArg(opts.body, "body");
+      if (opts.cc) validateEmails(opts.cc, "CC recipient");
+      if (opts.bcc) validateEmails(opts.bcc, "BCC recipient");
+      if (opts.from) validateEmails(opts.from, "sender address");
+
+      const args = {
         to: opts.to,
         subject: opts.subject,
         textBody: opts.body,
@@ -154,7 +215,11 @@ export function registerEmailCommands(
         cc: opts.cc,
         bcc: opts.bcc,
         from: opts.from,
-      });
+      };
+
+      if (opts.dryRun) return dryRunOutput("send_email", args);
+
+      const result = await client.callTool("send_email", args);
       console.log(typeof result === "string" ? result : JSON.stringify(result));
     });
 
@@ -171,8 +236,16 @@ export function registerEmailCommands(
     .option("--cc <addrs...>", "CC recipients")
     .option("--bcc <addrs...>", "BCC recipients")
     .option("--from <addr>", "Sender address")
+    .option("--dry-run", "Preview what would be created without creating")
     .action(async (opts) => {
-      const result = await client.callTool("create_draft", {
+      validateEmails(opts.to, "recipient");
+      validateTextArg(opts.subject, "subject");
+      if (opts.body) validateTextArg(opts.body, "body");
+      if (opts.cc) validateEmails(opts.cc, "CC recipient");
+      if (opts.bcc) validateEmails(opts.bcc, "BCC recipient");
+      if (opts.from) validateEmails(opts.from, "sender address");
+
+      const args = {
         to: opts.to,
         subject: opts.subject,
         textBody: opts.body,
@@ -181,7 +254,11 @@ export function registerEmailCommands(
         cc: opts.cc,
         bcc: opts.bcc,
         from: opts.from,
-      });
+      };
+
+      if (opts.dryRun) return dryRunOutput("create_draft", args);
+
+      const result = await client.callTool("create_draft", args);
       console.log(typeof result === "string" ? result : JSON.stringify(result));
     });
 
@@ -197,8 +274,13 @@ export function registerEmailCommands(
     .option("--all", "Reply to all recipients")
     .option("--send", "Send immediately (default: create draft)")
     .option("--no-quote", "Exclude quoted original message")
+    .option("--dry-run", "Preview what would be sent without sending")
     .action(async (emailId, opts) => {
-      const result = await client.callTool("reply_to_email", {
+      validateIds(emailId, "email ID");
+      validateTextArg(opts.body, "reply body");
+      if (opts.from) validateEmails(opts.from, "sender address");
+
+      const args = {
         emailId,
         body: opts.body,
         htmlBody: opts.html,
@@ -207,7 +289,11 @@ export function registerEmailCommands(
         replyAll: opts.all || false,
         sendImmediately: opts.send || false,
         excludeQuote: !opts.quote,
-      });
+      };
+
+      if (opts.dryRun) return dryRunOutput("reply_to_email", args);
+
+      const result = await client.callTool("reply_to_email", args);
       console.log(typeof result === "string" ? result : JSON.stringify(result));
     });
 
@@ -216,63 +302,73 @@ export function registerEmailCommands(
   email
     .command("read <emailId>")
     .description("Mark email as read")
-    .action(async (emailId) => {
-      const result = await client.callTool("mark_email_read", {
-        emailId,
-        read: true,
-      });
+    .option("--dry-run", "Preview without executing")
+    .action(async (emailId, opts) => {
+      validateIds(emailId, "email ID");
+      const args = { emailId, read: true };
+      if (opts.dryRun) return dryRunOutput("mark_email_read", args);
+      const result = await client.callTool("mark_email_read", args);
       console.log(typeof result === "string" ? result : "Marked as read");
     });
 
   email
     .command("unread <emailId>")
     .description("Mark email as unread")
-    .action(async (emailId) => {
-      const result = await client.callTool("mark_email_read", {
-        emailId,
-        read: false,
-      });
+    .option("--dry-run", "Preview without executing")
+    .action(async (emailId, opts) => {
+      validateIds(emailId, "email ID");
+      const args = { emailId, read: false };
+      if (opts.dryRun) return dryRunOutput("mark_email_read", args);
+      const result = await client.callTool("mark_email_read", args);
       console.log(typeof result === "string" ? result : "Marked as unread");
     });
 
   email
     .command("flag <emailId>")
     .description("Flag an email")
-    .action(async (emailId) => {
-      const result = await client.callTool("flag_email", {
-        emailId,
-        flagged: true,
-      });
+    .option("--dry-run", "Preview without executing")
+    .action(async (emailId, opts) => {
+      validateIds(emailId, "email ID");
+      const args = { emailId, flagged: true };
+      if (opts.dryRun) return dryRunOutput("flag_email", args);
+      const result = await client.callTool("flag_email", args);
       console.log(typeof result === "string" ? result : "Flagged");
     });
 
   email
     .command("unflag <emailId>")
     .description("Unflag an email")
-    .action(async (emailId) => {
-      const result = await client.callTool("flag_email", {
-        emailId,
-        flagged: false,
-      });
+    .option("--dry-run", "Preview without executing")
+    .action(async (emailId, opts) => {
+      validateIds(emailId, "email ID");
+      const args = { emailId, flagged: false };
+      if (opts.dryRun) return dryRunOutput("flag_email", args);
+      const result = await client.callTool("flag_email", args);
       console.log(typeof result === "string" ? result : "Unflagged");
     });
 
   email
     .command("delete <emailId>")
     .description("Delete an email (move to trash)")
-    .action(async (emailId) => {
-      const result = await client.callTool("delete_email", { emailId });
+    .option("--dry-run", "Preview without executing")
+    .action(async (emailId, opts) => {
+      validateIds(emailId, "email ID");
+      const args = { emailId };
+      if (opts.dryRun) return dryRunOutput("delete_email", args);
+      const result = await client.callTool("delete_email", args);
       console.log(typeof result === "string" ? result : "Deleted");
     });
 
   email
     .command("move <emailId> <targetMailboxId>")
     .description("Move an email to a different mailbox")
-    .action(async (emailId, targetMailboxId) => {
-      const result = await client.callTool("move_email", {
-        emailId,
-        targetMailboxId,
-      });
+    .option("--dry-run", "Preview without executing")
+    .action(async (emailId, targetMailboxId, opts) => {
+      validateIds(emailId, "email ID");
+      validateIds(targetMailboxId, "target mailbox ID");
+      const args = { emailId, targetMailboxId };
+      if (opts.dryRun) return dryRunOutput("move_email", args);
+      const result = await client.callTool("move_email", args);
       console.log(typeof result === "string" ? result : "Moved");
     });
 
@@ -282,9 +378,11 @@ export function registerEmailCommands(
     .command("attachments <emailId>")
     .description("List attachments for an email")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (emailId, opts) => {
+      validateIds(emailId, "email ID");
       const data = await client.callTool("get_email_attachments", { emailId });
-      output(data, formatAttachments, opts.json);
+      output(data, formatAttachments, opts.json, opts.fields);
     });
 
   email
@@ -292,6 +390,8 @@ export function registerEmailCommands(
     .description("Get download URL for an attachment")
     .option("--inline", "Return base64 content inline (small files only)")
     .action(async (emailId, attachmentId, opts) => {
+      validateIds(emailId, "email ID");
+      validateIds(attachmentId, "attachment ID");
       const data = await client.callTool("download_attachment", {
         emailId,
         attachmentId,
@@ -317,63 +417,73 @@ export function registerEmailCommands(
   bulk
     .command("read <ids...>")
     .description("Mark multiple emails as read")
-    .action(async (ids) => {
-      const result = await client.callTool("bulk_mark_read", {
-        emailIds: ids,
-        read: true,
-      });
+    .option("--dry-run", "Preview without executing")
+    .action(async (ids, opts) => {
+      validateIds(ids, "email ID");
+      const args = { emailIds: ids, read: true };
+      if (opts.dryRun) return dryRunOutput("bulk_mark_read", args);
+      const result = await client.callTool("bulk_mark_read", args);
       console.log(typeof result === "string" ? result : `${ids.length} emails marked as read`);
     });
 
   bulk
     .command("unread <ids...>")
     .description("Mark multiple emails as unread")
-    .action(async (ids) => {
-      const result = await client.callTool("bulk_mark_read", {
-        emailIds: ids,
-        read: false,
-      });
+    .option("--dry-run", "Preview without executing")
+    .action(async (ids, opts) => {
+      validateIds(ids, "email ID");
+      const args = { emailIds: ids, read: false };
+      if (opts.dryRun) return dryRunOutput("bulk_mark_read", args);
+      const result = await client.callTool("bulk_mark_read", args);
       console.log(typeof result === "string" ? result : `${ids.length} emails marked as unread`);
     });
 
   bulk
     .command("flag <ids...>")
     .description("Flag multiple emails")
-    .action(async (ids) => {
-      const result = await client.callTool("bulk_flag", {
-        emailIds: ids,
-        flagged: true,
-      });
+    .option("--dry-run", "Preview without executing")
+    .action(async (ids, opts) => {
+      validateIds(ids, "email ID");
+      const args = { emailIds: ids, flagged: true };
+      if (opts.dryRun) return dryRunOutput("bulk_flag", args);
+      const result = await client.callTool("bulk_flag", args);
       console.log(typeof result === "string" ? result : `${ids.length} emails flagged`);
     });
 
   bulk
     .command("unflag <ids...>")
     .description("Unflag multiple emails")
-    .action(async (ids) => {
-      const result = await client.callTool("bulk_flag", {
-        emailIds: ids,
-        flagged: false,
-      });
+    .option("--dry-run", "Preview without executing")
+    .action(async (ids, opts) => {
+      validateIds(ids, "email ID");
+      const args = { emailIds: ids, flagged: false };
+      if (opts.dryRun) return dryRunOutput("bulk_flag", args);
+      const result = await client.callTool("bulk_flag", args);
       console.log(typeof result === "string" ? result : `${ids.length} emails unflagged`);
     });
 
   bulk
     .command("delete <ids...>")
     .description("Delete multiple emails")
-    .action(async (ids) => {
-      const result = await client.callTool("bulk_delete", { emailIds: ids });
+    .option("--dry-run", "Preview without executing")
+    .action(async (ids, opts) => {
+      validateIds(ids, "email ID");
+      const args = { emailIds: ids };
+      if (opts.dryRun) return dryRunOutput("bulk_delete", args);
+      const result = await client.callTool("bulk_delete", args);
       console.log(typeof result === "string" ? result : `${ids.length} emails deleted`);
     });
 
   bulk
     .command("move <targetMailboxId> <ids...>")
     .description("Move multiple emails to a mailbox")
-    .action(async (targetMailboxId, ids) => {
-      const result = await client.callTool("bulk_move", {
-        emailIds: ids,
-        targetMailboxId,
-      });
+    .option("--dry-run", "Preview without executing")
+    .action(async (targetMailboxId, ids, opts) => {
+      validateIds(ids, "email ID");
+      validateIds(targetMailboxId, "target mailbox ID");
+      const args = { emailIds: ids, targetMailboxId };
+      if (opts.dryRun) return dryRunOutput("bulk_move", args);
+      const result = await client.callTool("bulk_move", args);
       console.log(typeof result === "string" ? result : `${ids.length} emails moved`);
     });
 
@@ -383,9 +493,10 @@ export function registerEmailCommands(
     .command("mailboxes")
     .description("List all mailboxes")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (opts) => {
       const data = await client.callTool("list_mailboxes");
-      output(data, formatMailboxes, opts.json);
+      output(data, formatMailboxes, opts.json, opts.fields);
     });
 
   // ── mailbox stats ────────────────────────────────────────
@@ -395,11 +506,15 @@ export function registerEmailCommands(
     .description("Get mailbox statistics")
     .argument("[mailboxId]", "Specific mailbox ID (omit for all)")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (mailboxId, opts) => {
       const args: Record<string, unknown> = {};
-      if (mailboxId) args.mailboxId = mailboxId;
+      if (mailboxId) {
+        validateIds(mailboxId, "mailbox ID");
+        args.mailboxId = mailboxId;
+      }
       const data = await client.callTool("get_mailbox_stats", args);
-      output(data, formatMailboxStats, opts.json);
+      output(data, formatMailboxStats, opts.json, opts.fields);
     });
 
   // ── account summary ──────────────────────────────────────
@@ -408,9 +523,10 @@ export function registerEmailCommands(
     .command("account")
     .description("Show account summary")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (opts) => {
       const data = await client.callTool("get_account_summary");
-      output(data, formatAccountSummary, opts.json);
+      output(data, formatAccountSummary, opts.json, opts.fields);
     });
 
   // ── identities ───────────────────────────────────────────
@@ -419,9 +535,10 @@ export function registerEmailCommands(
     .command("identities")
     .description("List sending identities")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (opts) => {
       const data = await client.callTool("list_identities");
-      output(data, formatIdentities, opts.json);
+      output(data, formatIdentities, opts.json, opts.fields);
     });
 
   // ── inbox updates ────────────────────────────────────────
@@ -433,12 +550,15 @@ export function registerEmailCommands(
     .option("--mailbox <id>", "Mailbox ID")
     .option("-l, --limit <n>", "Max results", "100")
     .option("--json", "JSON output")
+    .option("--fields <list>", "Comma-separated fields to include in JSON output")
     .action(async (opts) => {
+      const limit = validatePositiveInt(opts.limit, "limit");
+      if (opts.mailbox) validateIds(opts.mailbox, "mailbox ID");
       const data = await client.callTool("get_inbox_updates", {
         sinceQueryState: opts.since,
         mailboxId: opts.mailbox,
-        limit: parseInt(opts.limit),
+        limit,
       });
-      output(data, formatInboxUpdates, opts.json);
+      output(data, formatInboxUpdates, opts.json, opts.fields);
     });
 }

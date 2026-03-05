@@ -119,6 +119,36 @@ fastmail updates                        # Get current state + all inbox emails
 fastmail updates --since <stateToken>   # Only changes since last check
 ```
 
+### Schema Introspection
+
+```bash
+fastmail describe                      # List all available MCP tools
+fastmail describe get_email            # Show schema for a specific tool
+fastmail describe get_email --json     # Machine-readable JSON schema
+```
+
+### Dry Run (preview mutations)
+
+All mutation commands support `--dry-run` to preview without executing:
+
+```bash
+fastmail email send --to user@example.com --subject "Hi" --body "Hello" --dry-run
+fastmail email delete <id> --dry-run
+fastmail bulk delete <id1> <id2> --dry-run
+fastmail event create --calendar <id> --title "Meeting" --start "..." --end "..." --dry-run
+fastmail memo create <emailId> --text "Note" --dry-run
+```
+
+### Field Masks (JSON output filtering)
+
+Use `--fields` with `--json` to limit response fields and save tokens:
+
+```bash
+fastmail inbox --json --fields "id,subject,from"
+fastmail contacts --json --fields "id,name,emails"
+fastmail events --json --fields "id,title,start,end"
+```
+
 ## Output Format
 
 The CLI outputs compact text optimized for LLM consumption. Email IDs appear first on each line for easy extraction.
@@ -172,10 +202,30 @@ fastmail email delete M4              # Trash one
 fastmail email move M5 <archiveId>    # Archive one
 ```
 
+## Exit Codes
+
+| Code | Meaning | Action |
+|------|---------|--------|
+| 0 | Success | — |
+| 1 | Generic error | Check stderr |
+| 2 | Authentication failure | Run `fastmail auth --url <url>` |
+| 3 | Invalid input | Fix arguments (bad ID, email, date format) |
+| 4 | Server/network error | Check if the MCP worker is running |
+| 5 | Permission denied | Your user role may not have access |
+
 ## Error Handling
 
-- **"Not authenticated"** → Run `fastmail auth --url <url>`
-- **"Token expired"** → Run `fastmail auth` (re-authenticates, preserves URL)
-- **Connection errors** → Check if the MCP worker is running
-- **Permission denied** → Your user role may not have access to that tool
+- **"Not authenticated"** (exit 2) → Run `fastmail auth --url <url>`
+- **"Token expired"** (exit 2) → Run `fastmail auth` (re-authenticates, preserves URL)
+- **"Invalid ... ID"** (exit 3) → Use IDs from previous command output, not fabricated ones
+- **Connection errors** (exit 4) → Check if the MCP worker is running
+- **Permission denied** (exit 5) → Your user role may not have access to that tool
 - **No browser available** → Use `fastmail auth --headless` for SSH environments
+
+## Agent Safety
+
+- **Always use `--dry-run`** for mutation commands before executing
+- **Always use `--fields`** with `--json` to limit response size
+- **Use `fastmail describe <tool>`** to discover tool schemas at runtime
+- **IDs are opaque** — always use IDs from previous command output, never fabricate them
+- **Input is validated** — control characters, path traversal, double-encoding, and embedded query params are rejected

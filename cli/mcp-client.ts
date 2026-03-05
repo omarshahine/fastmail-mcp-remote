@@ -127,6 +127,20 @@ export class FastmailMcpClient {
     return cleaned;
   }
 
+  /**
+   * List all available MCP tools with their schemas.
+   * Used by the `describe` command for runtime schema introspection.
+   */
+  async listTools(): Promise<{ name: string; description?: string; inputSchema: any }[]> {
+    const client = await this.ensureConnected();
+    const result = await client.listTools();
+    return (result.tools || []).map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    }));
+  }
+
   async close(): Promise<void> {
     if (this.client) {
       await this.client.close();
