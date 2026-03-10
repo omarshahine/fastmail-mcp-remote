@@ -303,9 +303,8 @@ The `cloudflare@cloudflare` plugin is enabled for this project. `CLOUDFLARE_ACCO
 
 | Server | Purpose |
 |--------|---------|
+| `cloudflare-api` | Full Cloudflare API via Code Mode (2 tools, ~1000 tokens) |
 | `cloudflare-docs` | Semantic search of Cloudflare documentation |
-| `cloudflare-bindings` | KV, D1, R2, Hyperdrive CRUD operations |
-| `cloudflare-builds` | Build logs and deployment debugging |
 
 ### Available Skills
 
@@ -325,7 +324,7 @@ The `cloudflare@cloudflare` plugin is enabled for this project. `CLOUDFLARE_ACCO
 
 - **Account ID**: Set globally via `CLOUDFLARE_ACCOUNT_ID` env var in `~/.claude/settings.json`
 - **MCP auth**: Each MCP server handles its own OAuth — authenticate on first use per session
-- **Bindings MCP**: Can list/query KV namespaces and Durable Objects directly
+- **API MCP**: Code Mode server covers the entire Cloudflare API (DNS, Workers, KV, D1, R2, Zero Trust, etc.) via `search()` and `execute()` tools
 
 ## Code Hygiene
 
