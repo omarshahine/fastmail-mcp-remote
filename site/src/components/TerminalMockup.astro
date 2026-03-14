@@ -1,0 +1,192 @@
+---
+/**
+ * Terminal mockup component inspired by carbon.now.sh
+ * Shows realistic Fastmail MCP interactions as a hero visual
+ */
+---
+
+<div class="terminal-wrapper">
+  <div class="terminal">
+    <!-- Title bar with traffic lights -->
+    <div class="terminal-titlebar">
+      <div class="terminal-dots">
+        <span class="dot dot-red"></span>
+        <span class="dot dot-yellow"></span>
+        <span class="dot dot-green"></span>
+      </div>
+      <span class="terminal-title">fastmail-mcp — zsh — 120×48</span>
+      <div class="terminal-dots invisible">
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+      </div>
+    </div>
+
+    <!-- Terminal body -->
+    <div class="terminal-body">
+      <pre><code><span class="prompt">❯</span> <span class="cmd">claude</span> <span class="arg">"Check my inbox for anything urgent"</span>
+
+<span class="dim">Using fastmail search_emails tool...</span>
+
+<span class="accent">Inbox — 3 unread</span>
+
+  <span class="badge badge-flag">★</span> <span class="sender">Alice Park</span>  <span class="subject">Q2 Budget Final Approval Needed</span>  <span class="dim">10:42 AM</span>
+  <span class="badge badge-new">●</span> <span class="sender">GitHub</span>  <span class="subject">[fastmail-mcp] New issue #47</span>  <span class="dim"> 9:15 AM</span>
+  <span class="badge badge-new">●</span> <span class="sender">David Chen</span>  <span class="subject">Flight itinerary for Tokyo trip</span>  <span class="dim"> 8:30 AM</span>
+
+<span class="prompt">❯</span> <span class="cmd">claude</span> <span class="arg">"Reply to Alice — approved, cc finance team"</span>
+
+<span class="dim">Using fastmail reply_to_email tool...</span>
+<span class="success">✓</span> <span class="text">Reply sent to </span><span class="accent">alice.park@company.com</span>
+  <span class="dim">CC:</span> <span class="text">finance-team@company.com</span>
+  <span class="dim">Re:</span> <span class="text">Q2 Budget Final Approval Needed</span>
+
+<span class="prompt">❯</span> <span class="cmd">claude</span> <span class="arg">"Move the GitHub notification to my Dev folder"</span>
+
+<span class="dim">Using fastmail move_email tool...</span>
+<span class="success">✓</span> <span class="text">Moved to </span><span class="accent">Dev/GitHub</span>
+
+<span class="prompt">❯</span> <span class="cmd">claude</span> <span class="arg">"Find David's phone number"</span>
+
+<span class="dim">Using fastmail search_contacts tool...</span>
+
+  <span class="text">David Chen</span>
+  <span class="dim">Email:</span>  <span class="accent">david.chen@company.com</span>
+  <span class="dim">Phone:</span>  <span class="text">(415) 555-0198</span>
+
+<span class="prompt">❯</span> <span class="cursor">▌</span></code></pre>
+    </div>
+  </div>
+</div>
+
+<style>
+  .terminal-wrapper {
+    perspective: 1000px;
+    max-width: 860px;
+    margin: 0 auto;
+  }
+
+  .terminal {
+    background: #1a1a1a;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.06),
+      0 25px 50px -12px rgba(0, 0, 0, 0.6),
+      0 0 80px rgba(249, 115, 22, 0.08);
+    transform: rotateX(2deg);
+    transition: transform 0.4s ease, box-shadow 0.4s ease;
+  }
+
+  .terminal:hover {
+    transform: rotateX(0deg);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.08),
+      0 30px 60px -15px rgba(0, 0, 0, 0.7),
+      0 0 120px rgba(249, 115, 22, 0.12);
+  }
+
+  .terminal-titlebar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: #2a2a2a;
+    border-bottom: 1px solid #333;
+  }
+
+  .terminal-dots {
+    display: flex;
+    gap: 8px;
+  }
+
+  .terminal-dots.invisible {
+    visibility: hidden;
+  }
+
+  .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+  }
+
+  .dot-red { background: #ff5f57; }
+  .dot-yellow { background: #febc2e; }
+  .dot-green { background: #28c840; }
+
+  .terminal-title {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    color: #666;
+    user-select: none;
+  }
+
+  .terminal-body {
+    padding: 20px 24px 24px;
+    overflow-x: auto;
+  }
+
+  .terminal-body pre {
+    margin: 0;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    color: #e5e5e5;
+  }
+
+  .terminal-body code {
+    font-family: inherit;
+  }
+
+  .prompt { color: #f97316; font-weight: 600; }
+  .cmd { color: #60a5fa; }
+  .arg { color: #fbbf24; }
+  .dim { color: #555; }
+  .accent { color: #f97316; }
+  .text { color: #e5e5e5; }
+  .success { color: #34d399; font-weight: 700; }
+
+  .sender {
+    display: inline-block;
+    width: 20ch;
+    color: #e5e5e5;
+    font-weight: 500;
+  }
+
+  .subject {
+    display: inline-block;
+    width: 34ch;
+    color: #a3a3a3;
+  }
+
+  .badge {
+    display: inline-block;
+    width: 1.5ch;
+    text-align: center;
+  }
+  .badge-flag { color: #fbbf24; }
+  .badge-new { color: #f97316; }
+
+  .cursor {
+    color: #f97316;
+    animation: blink 1.2s step-end infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  @media (max-width: 640px) {
+    .terminal-body pre {
+      font-size: 11px;
+      line-height: 1.6;
+    }
+    .terminal-body {
+      padding: 16px;
+    }
+    .terminal-title {
+      display: none;
+    }
+  }
+</style>

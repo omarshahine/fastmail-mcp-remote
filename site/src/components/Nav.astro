@@ -1,6 +1,12 @@
 ---
-import pkg from '../../../package.json';
-const version = `v${pkg.version}`;
+import { execFileSync } from 'node:child_process';
+
+let version = '';
+try {
+  version = execFileSync('git', ['describe', '--tags', '--abbrev=0'], { encoding: 'utf-8' }).trim();
+} catch {
+  // No tags available
+}
 
 const navLinks = [
   { href: '#features', label: 'Features' },
@@ -29,9 +35,11 @@ const navLinks = [
           <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
         </svg>
         <span class="font-semibold text-foreground text-sm sm:text-base">Fastmail Remote</span>
-        <span class="hidden sm:inline-flex bg-accent/10 text-accent text-xs font-mono px-2 py-0.5 rounded-md border border-accent/20">
-          {version}
-        </span>
+        {version && (
+          <span class="hidden sm:inline-flex bg-accent/10 text-accent text-xs font-mono px-2 py-0.5 rounded-md border border-accent/20">
+            {version}
+          </span>
+        )}
       </a>
 
       <!-- Desktop Nav Links -->
@@ -148,4 +156,5 @@ const navLinks = [
       btn?.focus();
     }
   });
+
 </script>
