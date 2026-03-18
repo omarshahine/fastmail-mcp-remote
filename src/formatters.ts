@@ -52,7 +52,7 @@ export function formatEmailList(
   for (const e of emails) {
     const id = e.id || "?";
     const date = e.receivedAt ? formatDate(e.receivedAt) : "           ";
-    const from = e.from?.[0] ? formatAddr(e.from[0]) : (e.fromFlat || "Unknown");
+    const from = typeof e.from === "string" ? e.from : e.from?.[0] ? formatAddr(e.from[0]) : "Unknown";
     const subject = e.subject || "(no subject)";
     const preview = e.preview ? truncate(e.preview, 80) : "";
 
