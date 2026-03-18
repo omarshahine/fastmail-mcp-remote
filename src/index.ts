@@ -20,6 +20,29 @@ import { validateAccessToken } from "./oauth-utils";
 import { checkMcpPermissions, filterToolsListResponse, getPermissionsConfig, getUserConfig, getVisibleTools, isToolAllowed, TOOL_CATEGORIES } from "./permissions";
 import { markToolResult, markUntrustedText, isExternalDataTool, getDatamarkingPreamble } from "./prompt-guard";
 import { generateActionUrls, verifyAction, nonceKey } from "./action-urls";
+import {
+  formatEmailList,
+  formatMailboxes,
+  formatMailboxStats,
+  formatAccountSummary,
+  formatContacts,
+  formatContact,
+  formatCalendars,
+  formatEvents,
+  formatIdentities,
+  formatMemo,
+  formatAttachments,
+  formatInboxUpdates,
+  flattenEmailList,
+} from "./formatters";
+
+/** Tools that return email lists where addresses can be flattened (Alt C) */
+const EMAIL_LIST_TOOLS = new Set([
+  "list_emails",
+  "search_emails",
+  "get_recent_emails",
+  "advanced_search",
+]);
 
 export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<string, never>> {
   server = new McpServer({
@@ -85,17 +108,40 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
   }
 
   /**
-   * Wrap a JSON tool response with prompt injection datamarking.
-   * Applies Microsoft Spotlighting (datamarking variant) to untrusted external fields.
+   * Wrap a tool response with prompt injection datamarking and optional compact formatting.
+   *
+   * When compact=true, returns token-efficient plain text (5-7x smaller than JSON).
+   * When compact=false (default), returns minified JSON with datamarking for external data.
+   * Address flattening is applied to email list responses in JSON mode for ~10-15% savings.
    */
-  private guardResponse(toolName: string, data: unknown): { content: { text: string; type: "text" }[] } {
+  private guardResponse(
+    toolName: string,
+    data: unknown,
+    options?: { compact?: boolean; compactFormatter?: (data: any) => string },
+  ): { content: { text: string; type: "text" }[] } {
+    // Compact text format: use the provided formatter for maximum token savings
+    if (options?.compact && options.compactFormatter) {
+      const text = options.compactFormatter(data);
+      if (isExternalDataTool(toolName)) {
+        const preamble = getDatamarkingPreamble();
+        return { content: [{ text: `${preamble}\n\n${text}`, type: "text" }] };
+      }
+      return { content: [{ text, type: "text" }] };
+    }
+
+    // JSON mode: flatten addresses for email list tools (Alt C)
+    let processedData = data;
+    if (Array.isArray(data) && EMAIL_LIST_TOOLS.has(toolName)) {
+      processedData = flattenEmailList(data as any[]);
+    }
+
     if (isExternalDataTool(toolName)) {
       const preamble = getDatamarkingPreamble();
-      const marked = markToolResult(data, toolName);
-      const json = JSON.stringify(marked, null, 2);
+      const marked = markToolResult(processedData, toolName);
+      const json = JSON.stringify(marked);
       return { content: [{ text: `${preamble}\n\n${json}`, type: "text" }] };
     }
-    const json = JSON.stringify(data, null, 2);
+    const json = JSON.stringify(processedData);
     return { content: [{ text: json, type: "text" }] };
   }
 
@@ -107,23 +153,37 @@ export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<str
     // EMAIL TOOLS
     // =====================
 
-    this.server.tool("list_mailboxes", "List all mailboxes in the Fastmail account", {}, async () => {
-      const client = this.getJmapClient();
-      const mailboxes = await client.getMailboxes();
-      return this.guardResponse("list_mailboxes", mailboxes);
-    });
+    this.server.tool(
+      "list_mailboxes",
+      "List all mailboxes in the Fastmail account. Use format='compact' for token-efficient text output.",
+      {
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
+      },
+      async ({ format }) => {
+        const client = this.getJmapClient();
+        const mailboxes = await client.getMailboxes();
+        return this.guardResponse("list_mailboxes", mailboxes, {
+          compact: format === "compact",
+          compactFormatter: formatMailboxes,
+        });
+      },
+    );
 
     this.server.tool(
       "list_emails",
-      "List emails from a mailbox",
+      "List emails from a mailbox. Use format='compact' for token-efficient text output.",
       {
         mailboxId: z.string().optional().describe("ID of the mailbox to list emails from (optional, defaults to all)"),
         limit: z.number().default(20).describe("Maximum number of emails to return (default: 20)"),
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
       },
-      async ({ mailboxId, limit }) => {
+      async ({ mailboxId, limit, format }) => {
         const client = this.getJmapClient();
         const emails = await client.getEmails(mailboxId, limit);
-        return this.guardResponse("list_emails", emails);
+        return this.guardResponse("list_emails", emails, {
+          compact: format === "compact",
+          compactFormatter: (data) => formatEmailList(data, "Emails"),
+        });
       },
     );
 
@@ -483,29 +543,37 @@ ${quotedContent}
 
     this.server.tool(
       "search_emails",
-      "Search emails by subject or content",
+      "Search emails by subject or content. Use format='compact' for token-efficient text output.",
       {
         query: z.string().describe("Search query string"),
         limit: z.number().default(20).describe("Maximum number of results (default: 20)"),
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
       },
-      async ({ query, limit }) => {
+      async ({ query, limit, format }) => {
         const client = this.getJmapClient();
         const emails = await client.searchEmails(query, limit);
-        return this.guardResponse("search_emails", emails);
+        return this.guardResponse("search_emails", emails, {
+          compact: format === "compact",
+          compactFormatter: (data) => formatEmailList(data, `Search: ${query}`),
+        });
       },
     );
 
     this.server.tool(
       "get_recent_emails",
-      "Get the most recent emails from inbox (like top-ten)",
+      "Get the most recent emails from inbox (like top-ten). Use format='compact' for token-efficient text output.",
       {
         limit: z.number().default(10).describe("Number of recent emails to retrieve (default: 10, max: 50)"),
         mailboxName: z.string().default("inbox").describe("Mailbox to search (default: inbox)"),
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
       },
-      async ({ limit, mailboxName }) => {
+      async ({ limit, mailboxName, format }) => {
         const client = this.getJmapClient();
         const emails = await client.getRecentEmails(limit, mailboxName);
-        return this.guardResponse("get_recent_emails", emails);
+        return this.guardResponse("get_recent_emails", emails, {
+          compact: format === "compact",
+          compactFormatter: (data) => formatEmailList(data, `Recent: ${mailboxName}`),
+        });
       },
     );
 
@@ -522,7 +590,7 @@ ${quotedContent}
           const client = this.getJmapClient();
           const result = await client.getInboxUpdates({ sinceQueryState, mailboxId, limit });
           return {
-            content: [{ text: JSON.stringify(result, null, 2), type: "text" }],
+            content: [{ text: JSON.stringify(result), type: "text" }],
           };
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
@@ -640,7 +708,7 @@ ${quotedContent}
             }
             const attachmentContent = await client.fetchAttachmentContent(emailId, attachmentId);
             return {
-              content: [{ text: JSON.stringify(attachmentContent, null, 2), type: "text" }],
+              content: [{ text: JSON.stringify(attachmentContent), type: "text" }],
             };
           }
 
@@ -693,7 +761,7 @@ ${quotedContent}
 
     this.server.tool(
       "advanced_search",
-      "Advanced email search with multiple criteria",
+      "Advanced email search with multiple criteria. Use format='compact' for token-efficient text output.",
       {
         query: z.string().optional().describe("Text to search for in subject/body"),
         from: z.string().optional().describe("Filter by sender email"),
@@ -705,11 +773,15 @@ ${quotedContent}
         after: z.string().optional().describe("Emails after this date (ISO 8601)"),
         before: z.string().optional().describe("Emails before this date (ISO 8601)"),
         limit: z.number().default(50).describe("Maximum results (default: 50)"),
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
       },
       async (filters) => {
         const client = this.getJmapClient();
         const emails = await client.advancedSearch(filters);
-        return this.guardResponse("advanced_search", emails);
+        return this.guardResponse("advanced_search", emails, {
+          compact: filters.format === "compact",
+          compactFormatter: (data) => formatEmailList(data, "Search Results"),
+        });
       },
     );
 
@@ -825,24 +897,38 @@ ${quotedContent}
 
     this.server.tool(
       "get_mailbox_stats",
-      "Get statistics for a mailbox (unread count, total emails, etc.)",
+      "Get statistics for a mailbox (unread count, total emails, etc.). Use format='compact' for token-efficient text output.",
       {
         mailboxId: z.string().optional().describe("ID of the mailbox (optional, defaults to all mailboxes)"),
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
       },
-      async ({ mailboxId }) => {
+      async ({ mailboxId, format }) => {
         const client = this.getJmapClient();
         const stats = await client.getMailboxStats(mailboxId);
-        return this.guardResponse("get_mailbox_stats", stats);
+        return this.guardResponse("get_mailbox_stats", stats, {
+          compact: format === "compact",
+          compactFormatter: formatMailboxStats,
+        });
       },
     );
 
-    this.server.tool("get_account_summary", "Get overall account summary with statistics", {}, async () => {
-      const client = this.getJmapClient();
-      const summary = await client.getAccountSummary();
-      return {
-        content: [{ text: JSON.stringify(summary, null, 2), type: "text" }],
-      };
-    });
+    this.server.tool(
+      "get_account_summary",
+      "Get overall account summary with statistics. Use format='compact' for token-efficient text output.",
+      {
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
+      },
+      async ({ format }) => {
+        const client = this.getJmapClient();
+        const summary = await client.getAccountSummary();
+        if (format === "compact") {
+          return { content: [{ text: formatAccountSummary(summary), type: "text" }] };
+        }
+        return {
+          content: [{ text: JSON.stringify(summary), type: "text" }],
+        };
+      },
+    );
 
     // =====================
     // BULK EMAIL OPERATIONS
@@ -921,13 +1007,23 @@ ${quotedContent}
     // IDENTITY TOOLS
     // =====================
 
-    this.server.tool("list_identities", "List sending identities (email addresses that can be used for sending)", {}, async () => {
-      const client = this.getJmapClient();
-      const identities = await client.getIdentities();
-      return {
-        content: [{ text: JSON.stringify(identities, null, 2), type: "text" }],
-      };
-    });
+    this.server.tool(
+      "list_identities",
+      "List sending identities (email addresses that can be used for sending). Use format='compact' for token-efficient text output.",
+      {
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
+      },
+      async ({ format }) => {
+        const client = this.getJmapClient();
+        const identities = await client.getIdentities();
+        if (format === "compact") {
+          return { content: [{ text: formatIdentities(identities), type: "text" }] };
+        }
+        return {
+          content: [{ text: JSON.stringify(identities), type: "text" }],
+        };
+      },
+    );
 
     // =====================
     // CONTACTS TOOLS
@@ -935,41 +1031,53 @@ ${quotedContent}
 
     this.server.tool(
       "list_contacts",
-      "List contacts from the address book",
+      "List contacts from the address book. Use format='compact' for token-efficient text output.",
       {
         limit: z.number().default(50).describe("Maximum number of contacts to return (default: 50)"),
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
       },
-      async ({ limit }) => {
+      async ({ limit, format }) => {
         const client = this.getContactsCalendarClient();
         const contacts = await client.getContacts(limit);
-        return this.guardResponse("list_contacts", contacts);
+        return this.guardResponse("list_contacts", contacts, {
+          compact: format === "compact",
+          compactFormatter: formatContacts,
+        });
       },
     );
 
     this.server.tool(
       "get_contact",
-      "Get a specific contact by ID",
+      "Get a specific contact by ID. Use format='compact' for token-efficient text output.",
       {
         contactId: z.string().describe("ID of the contact to retrieve"),
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
       },
-      async ({ contactId }) => {
+      async ({ contactId, format }) => {
         const client = this.getContactsCalendarClient();
         const contact = await client.getContactById(contactId);
-        return this.guardResponse("get_contact", contact);
+        return this.guardResponse("get_contact", contact, {
+          compact: format === "compact",
+          compactFormatter: formatContact,
+        });
       },
     );
 
     this.server.tool(
       "search_contacts",
-      "Search contacts by name or email",
+      "Search contacts by name or email. Use format='compact' for token-efficient text output.",
       {
         query: z.string().describe("Search query string"),
         limit: z.number().default(20).describe("Maximum number of results (default: 20)"),
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
       },
-      async ({ query, limit }) => {
+      async ({ query, limit, format }) => {
         const client = this.getContactsCalendarClient();
         const contacts = await client.searchContacts(query, limit);
-        return this.guardResponse("search_contacts", contacts);
+        return this.guardResponse("search_contacts", contacts, {
+          compact: format === "compact",
+          compactFormatter: formatContacts,
+        });
       },
     );
 
@@ -977,23 +1085,37 @@ ${quotedContent}
     // CALENDAR TOOLS
     // =====================
 
-    this.server.tool("list_calendars", "List all calendars", {}, async () => {
-      const client = this.getContactsCalendarClient();
-      const calendars = await client.getCalendars();
-      return this.guardResponse("list_calendars", calendars);
-    });
+    this.server.tool(
+      "list_calendars",
+      "List all calendars. Use format='compact' for token-efficient text output.",
+      {
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
+      },
+      async ({ format }) => {
+        const client = this.getContactsCalendarClient();
+        const calendars = await client.getCalendars();
+        return this.guardResponse("list_calendars", calendars, {
+          compact: format === "compact",
+          compactFormatter: formatCalendars,
+        });
+      },
+    );
 
     this.server.tool(
       "list_calendar_events",
-      "List events from a calendar",
+      "List events from a calendar. Use format='compact' for token-efficient text output.",
       {
         calendarId: z.string().optional().describe("ID of the calendar (optional, defaults to all calendars)"),
         limit: z.number().default(50).describe("Maximum number of events to return (default: 50)"),
+        format: z.enum(["json", "compact"]).default("json").describe("Output format: 'json' (default) or 'compact' for token-efficient text"),
       },
-      async ({ calendarId, limit }) => {
+      async ({ calendarId, limit, format }) => {
         const client = this.getContactsCalendarClient();
         const events = await client.getCalendarEvents(calendarId, limit);
-        return this.guardResponse("list_calendar_events", events);
+        return this.guardResponse("list_calendar_events", events, {
+          compact: format === "compact",
+          compactFormatter: formatEvents,
+        });
       },
     );
 
@@ -1067,7 +1189,7 @@ ${quotedContent}
         const workerUrl = this.env.WORKER_URL;
         const urls = await generateActionUrls(emailIds, archiveMailboxId, workerUrl, this.env.ACTION_SIGNING_KEY, this.env.OAUTH_KV);
         return {
-          content: [{ text: JSON.stringify(urls, null, 2), type: "text" }],
+          content: [{ text: JSON.stringify(urls), type: "text" }],
         };
       },
     );
@@ -1167,7 +1289,7 @@ ${quotedContent}
         };
 
         return {
-          content: [{ text: JSON.stringify(availability, null, 2), type: "text" }],
+          content: [{ text: JSON.stringify(availability), type: "text" }],
         };
       },
     );
