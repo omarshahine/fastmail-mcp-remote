@@ -336,6 +336,12 @@ The `cloudflare@cloudflare` plugin is enabled for this project. `CLOUDFLARE_ACCO
 
 ## Known Limitations
 
+### MCP SDK Pin Must Match Agents SDK
+
+`@modelcontextprotocol/sdk` is pinned to an exact version (no `^`) in `package.json` to match the version that the `agents` package pins internally. This forces npm to deduplicate to a single copy, preventing TypeScript type incompatibility (TS2416) where two different `McpServer` types exist.
+
+**When upgrading `agents`:** Check what MCP SDK version it pins internally (`node -e "console.log(require('./node_modules/agents/package.json').dependencies['@modelcontextprotocol/sdk'])"`) and update our pin to match. If versions diverge, npm installs two copies and the `McpServer` type error resurfaces.
+
 ### No JMAP Sieve/Rules API (as of January 2026)
 
 Fastmail does **not** expose `urn:ietf:params:jmap:sieve` in their production JMAP API, despite authoring [RFC 9661 - JMAP for Sieve Scripts](https://datatracker.ietf.org/doc/rfc9661/). This means email rules/filters cannot be created or managed programmatically via this MCP server.
