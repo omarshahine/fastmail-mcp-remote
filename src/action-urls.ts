@@ -71,7 +71,7 @@ export async function verifyAction(
 	const expected = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
 
 	// Constant-time comparison via verify
-	return crypto.subtle.verify('HMAC', key, expected, new TextEncoder().encode(bufferToHex(expected)).buffer)
+	return crypto.subtle.verify('HMAC', key, expected, new TextEncoder().encode(bufferToHex(expected)).buffer as ArrayBuffer)
 		.then(() => sig === bufferToHex(expected));
 }
 

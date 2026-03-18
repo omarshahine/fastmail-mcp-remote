@@ -17,26 +17,26 @@
 		"test:watch": "vitest"
 	},
 	"dependencies": {
-		"@modelcontextprotocol/sdk": "^1.26.0",
-		"agents": "^0.3.6",
+		"@modelcontextprotocol/sdk": "1.26.0",
+		"agents": "^0.7.6",
 		"commander": "^14.0.3",
-		"hono": "^4.11.3",
+		"hono": "^4.12.8",
 		"just-pick": "^4.2.0",
 		"linkedom": "^0.18.12",
-		"marked": "^17.0.1",
+		"marked": "^17.0.4",
 		"open": "^11.0.0",
 		"turndown": "^7.2.2",
-		"zod": "^4.2.1"
+		"zod": "^4.3.6"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.12.6",
-		"@types/node": "^25.0.8",
+		"@types/node": "^25.5.0",
 		"@types/turndown": "^5.0.6",
 		"ai": "^6.0.68",
-		"prettier": "^3.7.4",
+		"prettier": "^3.8.1",
 		"tsx": "^4.21.0",
 		"typescript": "5.9.3",
 		"vitest": "^4.0.18",
-		"wrangler": "^4.67.0"
+		"wrangler": "^4.75.0"
 	}
 }
