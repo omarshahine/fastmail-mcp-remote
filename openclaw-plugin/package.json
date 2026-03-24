@@ -23,9 +23,10 @@
     "directory": "openclaw-plugin"
   },
   "peerDependencies": {
-    "openclaw": "*"
+    "openclaw": ">=1.0.0"
   },
   "devDependencies": {
+    "openclaw": "*",
     "@types/node": "^25.0.8",
     "typescript": "^5.9.0"
   },

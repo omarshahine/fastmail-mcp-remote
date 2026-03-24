@@ -121,7 +121,7 @@ export default definePluginEntry({
   name: "Fastmail CLI",
   description: "Email, contacts, and calendar tools via the Fastmail CLI",
   register(api) {
-    const cfg = api.pluginConfig as Record<string, unknown>;
+    const cfg = (api as { pluginConfig?: Record<string, unknown> }).pluginConfig ?? {};
     const cli = (cfg?.cliCommand as string) ?? "fastmail";
     const staticDisabled = (cfg?.disabledCategories as string[]) ?? [];
     const autoDiscover = (cfg?.autoDiscover as boolean) ?? true;
