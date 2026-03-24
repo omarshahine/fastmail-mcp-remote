@@ -3,10 +3,10 @@
  * 3 read-only + 1 optional (create).
  */
 
-import type { OpenClawApi } from "../../index.js";
+import type { PluginApi } from "../../index.js";
 import { buildArgs, runTool } from "../cli-runner.js";
 
-export function registerCalendarTools(api: OpenClawApi, cli: string) {
+export function registerCalendarTools(api: PluginApi, cli: string) {
   api.registerTool({
     name: "fastmail_list_calendars",
     description: "List all calendars with IDs and names.",

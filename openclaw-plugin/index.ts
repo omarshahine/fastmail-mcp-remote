@@ -9,22 +9,22 @@
  * category is disabled, so agents only see tools they can actually use.
  */
 
+import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { execFileSync } from "node:child_process";
 import { registerEmailTools } from "./src/tools/email.js";
 import { registerContactTools } from "./src/tools/contacts.js";
 import { registerCalendarTools } from "./src/tools/calendar.js";
 import { registerMemoTools } from "./src/tools/memo.js";
 
-/** Minimal typed interface for the OpenClaw plugin API. */
-export interface OpenClawApi {
+/** Plugin API type re-exported for tool registration files. */
+export type PluginApi = {
   registerTool(tool: {
     name: string;
     description: string;
     parameters: Record<string, unknown>;
     execute: (_id: string, params: any) => Promise<{ content: Array<{ type: string; text: string }> }>;
   }, opts?: { optional: boolean }): void;
-  config?: Record<string, unknown>;
-}
+};
 
 /**
  * Map every plugin tool name to its server-side permission category.
@@ -104,7 +104,7 @@ function discoverDisabledCategories(cli: string): string[] {
 }
 
 /** Wrap the API to silently skip tools whose category is disabled. */
-function withCategoryFilter(api: OpenClawApi, disabled: Set<string>): OpenClawApi {
+function withCategoryFilter(api: PluginApi, disabled: Set<string>): PluginApi {
   if (disabled.size === 0) return api;
   return {
     ...api,
@@ -116,18 +116,24 @@ function withCategoryFilter(api: OpenClawApi, disabled: Set<string>): OpenClawAp
   };
 }
 
-export default function register(api: OpenClawApi) {
-  const cli = (api.config?.cliCommand as string) ?? "fastmail";
-  const staticDisabled = (api.config?.disabledCategories as string[]) ?? [];
-  const autoDiscover = (api.config?.autoDiscover as boolean) ?? true;
+export default definePluginEntry({
+  id: "fastmail-cli",
+  name: "Fastmail CLI",
+  description: "Email, contacts, and calendar tools via the Fastmail CLI",
+  register(api) {
+    const cfg = api.pluginConfig as Record<string, unknown>;
+    const cli = (cfg?.cliCommand as string) ?? "fastmail";
+    const staticDisabled = (cfg?.disabledCategories as string[]) ?? [];
+    const autoDiscover = (cfg?.autoDiscover as boolean) ?? true;
 
-  const discovered = autoDiscover ? discoverDisabledCategories(cli) : [];
-  const disabled = new Set([...staticDisabled, ...discovered]);
+    const discovered = autoDiscover ? discoverDisabledCategories(cli) : [];
+    const disabled = new Set([...staticDisabled, ...discovered]);
 
-  const filtered = withCategoryFilter(api, disabled);
+    const filtered = withCategoryFilter(api, disabled);
 
-  registerEmailTools(filtered, cli);
-  registerContactTools(filtered, cli);
-  registerCalendarTools(filtered, cli);
-  registerMemoTools(filtered, cli);
-}
+    registerEmailTools(filtered, cli);
+    registerContactTools(filtered, cli);
+    registerCalendarTools(filtered, cli);
+    registerMemoTools(filtered, cli);
+  },
+});
