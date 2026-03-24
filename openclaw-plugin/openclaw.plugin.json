@@ -1,5 +1,7 @@
 {
   "id": "fastmail-cli",
+  "name": "Fastmail CLI",
+  "description": "Email, contacts, and calendar tools via the Fastmail CLI",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

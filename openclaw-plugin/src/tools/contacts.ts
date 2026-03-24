@@ -3,10 +3,10 @@
  * 3 read-only tools.
  */
 
-import type { OpenClawApi } from "../../index.js";
+import type { PluginApi } from "../../index.js";
 import { buildArgs, runTool } from "../cli-runner.js";
 
-export function registerContactTools(api: OpenClawApi, cli: string) {
+export function registerContactTools(api: PluginApi, cli: string) {
   api.registerTool({
     name: "fastmail_list_contacts",
     description: "List contacts with names, emails, and phone numbers.",

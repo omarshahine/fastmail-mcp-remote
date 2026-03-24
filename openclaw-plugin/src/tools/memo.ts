@@ -3,10 +3,10 @@
  * 1 read-only + 2 optional (create, delete).
  */
 
-import type { OpenClawApi } from "../../index.js";
+import type { PluginApi } from "../../index.js";
 import { buildArgs, runTool } from "../cli-runner.js";
 
-export function registerMemoTools(api: OpenClawApi, cli: string) {
+export function registerMemoTools(api: PluginApi, cli: string) {
   api.registerTool({
     name: "fastmail_get_memo",
     description: "Get the private memo on an email, if one exists.",

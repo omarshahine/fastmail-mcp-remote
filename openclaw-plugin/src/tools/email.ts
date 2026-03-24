@@ -5,10 +5,10 @@
  * Write/organize/bulk tools use { optional: true }.
  */
 
-import type { OpenClawApi } from "../../index.js";
+import type { PluginApi } from "../../index.js";
 import { buildArgs, runTool } from "../cli-runner.js";
 
-export function registerEmailTools(api: OpenClawApi, cli: string) {
+export function registerEmailTools(api: PluginApi, cli: string) {
   // -- Read (11 tools) ------------------------------------------------
 
   api.registerTool({
