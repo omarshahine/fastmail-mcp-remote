@@ -190,10 +190,19 @@ async function confirmSend(
       : "Send not confirmed";
     return { approved: false, message: reason };
   } catch (error) {
-    // Fail-open: if the client doesn't support elicitation, proceed with send
     const msg = error instanceof Error ? error.message : String(error);
-    console.warn(`[elicitation] Error during elicitation (fail-open): ${msg}`);
-    return { approved: true };
+
+    // Fail-open ONLY when the client doesn't support elicitation at all.
+    // This preserves backward compatibility with older MCP clients.
+    if (msg.includes("Client does not support") || msg.includes("elicitation")) {
+      console.warn(`[elicitation] Client does not support elicitation (fail-open): ${msg}`);
+      return { approved: true };
+    }
+
+    // For timeouts, disconnects, or any other error: fail-closed (don't send).
+    // This prevents emails from sending when the user declines or the connection drops.
+    console.warn(`[elicitation] Elicitation failed (fail-closed): ${msg}`);
+    return { approved: false, message: `Confirmation failed: ${msg}` };
   }
 }
 
