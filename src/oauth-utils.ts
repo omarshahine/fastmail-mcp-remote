@@ -142,12 +142,15 @@ export async function validateAccessToken(
 		return null;
 	}
 
-	// Sliding window: extend expiry on each use
-	const newExpiresAt = getExpiresAt(TOKEN_TTL_SECONDS);
-	data.expires_at = newExpiresAt;
-	await kv.put(`token:${tokenHash}`, JSON.stringify(data), {
-		expirationTtl: TOKEN_TTL_SECONDS,
-	});
+	// Sliding window: extend expiry on each use (best-effort, never blocks auth)
+	try {
+		data.expires_at = getExpiresAt(TOKEN_TTL_SECONDS);
+		await kv.put(`token:${tokenHash}`, JSON.stringify(data), {
+			expirationTtl: TOKEN_TTL_SECONDS,
+		});
+	} catch (e) {
+		console.warn(`[oauth] Failed to renew token TTL (non-fatal): ${e}`);
+	}
 
 	return {
 		user_id: data.user_id,
