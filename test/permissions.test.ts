@@ -289,8 +289,8 @@ describe('checkMcpPermissions — fail-closed', () => {
 });
 
 describe('TOOL_CATEGORIES completeness', () => {
-	it('maps all 32 tools', () => {
-		expect(Object.keys(TOOL_CATEGORIES).length).toBe(32);
+	it('maps all 36 tools', () => {
+		expect(Object.keys(TOOL_CATEGORIES).length).toBe(36);
 	});
 
 	it('has no empty categories', () => {

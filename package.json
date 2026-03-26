@@ -17,6 +17,7 @@
 		"test:watch": "vitest"
 	},
 	"dependencies": {
+		"@cloudflare/codemode": "^0.3.1",
 		"@modelcontextprotocol/sdk": "1.26.0",
 		"agents": "^0.7.6",
 		"commander": "^14.0.3",

@@ -41,6 +41,11 @@
 			"id": "<your-kv-namespace-id>"
 		}
 	],
+	"worker_loaders": [
+		{
+			"binding": "LOADER"
+		}
+	],
 	"observability": {
 		"enabled": true
 	},

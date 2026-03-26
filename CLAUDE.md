@@ -1,6 +1,6 @@
 # Fastmail Remote
 
-A remote MCP server and token-efficient CLI for Fastmail email, contacts, and calendar. The MCP server runs on Cloudflare Workers with Cloudflare Access OAuth. The CLI calls the remote server and formats responses as compact text, saving 5-7x tokens.
+A remote MCP server and token-efficient CLI for Fastmail email, contacts, and calendar. The MCP server runs on Cloudflare Workers with Cloudflare Access OAuth. The CLI calls the remote server and formats responses as compact text, saving 5-7x tokens. A Code Mode endpoint (`/mcp/code`) wraps all tools into a single `code` tool using Cloudflare Dynamic Workers for additional token savings.
 
 ## Quick Reference
 
@@ -23,7 +23,8 @@ npm run cli -- inbox         # Run CLI (or use alias: fastmail inbox)
 
 ```
 src/
-├── index.ts              # Main entry point, MCP tools registration, Hono routing
+├── index.ts              # Main entry point, FastmailMCP class, Hono routing, Code Mode endpoint
+├── tools.ts              # All MCP tool registrations (registerAllTools), shared by DO and Code Mode
 ├── jmap-client.ts        # JMAP protocol client for Fastmail API (email, memos)
 ├── contacts-calendar.ts  # Contacts and calendar functionality
 ├── html-to-markdown.ts   # HTML to Markdown conversion (Turndown + linkedom)
@@ -270,6 +271,39 @@ claude mcp add --scope user --transport http fastmail "https://<your-worker-doma
 ```
 
 Complete OAuth via `/mcp` in Claude Code when prompted.
+
+## Code Mode
+
+The `/mcp/code` endpoint wraps all Fastmail tools into a single `code` tool using Cloudflare's [Code Mode SDK](https://developers.cloudflare.com/dynamic-workers/code-mode/) and Dynamic Workers. Instead of 29+ individual tool calls, the LLM writes a TypeScript function that chains multiple API calls in one sandbox execution.
+
+### How it works
+
+1. LLM receives a single `code` tool with TypeScript type definitions for all Fastmail operations
+2. LLM writes code like: `async () => { const emails = await codemode.search_emails({query: "invoice"}); return emails.filter(e => e.subject.includes("2024")); }`
+3. Code runs in an isolated V8 sandbox (Dynamic Worker) with no network access
+4. `codemode.*` calls route back to the host via Workers RPC, executing the real JMAP operations
+5. Only the final result enters the context window
+
+### Benefits
+
+- Fewer round-trips: chain multiple operations in one call
+- Smaller context: intermediate results stay in the sandbox
+- Same auth/permissions: Bearer token + role-based access apply identically
+
+### Configuration
+
+Requires `worker_loaders` binding in `wrangler.jsonc`:
+```jsonc
+"worker_loaders": [{ "binding": "LOADER" }]
+```
+
+### Connect via Claude Code
+
+```bash
+claude mcp add --scope user --transport http fastmail-code "https://<your-worker-domain>/mcp/code"
+```
+
+Uses the same OAuth flow as `/mcp`.
 
 ## CLI Usage
 

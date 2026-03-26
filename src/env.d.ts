@@ -5,5 +5,6 @@
 declare namespace Cloudflare {
   interface Env {
     ACTION_SIGNING_KEY: string;
+    LOADER: WorkerLoader;
   }
 }
