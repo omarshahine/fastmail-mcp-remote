@@ -229,7 +229,9 @@ app.all("/mcp/code", async (c) => {
   return transport.handleRequest(c.req.raw);
 });
 
-// MCP endpoints (require Bearer token)
+// MCP endpoint (require Bearer token)
+// Uses WebStandard transport directly (no Durable Object) to enable MCP elicitation
+// for send confirmation dialogs. The DO path silently drops server-initiated requests.
 app.all("/mcp", async (c) => {
   // Validate Bearer token
   const authHeader = c.req.header("Authorization");
@@ -243,33 +245,19 @@ app.all("/mcp", async (c) => {
     return unauthorizedResponse(c, "invalid_token", "Invalid or expired access token");
   }
 
-  // SECURITY: Read the body ONCE for both permission checking and SDK forwarding.
-  // This eliminates Request.clone() which can silently fail in Workers runtime,
-  // causing the fail-open catch block to allow denied tool calls through.
-  let bodyText: string | null = null;
-  if (c.req.raw.method === 'POST') {
-    bodyText = await c.req.raw.text();
-  }
+  // Build a fresh McpServer with permission-filtered tools
+  const config = await getPermissionsConfig(c.env.OAUTH_KV);
+  const userConfig = getUserConfig(config, tokenInfo.user_login);
+  const visibleTools = getVisibleTools(userConfig);
 
-  // Check tools/call permissions using the pre-read body
-  const denial = await checkMcpPermissions(bodyText, tokenInfo.user_login, c.env.OAUTH_KV);
-  if (denial) return denial;
+  const server = new McpServer({ name: "Fastmail MCP Remote", version: "1.0.0" });
+  const ctx = buildToolContext(c.env, tokenInfo.user_login);
+  registerAllTools(server, ctx, visibleTools);
 
-  // Reconstruct a fresh Request with the same body for the SDK handler.
-  // Also inject X-MCP-User header so tool handlers can enforce permissions internally.
-  const headers = new Headers(c.req.raw.headers);
-  headers.set('X-MCP-User', tokenInfo.user_login);
-  const sdkRequest = new Request(c.req.raw.url, {
-    method: c.req.raw.method,
-    headers,
-    body: bodyText,
-  });
-
-  // Pass through to MCP SDK
-  const response = await FastmailMCP.serve("/mcp").fetch(sdkRequest, c.env, c.executionCtx);
-
-  // Filter tools/list response to hide disabled categories
-  return filterToolsListResponse(response, tokenInfo.user_login, c.env.OAUTH_KV);
+  // Serve via stateless WebStandard streamable HTTP transport (supports elicitation)
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  await server.connect(transport);
+  return transport.handleRequest(c.req.raw);
 });
 
 // Attachment download proxy endpoint (no auth required - uses single-use token)

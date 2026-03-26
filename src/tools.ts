@@ -7,6 +7,7 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { ElicitResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { marked } from "marked";
 import { formatEmailAsMarkdown } from "./html-to-markdown";
@@ -119,6 +120,81 @@ export function guardResponse(
   }
   const json = JSON.stringify(processedData);
   return { content: [{ text: json, type: "text" }] };
+}
+
+/**
+ * Ask the MCP client to confirm an email send via elicitation.
+ *
+ * Uses `extra.sendRequest` (not `server.elicitInput`) so the elicitation request
+ * is routed via the tool call's POST response stream instead of requiring a
+ * standalone GET/SSE stream. This makes it work with Claude Code's HTTP transport.
+ *
+ * Returns { approved: true } if confirmed or client doesn't support elicitation (fail-open).
+ * Returns { approved: false, message } if declined or cancelled.
+ */
+async function confirmSend(
+  extra: any,
+  details: {
+    to: string[];
+    cc?: string[];
+    bcc?: string[];
+    subject: string;
+    bodyPreview: string;
+    isReply?: boolean;
+  },
+): Promise<{ approved: boolean; message?: string }> {
+  try {
+    const lines = [
+      details.isReply ? "Confirm Reply" : "Confirm Send",
+      "",
+      `To: ${details.to.join(", ")}`,
+    ];
+    if (details.cc?.length) lines.push(`CC: ${details.cc.join(", ")}`);
+    if (details.bcc?.length) lines.push(`BCC: ${details.bcc.join(", ")}`);
+    lines.push(`Subject: ${details.subject}`);
+    lines.push("");
+    const preview = details.bodyPreview.length > 500
+      ? details.bodyPreview.slice(0, 500) + "..."
+      : details.bodyPreview;
+    lines.push(preview);
+
+    const result = await extra.sendRequest(
+      {
+        method: "elicitation/create" as const,
+        params: {
+          message: lines.join("\n"),
+          mode: "form" as const,
+          requestedSchema: {
+            type: "object" as const,
+            required: ["confirm"],
+            properties: {
+              confirm: {
+                type: "boolean" as const,
+                title: "Send this email?",
+                description: "Uncheck to cancel sending",
+                default: true,
+              },
+            },
+          },
+        },
+      },
+      ElicitResultSchema,
+      { timeout: 60000 }, // 60s timeout for user to respond to confirmation dialog
+    );
+
+    if (result.action === "accept" && result.content?.confirm === true) {
+      return { approved: true };
+    }
+    const reason = result.action === "decline" ? "User declined"
+      : result.action === "cancel" ? "User cancelled"
+      : "Send not confirmed";
+    return { approved: false, message: reason };
+  } catch (error) {
+    // Fail-open: if the client doesn't support elicitation, proceed with send
+    const msg = error instanceof Error ? error.message : String(error);
+    console.warn(`[elicitation] Error during elicitation (fail-open): ${msg}`);
+    return { approved: true };
+  }
 }
 
 /**
@@ -239,7 +315,7 @@ export function registerAllTools(
           .optional()
           .describe("Message-ID chain for threading. Combine original email's references with its messageId."),
       },
-      async ({ to, cc, bcc, from, subject, textBody, htmlBody, markdownBody, attachments, inReplyTo, references }) => {
+      async ({ to, cc, bcc, from, subject, textBody, htmlBody, markdownBody, attachments, inReplyTo, references }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates even if the outer Hono check is bypassed
         const denied = await ctx.checkToolPermission('send_email');
         if (denied) return denied;
@@ -249,6 +325,16 @@ export function registerAllTools(
             content: [{ text: "Error: Either textBody, htmlBody, or markdownBody is required", type: "text" }],
           };
         }
+
+        // Elicitation: ask user to confirm before sending
+        const bodyPreview = textBody || markdownBody || (htmlBody ? htmlBody.replace(/<[^>]*>/g, "") : "");
+        const confirmation = await confirmSend(extra, { to, cc, bcc, subject, bodyPreview });
+        if (!confirmation.approved) {
+          return {
+            content: [{ text: `Email not sent: ${confirmation.message || "cancelled by user"}`, type: "text" }],
+          };
+        }
+
         try {
           const client = ctx.getJmapClient();
           const finalHtmlBody = markdownBody ? await marked.parse(markdownBody) : htmlBody;
@@ -376,7 +462,7 @@ export function registerAllTools(
         sendImmediately: z.boolean().default(false).describe("If true, send the reply immediately. If false (default), create a draft."),
         excludeQuote: z.boolean().default(false).describe("If true, don't include quoted original message. Default includes quote."),
       },
-      async ({ emailId, body, htmlBody, markdownBody, from, replyAll, sendImmediately, excludeQuote }) => {
+      async ({ emailId, body, htmlBody, markdownBody, from, replyAll, sendImmediately, excludeQuote }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates from sending replies immediately
         if (sendImmediately) {
           const denied = await ctx.checkToolPermission('reply_to_email', { sendImmediately: true });
@@ -474,6 +560,20 @@ ${quotedContent}
             : `<div style="white-space: pre-wrap;">${body.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>${quotedHtml}`;
 
           if (sendImmediately) {
+            // Elicitation: ask user to confirm before sending reply
+            const replyConfirmation = await confirmSend(extra, {
+              to: toRecipients,
+              cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+              subject,
+              bodyPreview: body,
+              isReply: true,
+            });
+            if (!replyConfirmation.approved) {
+              return {
+                content: [{ text: `Reply not sent: ${replyConfirmation.message || "cancelled by user"}`, type: "text" }],
+              };
+            }
+
             const submissionId = await client.sendEmail({
               to: toRecipients,
               cc: ccRecipients.length > 0 ? ccRecipients : undefined,
