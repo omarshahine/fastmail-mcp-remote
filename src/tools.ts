@@ -194,7 +194,10 @@ async function confirmSend(
 
     // Fail-open ONLY when the client doesn't support elicitation at all.
     // This preserves backward compatibility with older MCP clients.
-    if (msg.includes("Client does not support") || msg.includes("elicitation")) {
+    // Match the exact MCP SDK error messages from Server.elicitInput():
+    //   "Client does not support form elicitation."
+    //   "Client does not support url elicitation."
+    if (msg.includes("Client does not support")) {
       console.warn(`[elicitation] Client does not support elicitation (fail-open): ${msg}`);
       return { approved: true };
     }
