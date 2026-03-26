@@ -128,7 +128,9 @@ export interface OAuthClientData {
 	redirect_uris: string[];
 }
 
-// Validate access token (KV-based)
+// Validate access token (KV-based) with sliding window renewal.
+// Each successful validation extends the token TTL by TOKEN_TTL_SECONDS,
+// so tokens only expire if unused for 30 consecutive days.
 export async function validateAccessToken(
 	kv: KVNamespace,
 	token: string
@@ -139,6 +141,13 @@ export async function validateAccessToken(
 	if (!data || isExpired(data.expires_at)) {
 		return null;
 	}
+
+	// Sliding window: extend expiry on each use
+	const newExpiresAt = getExpiresAt(TOKEN_TTL_SECONDS);
+	data.expires_at = newExpiresAt;
+	await kv.put(`token:${tokenHash}`, JSON.stringify(data), {
+		expirationTtl: TOKEN_TTL_SECONDS,
+	});
 
 	return {
 		user_id: data.user_id,
