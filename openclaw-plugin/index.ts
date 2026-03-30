@@ -175,27 +175,20 @@ export default definePluginEntry({
 
     // Gate sensitive tool calls behind user approval
     if (approvals) {
-      // The SDK types registerHook as InternalHookHandler (returns void),
-      // but before_tool_call handlers return PluginHookBeforeToolCallResult
-      // at runtime. Cast to satisfy the type checker.
-      api.registerHook(
-        "before_tool_call",
-        ((event: { toolName: string; params: Record<string, unknown> }) => {
-          const gate = TOOL_APPROVALS[event.toolName];
-          if (!gate) return; // not our tool or ungated — abstain
+      api.on("before_tool_call", (event) => {
+        const gate = TOOL_APPROVALS[event.toolName];
+        if (!gate) return; // not our tool or ungated — abstain
 
-          return {
-            requireApproval: {
-              title: `Fastmail: ${event.toolName.replace("fastmail_", "")}`,
-              description: gate.description,
-              severity: gate.severity,
-              timeoutMs: 120_000,
-              timeoutBehavior: "deny" as const,
-            },
-          };
-        }) as unknown as Parameters<typeof api.registerHook>[1],
-        { name: "fastmail-approval-gate" },
-      );
+        return {
+          requireApproval: {
+            title: `Fastmail: ${event.toolName.replace("fastmail_", "")}`,
+            description: gate.description,
+            severity: gate.severity,
+            timeoutMs: 120_000,
+            timeoutBehavior: "deny" as const,
+          },
+        };
+      });
     }
   },
 });
