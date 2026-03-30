@@ -26,6 +26,42 @@ export type PluginApi = {
   }, opts?: { optional: boolean }): void;
 };
 
+/** Approval config for a tool: severity + human-readable description. */
+type ApprovalGate = {
+  severity: "info" | "warning" | "critical";
+  description: string;
+};
+
+/**
+ * Tools that require user approval before execution.
+ * Keyed by tool name → approval config.
+ *
+ * - "warning": outbound/irreversible (sends email)
+ * - "info": reads untrusted content or bulk state changes
+ */
+const TOOL_APPROVALS: Record<string, ApprovalGate> = {
+  // Outbound — sends email on behalf of user
+  fastmail_send_email: { severity: "warning", description: "Send a new email" },
+  fastmail_reply_to_email: { severity: "warning", description: "Send a reply" },
+
+  // Reads email content — untrusted data enters agent context
+  fastmail_get_email: { severity: "info", description: "Read email body (untrusted content)" },
+  fastmail_get_thread: { severity: "info", description: "Read email thread (untrusted content)" },
+  fastmail_search_emails: { severity: "info", description: "Search and read emails (untrusted content)" },
+  fastmail_download_attachment: { severity: "info", description: "Download email attachment (untrusted content)" },
+
+  // Bulk state changes — higher blast radius
+  fastmail_bulk_delete: { severity: "info", description: "Bulk delete emails" },
+  fastmail_bulk_move: { severity: "info", description: "Bulk move emails" },
+  fastmail_bulk_read: { severity: "info", description: "Bulk mark emails as read" },
+  fastmail_bulk_unread: { severity: "info", description: "Bulk mark emails as unread" },
+  fastmail_bulk_flag: { severity: "info", description: "Bulk flag emails" },
+  fastmail_bulk_unflag: { severity: "info", description: "Bulk unflag emails" },
+
+  // Single delete — irreversible
+  fastmail_delete: { severity: "info", description: "Delete an email" },
+};
+
 /**
  * Map every plugin tool name to its server-side permission category.
  * Categories must match the ToolCategory type in src/permissions.ts.
@@ -125,15 +161,41 @@ export default definePluginEntry({
     const cli = (cfg?.cliCommand as string) ?? "fastmail";
     const staticDisabled = (cfg?.disabledCategories as string[]) ?? [];
     const autoDiscover = (cfg?.autoDiscover as boolean) ?? true;
+    const approvals = (cfg?.requireApprovals as boolean) ?? true;
 
     const discovered = autoDiscover ? discoverDisabledCategories(cli) : [];
     const disabled = new Set([...staticDisabled, ...discovered]);
 
-    const filtered = withCategoryFilter(api, disabled);
+    const filtered = withCategoryFilter(api as unknown as PluginApi, disabled);
 
     registerEmailTools(filtered, cli);
     registerContactTools(filtered, cli);
     registerCalendarTools(filtered, cli);
     registerMemoTools(filtered, cli);
+
+    // Gate sensitive tool calls behind user approval
+    if (approvals) {
+      // The SDK types registerHook as InternalHookHandler (returns void),
+      // but before_tool_call handlers return PluginHookBeforeToolCallResult
+      // at runtime. Cast to satisfy the type checker.
+      api.registerHook(
+        "before_tool_call",
+        ((event: { toolName: string; params: Record<string, unknown> }) => {
+          const gate = TOOL_APPROVALS[event.toolName];
+          if (!gate) return; // not our tool or ungated — abstain
+
+          return {
+            requireApproval: {
+              title: `Fastmail: ${event.toolName.replace("fastmail_", "")}`,
+              description: gate.description,
+              severity: gate.severity,
+              timeoutMs: 120_000,
+              timeoutBehavior: "deny" as const,
+            },
+          };
+        }) as unknown as Parameters<typeof api.registerHook>[1],
+        { name: "fastmail-approval-gate" },
+      );
+    }
   },
 });

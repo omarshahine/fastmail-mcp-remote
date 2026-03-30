@@ -34,6 +34,11 @@
         },
         "default": [],
         "description": "Tool categories to hide (must match server permissions config)"
+      },
+      "requireApprovals": {
+        "type": "boolean",
+        "default": true,
+        "description": "Require user approval before sending emails, reading email content, or bulk operations"
       }
     }
   },

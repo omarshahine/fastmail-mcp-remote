@@ -33,8 +33,28 @@ All fields are **optional**:
 | Key | Default | Description |
 |-----|---------|-------------|
 | `cliCommand` | `"fastmail"` | Path or alias for the fastmail CLI binary |
+| `requireApprovals` | `true` | Require user approval before sending emails, reading email content, or bulk operations |
 
 The CLI handles all authentication. No credentials are needed in the plugin config.
+
+## Approval Gates
+
+When `requireApprovals` is enabled (default), the plugin registers a `before_tool_call` hook that pauses agent execution and prompts for user confirmation before sensitive operations. Uses OpenClaw's async `requireApproval` flow — approvals appear in the operator UI (macOS app, Telegram, Discord, etc.).
+
+**`warning` severity** (outbound, irreversible):
+- `send_email`, `reply_to_email`
+
+**`info` severity** (untrusted content enters agent context):
+- `get_email`, `get_thread`, `search_emails`, `download_attachment`
+
+**`info` severity** (bulk/destructive state changes):
+- `bulk_delete`, `bulk_move`, `bulk_read`, `bulk_unread`, `bulk_flag`, `bulk_unflag`, `delete`
+
+**Ungated** (metadata only, no email body): `inbox`, mailbox/account/identity queries, contacts, calendars, memos, single mark_read/unread/flag/unflag/move, create_draft, create_event.
+
+Email reads are gated because email content is untrusted external data — a prompt injection in an email body could cause the agent to exfiltrate 2FA codes or chain unintended actions.
+
+Set `requireApprovals: false` in plugin config to disable all gates.
 
 ## Tools
 
