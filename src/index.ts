@@ -198,7 +198,21 @@ function unauthorizedResponse(c: { req: { url: string } }, error: string, descri
 // Wraps all Fastmail tools into a single `code` tool. The LLM writes TypeScript
 // that chains calls like `await codemode.list_emails({limit: 5})` and runs in
 // an isolated Dynamic Worker sandbox. Only the final result enters the context.
-app.all("/mcp/code", async (c) => {
+app.get("/mcp/code", (c) => {
+  return c.json({
+    jsonrpc: "2.0",
+    error: { code: -32000, message: "Method Not Allowed: This server does not support GET SSE streams" },
+    id: null,
+  }, 405, { Allow: "POST" });
+});
+app.delete("/mcp/code", (c) => {
+  return c.json({
+    jsonrpc: "2.0",
+    error: { code: -32000, message: "Method Not Allowed: Stateless server has no sessions to delete" },
+    id: null,
+  }, 405, { Allow: "POST" });
+});
+app.post("/mcp/code", async (c) => {
   // Same Bearer token validation as /mcp
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
@@ -237,7 +251,7 @@ app.get("/mcp", (c) => {
     jsonrpc: "2.0",
     error: { code: -32000, message: "Method Not Allowed: This server does not support GET SSE streams" },
     id: null,
-  }, 405);
+  }, 405, { Allow: "POST" });
 });
 
 // DELETE /mcp — No sessions to clean up in stateless mode.
@@ -246,7 +260,7 @@ app.delete("/mcp", (c) => {
     jsonrpc: "2.0",
     error: { code: -32000, message: "Method Not Allowed: Stateless server has no sessions to delete" },
     id: null,
-  }, 405);
+  }, 405, { Allow: "POST" });
 });
 
 // POST /mcp — Main MCP endpoint (require Bearer token)
