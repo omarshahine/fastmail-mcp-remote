@@ -229,10 +229,30 @@ app.all("/mcp/code", async (c) => {
   return transport.handleRequest(c.req.raw);
 });
 
-// MCP endpoint (require Bearer token)
+// GET /mcp — Reject SSE stream requests (stateless transport, no session to stream to).
+// Cloudflare Workers kill hung responses when no data is pushed on a fresh transport.
+// Clients fall back to POST-only mode per MCP Streamable HTTP spec.
+app.get("/mcp", (c) => {
+  return c.json({
+    jsonrpc: "2.0",
+    error: { code: -32000, message: "Method Not Allowed: This server does not support GET SSE streams" },
+    id: null,
+  }, 405);
+});
+
+// DELETE /mcp — No sessions to clean up in stateless mode.
+app.delete("/mcp", (c) => {
+  return c.json({
+    jsonrpc: "2.0",
+    error: { code: -32000, message: "Method Not Allowed: Stateless server has no sessions to delete" },
+    id: null,
+  }, 405);
+});
+
+// POST /mcp — Main MCP endpoint (require Bearer token)
 // Uses WebStandard transport directly (no Durable Object) to enable MCP elicitation
-// for send confirmation dialogs. The DO path silently drops server-initiated requests.
-app.all("/mcp", async (c) => {
+// for send confirmation dialogs.
+app.post("/mcp", async (c) => {
   // Validate Bearer token
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
