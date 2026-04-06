@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { McpAgent } from "agents/mcp";
-import { codeMcpServer } from "@cloudflare/codemode/mcp";
 import { DynamicWorkerExecutor } from "@cloudflare/codemode";
+import { buildCodeModeServer } from "./openapi-adapter";
 import { Hono } from "hono";
 import {
   handleOAuthDiscovery,
@@ -233,9 +233,9 @@ app.post("/mcp/code", async (c) => {
   const ctx = buildToolContext(c.env, tokenInfo.user_login);
   registerAllTools(upstreamServer, ctx, visibleTools);
 
-  // Wrap with Code Mode: collapses all tools into a single `code` tool
+  // Wrap with search+execute Code Mode: ~1,000 tokens instead of full TypeScript blob
   const executor = new DynamicWorkerExecutor({ loader: c.env.LOADER, globalOutbound: null });
-  const codeServer = await codeMcpServer({ server: upstreamServer, executor });
+  const codeServer = await buildCodeModeServer(upstreamServer, executor);
 
   // Serve via stateless WebStandard streamable HTTP transport
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
