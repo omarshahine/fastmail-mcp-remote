@@ -100,13 +100,17 @@ async function buildSpecFromMcp(server: McpServer): Promise<{
     const tag = deriveTag(tool.name);
     tagSet.add(tag);
 
+    // Only mark requestBody required if the schema has required fields
+    const hasRequired =
+      Array.isArray(tool.inputSchema?.required) && tool.inputSchema.required.length > 0;
+
     paths[`/tools/${tool.name}`] = {
       post: {
         operationId: tool.name,
         summary: tool.description,
         tags: [tag],
         requestBody: {
-          required: true,
+          required: hasRequired,
           content: {
             "application/json": {
               schema: tool.inputSchema,
