@@ -142,7 +142,13 @@ async function confirmSend(
     bodyPreview: string;
     isReply?: boolean;
   },
+  env?: Env,
 ): Promise<{ approved: boolean; message?: string }> {
+  // Skip elicitation unless explicitly enabled — avoids Worker timeout issues
+  if (env?.ENABLE_SEND_CONFIRMATION !== "true") {
+    return { approved: true };
+  }
+
   try {
     const lines = [
       details.isReply ? "Confirm Reply" : "Confirm Send",
@@ -340,7 +346,7 @@ export function registerAllTools(
 
         // Elicitation: ask user to confirm before sending
         const bodyPreview = textBody || markdownBody || (htmlBody ? htmlBody.replace(/<[^>]*>/g, "") : "");
-        const confirmation = await confirmSend(extra, { to, cc, bcc, subject, bodyPreview });
+        const confirmation = await confirmSend(extra, { to, cc, bcc, subject, bodyPreview }, ctx.env);
         if (!confirmation.approved) {
           return {
             content: [{ text: `Email not sent: ${confirmation.message || "cancelled by user"}`, type: "text" }],
@@ -579,7 +585,7 @@ ${quotedContent}
               subject,
               bodyPreview: body,
               isReply: true,
-            });
+            }, ctx.env);
             if (!replyConfirmation.approved) {
               return {
                 content: [{ text: `Reply not sent: ${replyConfirmation.message || "cancelled by user"}`, type: "text" }],
