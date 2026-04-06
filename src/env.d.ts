@@ -6,5 +6,7 @@ declare namespace Cloudflare {
   interface Env {
     ACTION_SIGNING_KEY: string;
     LOADER: WorkerLoader;
+    /** Set to "true" to enable MCP elicitation-based send confirmation dialogs. Defaults to off. */
+    ENABLE_SEND_CONFIRMATION?: string;
   }
 }
