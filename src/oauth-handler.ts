@@ -90,24 +90,46 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 			const redirectUrl = new URL(redirectUri);
 			const proto = redirectUrl.protocol;
 
+			// Per RFC 8252 §7.3, loopback redirect URIs for native apps must match on
+			// scheme, host, and path — but the port MUST be ignored because native apps
+			// bind to ephemeral ports.
+			const isLoopback =
+				(redirectUrl.hostname === 'localhost' || redirectUrl.hostname === '127.0.0.1') &&
+				(proto === 'http:' || proto === 'https:');
+
 			// Look up dynamically-registered client to validate redirect_uri
 			const clientJson = await env.OAUTH_KV.get(`client:${clientId}`);
 			if (clientJson) {
-				// Client was dynamically registered — redirect_uri must match one of the registered URIs
+				// Client was dynamically registered — validate redirect_uri
 				const clientData = JSON.parse(clientJson) as OAuthClientData;
-				if (!clientData.redirect_uris.includes(redirectUri)) {
+				const exactMatch = clientData.redirect_uris.includes(redirectUri);
+
+				// For loopback URIs, match scheme + host + path, ignoring port (RFC 8252 §7.3)
+				const loopbackMatch = isLoopback && clientData.redirect_uris.some((registered) => {
+					try {
+						const regUrl = new URL(registered);
+						const regIsLoopback =
+							(regUrl.hostname === 'localhost' || regUrl.hostname === '127.0.0.1') &&
+							(regUrl.protocol === 'http:' || regUrl.protocol === 'https:');
+						return regIsLoopback &&
+							regUrl.protocol === redirectUrl.protocol &&
+							regUrl.hostname === redirectUrl.hostname &&
+							regUrl.pathname === redirectUrl.pathname;
+					} catch {
+						return false;
+					}
+				});
+
+				if (!exactMatch && !loopbackMatch) {
 					return new Response('Invalid redirect_uri', { status: 400 });
 				}
 			} else {
 				// No registration record — fall back to scheme validation
 				// Allow https, localhost HTTP, and custom schemes for native apps (RFC 8252)
 				const isHttps = proto === 'https:';
-				const isLocalhost =
-					(proto === 'http:' || proto === 'https:') &&
-					(redirectUrl.hostname === 'localhost' || redirectUrl.hostname === '127.0.0.1');
 				const isCustomScheme = proto !== 'http:' && proto !== 'https:';
 
-				if (!isHttps && !isLocalhost && !isCustomScheme) {
+				if (!isHttps && !isLoopback && !isCustomScheme) {
 					return new Response('Invalid redirect_uri', { status: 400 });
 				}
 			}
