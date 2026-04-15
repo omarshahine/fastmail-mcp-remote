@@ -19,6 +19,10 @@ jobs:
           node-version: 22
           registry-url: "https://registry.npmjs.org"
 
+      - name: Install dependencies
+        working-directory: openclaw-plugin
+        run: npm install
+
       - name: Verify package
         working-directory: openclaw-plugin
         run: |
