@@ -131,10 +131,13 @@ export interface OAuthClientData {
 // Validate access token (KV-based) with sliding window renewal.
 // Each successful validation extends the token TTL by TOKEN_TTL_SECONDS,
 // so tokens only expire if unused for 30 consecutive days.
+// Callers should surface `expiresAt` back to clients (e.g. via an
+// X-Token-Expires-At response header) so the client cache can track the
+// renewed expiry instead of staying frozen at mint time.
 export async function validateAccessToken(
 	kv: KVNamespace,
 	token: string
-): Promise<{ user_id: string; user_login: string; scope: string | null } | null> {
+): Promise<{ user_id: string; user_login: string; scope: string | null; expiresAt: string } | null> {
 	const tokenHash = await hashToken(token);
 	const data = await kv.get<OAuthTokenData>(`token:${tokenHash}`, 'json');
 
@@ -156,5 +159,6 @@ export async function validateAccessToken(
 		user_id: data.user_id,
 		user_login: data.user_login,
 		scope: data.scope,
+		expiresAt: data.expires_at,
 	};
 }

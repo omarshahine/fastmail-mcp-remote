@@ -39,6 +39,23 @@ export async function saveConfig(config: Config): Promise<void> {
   await writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
 }
 
+/**
+ * Update the cached tokenExpiresAt from a server-supplied value (e.g. the
+ * X-Token-Expires-At response header). No-op when the cached value already
+ * matches, or when there is no config file (pre-auth). Best-effort: silently
+ * swallows write errors so a transient FS problem doesn't break API calls.
+ */
+export async function updateTokenExpiry(newExpiresAt: string): Promise<void> {
+  try {
+    const config = await loadConfig();
+    if (!config || config.tokenExpiresAt === newExpiresAt) return;
+    config.tokenExpiresAt = newExpiresAt;
+    await saveConfig(config);
+  } catch {
+    // best-effort; surfacing errors here would mask the underlying API success
+  }
+}
+
 function generateCodeVerifier(): string {
   return randomBytes(32).toString("base64url");
 }
@@ -348,7 +365,7 @@ export async function authenticateHeadless(
   await saveAndReport(baseUrl, resolvedTeamName || "", "direct-token", token, expiresAt);
 }
 
-/** Load and validate the cached token, or exit with an error. */
+/** Load the cached token, or exit with an error if unauthenticated. */
 export async function getToken(): Promise<{ url: string; token: string }> {
   const config = await loadConfig();
   if (!config?.token) {
@@ -358,9 +375,19 @@ export async function getToken(): Promise<{ url: string; token: string }> {
     process.exit(1);
   }
 
+  // Don't self-terminate on a stale cached expiry. The server applies sliding
+  // window renewal on every successful call, but older CLI versions didn't
+  // persist the refreshed expiry locally, so the cache can look expired even
+  // when the server would still accept the token. Warn and fall through — a
+  // real 401 from the server (handled in mcp-client) will prompt re-auth.
   if (new Date(config.tokenExpiresAt) < new Date()) {
-    console.error("Token expired. Run: fastmail auth");
-    process.exit(1);
+    const stale = Math.max(
+      0,
+      Math.floor((Date.now() - new Date(config.tokenExpiresAt).getTime()) / 86400000),
+    );
+    console.error(
+      `Warning: cached token expiry is ${stale}d stale. Attempting call anyway; the server will reject if the token is truly expired.`,
+    );
   }
 
   return { url: config.url, token: config.token };
