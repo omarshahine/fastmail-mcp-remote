@@ -64,7 +64,10 @@ export class FastmailMcpClient {
       headers.set("Authorization", `Bearer ${token}`);
       const response = await fetch(input, { ...init, headers });
       const renewed = response.headers.get("X-Token-Expires-At");
-      if (renewed) {
+      // Validate as a parseable ISO date before trusting it. A malformed header
+      // (misconfigured proxy, future server regression) would otherwise poison
+      // config.tokenExpiresAt and turn every `new Date(...)` into Invalid Date.
+      if (renewed && !Number.isNaN(new Date(renewed).getTime())) {
         // Fire-and-forget: never block or break the request on cache write failures
         updateTokenExpiry(renewed).catch(() => {});
       }
