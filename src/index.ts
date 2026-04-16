@@ -176,6 +176,18 @@ app.get("/get-token/callback", async (c) => {
   return handleGetTokenCallback(c.req.raw, c.env, new URL(c.req.url));
 });
 
+// Re-wrap a Response to add X-Token-Expires-At so CLI clients can track
+// the server's sliding-window renewal and refresh their local cache.
+function withTokenExpiresAt(response: Response, expiresAt: string): Response {
+  const headers = new Headers(response.headers);
+  headers.set("X-Token-Expires-At", expiresAt);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 // Helper to create 401 response with proper WWW-Authenticate header for MCP OAuth
 function unauthorizedResponse(c: { req: { url: string } }, error: string, description: string): Response {
   const url = new URL(c.req.url);
@@ -240,7 +252,8 @@ app.post("/mcp/code", async (c) => {
   // Serve via stateless WebStandard streamable HTTP transport
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await codeServer.connect(transport);
-  return transport.handleRequest(c.req.raw);
+  const response = await transport.handleRequest(c.req.raw);
+  return withTokenExpiresAt(response, tokenInfo.expiresAt);
 });
 
 // GET /mcp — Reject SSE stream requests (stateless transport, no session to stream to).
@@ -291,7 +304,8 @@ app.post("/mcp", async (c) => {
   // Serve via stateless WebStandard streamable HTTP transport (supports elicitation)
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);
-  return transport.handleRequest(c.req.raw);
+  const response = await transport.handleRequest(c.req.raw);
+  return withTokenExpiresAt(response, tokenInfo.expiresAt);
 });
 
 // Attachment download proxy endpoint (no auth required - uses single-use token)

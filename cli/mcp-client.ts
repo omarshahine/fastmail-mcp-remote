@@ -8,6 +8,7 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { updateTokenExpiry } from "./auth.js";
 
 /**
  * Strip prompt-injection datamarking from MCP tool responses.
@@ -53,12 +54,21 @@ export class FastmailMcpClient {
       version: "1.0.0",
     });
 
-    // Inject Bearer token into every request via custom fetch
+    // Inject Bearer token into every request via custom fetch.
+    // Also intercept the response to persist any server-issued X-Token-Expires-At
+    // header — this is how the CLI learns that the Worker just slid the token's
+    // TTL forward, so the local config stops drifting from server-side reality.
     const token = this.token;
-    const authFetch: typeof fetch = (input, init) => {
+    const authFetch: typeof fetch = async (input, init) => {
       const headers = new Headers(init?.headers);
       headers.set("Authorization", `Bearer ${token}`);
-      return fetch(input, { ...init, headers });
+      const response = await fetch(input, { ...init, headers });
+      const renewed = response.headers.get("X-Token-Expires-At");
+      if (renewed) {
+        // Fire-and-forget: never block or break the request on cache write failures
+        updateTokenExpiry(renewed).catch(() => {});
+      }
+      return response;
     };
 
     const transport = new StreamableHTTPClientTransport(
