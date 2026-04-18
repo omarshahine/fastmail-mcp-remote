@@ -1,0 +1,31 @@
+# Verifies version consistency within the fastmail-cli OpenClaw plugin.
+#
+# This repo has four package.json / manifest files, but they live in three
+# intentionally independent deploy units:
+#   - openclaw-plugin/package.json        → the NPM-published fastmail-cli
+#   - package.json (repo root)            → private Cloudflare Worker
+#   - site/package.json                   → separate marketing site
+#   - openclaw-plugin/openclaw.plugin.json → no .version field today
+#
+# Only openclaw-plugin/package.json carries the plugin's release version.
+# The single-source check is a placeholder: if openclaw.plugin.json ever
+# grows a .version field, add it here so the two must agree.
+name: Version Consistency
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  version-check:
+    name: Version Consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: omarshahine/version-consistency-action@v1
+        with:
+          sets: |
+            - name: "Fastmail OpenClaw plugin"
+              sources:
+                - openclaw-plugin/package.json:.version
