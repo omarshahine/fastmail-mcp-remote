@@ -32,6 +32,12 @@
   "openclaw": {
     "extensions": [
       "./index.ts"
-    ]
+    ],
+    "compat": {
+      "pluginApi": ">=2026.3.23"
+    },
+    "build": {
+      "openclawVersion": "2026.4.15"
+    }
   }
 }
