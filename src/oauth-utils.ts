@@ -122,6 +122,20 @@ export interface OAuthTokenData {
 	expires_at: string;
 }
 
+// Refresh tokens never expire (no expires_at). `revoked` is the kill switch.
+// `access_token_hash` pairs the refresh token with its most-recently-minted
+// access token for audit/revoke chaining.
+export interface OAuthRefreshTokenData {
+	client_id: string;
+	user_id: string;
+	user_login: string;
+	scope: string | null;
+	access_token_hash: string;
+	created_at: string;
+	last_used_at?: string;
+	revoked?: boolean;
+}
+
 export interface OAuthClientData {
 	client_id: string;
 	client_name: string;
@@ -161,4 +175,22 @@ export async function validateAccessToken(
 		scope: data.scope,
 		expiresAt: data.expires_at,
 	};
+}
+
+// Validate refresh token (KV-based). Refresh tokens never expire — only
+// `revoked=true` invalidates them. Returns the full KV record plus the
+// computed `token_hash` so callers can stamp `last_used_at` (and any other
+// mutations) in a single write without a second eventually-consistent read.
+export async function validateRefreshToken(
+	kv: KVNamespace,
+	token: string
+): Promise<{ data: OAuthRefreshTokenData; token_hash: string } | null> {
+	const tokenHash = await hashToken(token);
+	const data = await kv.get<OAuthRefreshTokenData>(`refresh_token:${tokenHash}`, 'json');
+
+	if (!data || data.revoked) {
+		return null;
+	}
+
+	return { data, token_hash: tokenHash };
 }

@@ -12,6 +12,7 @@ import {
 	isExpired,
 	isUserAllowed,
 	verifyCodeChallenge,
+	validateRefreshToken,
 	STATE_TTL_SECONDS,
 	CODE_TTL_SECONDS,
 	TOKEN_TTL_SECONDS,
@@ -20,8 +21,49 @@ import {
 	type OAuthStateData,
 	type OAuthCodeData,
 	type OAuthTokenData,
+	type OAuthRefreshTokenData,
 	type OAuthClientData,
 } from './oauth-utils';
+
+// Issue a paired access token + refresh token and persist both in KV.
+// Refresh tokens have no KV TTL — they live until explicitly revoked.
+async function issueTokenPair(
+	kv: KVNamespace,
+	args: { client_id: string; user_id: string; user_login: string; scope: string | null }
+): Promise<{ access_token: string; refresh_token: string; expires_in: number }> {
+	const accessToken = generateToken();
+	const refreshToken = generateToken();
+	const accessTokenHash = await hashToken(accessToken);
+	const refreshTokenHash = await hashToken(refreshToken);
+	const tokenExpiresAt = getExpiresAt(TOKEN_TTL_SECONDS);
+
+	const accessData: OAuthTokenData = {
+		client_id: args.client_id,
+		user_id: args.user_id,
+		user_login: args.user_login,
+		scope: args.scope,
+		expires_at: tokenExpiresAt,
+	};
+	await kv.put(`token:${accessTokenHash}`, JSON.stringify(accessData), {
+		expirationTtl: TOKEN_TTL_SECONDS,
+	});
+
+	const refreshData: OAuthRefreshTokenData = {
+		client_id: args.client_id,
+		user_id: args.user_id,
+		user_login: args.user_login,
+		scope: args.scope,
+		access_token_hash: accessTokenHash,
+		created_at: new Date().toISOString(),
+	};
+	await kv.put(`refresh_token:${refreshTokenHash}`, JSON.stringify(refreshData));
+
+	return {
+		access_token: accessToken,
+		refresh_token: refreshToken,
+		expires_in: TOKEN_TTL_SECONDS,
+	};
+}
 
 // OAuth Discovery Endpoint
 export function handleOAuthDiscovery(url: URL): Response {
@@ -33,7 +75,7 @@ export function handleOAuthDiscovery(url: URL): Response {
 		scopes_supported: ['mcp:read', 'mcp:write'],
 		response_types_supported: ['code'],
 		response_modes_supported: ['query'],
-		grant_types_supported: ['authorization_code'],
+		grant_types_supported: ['authorization_code', 'refresh_token'],
 		token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
 		code_challenge_methods_supported: ['S256', 'plain'],
 		service_documentation: url.origin,
@@ -323,7 +365,14 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
 		return jsonError('server_error', 'KV namespace not available', 500);
 	}
 
-	let body: { grant_type?: string; code?: string; redirect_uri?: string; client_id?: string; code_verifier?: string };
+	let body: {
+		grant_type?: string;
+		code?: string;
+		redirect_uri?: string;
+		client_id?: string;
+		code_verifier?: string;
+		refresh_token?: string;
+	};
 
 	// Parse request body (support both JSON and form-urlencoded)
 	const contentType = request.headers.get('Content-Type') || '';
@@ -337,13 +386,18 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
 			redirect_uri: formData.get('redirect_uri') as string | undefined,
 			client_id: formData.get('client_id') as string | undefined,
 			code_verifier: formData.get('code_verifier') as string | undefined,
+			refresh_token: formData.get('refresh_token') as string | undefined,
 		};
 	} else {
 		return jsonError('invalid_request', 'Unsupported Content-Type', 400);
 	}
 
+	if (body.grant_type === 'refresh_token') {
+		return handleRefreshTokenGrant(body, env);
+	}
+
 	if (body.grant_type !== 'authorization_code') {
-		return jsonError('unsupported_grant_type', 'Only authorization_code grant is supported', 400);
+		return jsonError('unsupported_grant_type', 'Only authorization_code and refresh_token grants are supported', 400);
 	}
 
 	if (!body.code) {
@@ -387,30 +441,106 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
 		}
 	}
 
-	// Generate access token
-	const accessToken = generateToken();
-	const tokenHash = await hashToken(accessToken);
-	const tokenExpiresAt = getExpiresAt(TOKEN_TTL_SECONDS);
-
-	const tokenData: OAuthTokenData = {
+	// Issue paired access + refresh tokens
+	const pair = await issueTokenPair(env.OAUTH_KV, {
 		client_id: authCode.client_id,
 		user_id: authCode.user_id,
 		user_login: authCode.user_login,
 		scope: authCode.scope,
-		expires_at: tokenExpiresAt,
-	};
-
-	await env.OAUTH_KV.put(`token:${tokenHash}`, JSON.stringify(tokenData), {
-		expirationTtl: TOKEN_TTL_SECONDS,
 	});
 
 	return new Response(
 		JSON.stringify({
-			access_token: accessToken,
+			access_token: pair.access_token,
+			refresh_token: pair.refresh_token,
 			token_type: 'Bearer',
-			expires_in: TOKEN_TTL_SECONDS,
+			expires_in: pair.expires_in,
 			scope: authCode.scope,
 			user_login: authCode.user_login,
+		}),
+		{
+			status: 200,
+			headers: {
+				'Content-Type': 'application/json',
+				'Cache-Control': 'no-store',
+				Pragma: 'no-cache',
+			},
+		}
+	);
+}
+
+// Handle grant_type=refresh_token: validate the presented refresh token,
+// re-check the user against ALLOWED_USERS (so the env var remains a real
+// kill switch — removing an email must cut off refresh too, not just new
+// auth-code flows), and mint a new access token. The refresh token itself
+// is non-rotating: the same token value is returned, paired with a new
+// access token. Revocation happens either via ALLOWED_USERS changes or by
+// setting `revoked: true` on the KV entry.
+async function handleRefreshTokenGrant(
+	body: { refresh_token?: string; client_id?: string },
+	env: Env
+): Promise<Response> {
+	if (!env.OAUTH_KV) {
+		return jsonError('server_error', 'KV namespace not available', 500);
+	}
+	if (!body.refresh_token) {
+		return jsonError('invalid_request', 'Missing refresh_token parameter', 400);
+	}
+
+	const validated = await validateRefreshToken(env.OAUTH_KV, body.refresh_token);
+	if (!validated) {
+		return jsonError('invalid_grant', 'Invalid or revoked refresh token', 400);
+	}
+	const { data: refreshData, token_hash: refreshTokenHash } = validated;
+
+	// Re-check allowlist on every refresh. Without this, removing a user
+	// from ALLOWED_USERS would only block new auth-code flows — an existing
+	// refresh token could mint access tokens indefinitely.
+	if (!isUserAllowed(refreshData.user_login, env.ALLOWED_USERS || '')) {
+		// RFC 6749 §5.2: all token-endpoint error responses use HTTP 400.
+		return jsonError('invalid_grant', 'User no longer authorized', 400);
+	}
+
+	if (body.client_id && body.client_id !== refreshData.client_id) {
+		return jsonError('invalid_grant', 'client_id mismatch', 400);
+	}
+
+	// Mint a fresh access token. Reuse the caller's refresh token (non-rotating).
+	const accessToken = generateToken();
+	const accessTokenHash = await hashToken(accessToken);
+	const tokenExpiresAt = getExpiresAt(TOKEN_TTL_SECONDS);
+
+	const accessData: OAuthTokenData = {
+		client_id: refreshData.client_id,
+		user_id: refreshData.user_id,
+		user_login: refreshData.user_login,
+		scope: refreshData.scope,
+		expires_at: tokenExpiresAt,
+	};
+	await env.OAUTH_KV.put(`token:${accessTokenHash}`, JSON.stringify(accessData), {
+		expirationTtl: TOKEN_TTL_SECONDS,
+	});
+
+	// Update the refresh token record with the new access_token_hash link
+	// and last_used_at stamp — single write using the record we already have
+	// in hand, avoiding a second (eventually-consistent) KV read. Best-effort:
+	// the access token above is the source of truth returned to the client.
+	try {
+		refreshData.access_token_hash = accessTokenHash;
+		refreshData.last_used_at = new Date().toISOString();
+		await env.OAUTH_KV.put(`refresh_token:${refreshTokenHash}`, JSON.stringify(refreshData));
+	} catch (e) {
+		console.warn(`[oauth] Failed to update refresh token metadata (non-fatal): ${e}`);
+	}
+
+	return new Response(
+		JSON.stringify({
+			access_token: accessToken,
+			refresh_token: body.refresh_token,
+			token_type: 'Bearer',
+			expires_in: TOKEN_TTL_SECONDS,
+			scope: refreshData.scope,
+			user_login: refreshData.user_login,
 		}),
 		{
 			status: 200,
