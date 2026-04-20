@@ -470,9 +470,12 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
 }
 
 // Handle grant_type=refresh_token: validate the presented refresh token,
-// mint a new access token (paired with the SAME refresh token — non-rotating),
-// and return it. The refresh token itself never expires; revocation happens
-// server-side by setting `revoked=true` on the KV entry.
+// re-check the user against ALLOWED_USERS (so the env var remains a real
+// kill switch — removing an email must cut off refresh too, not just new
+// auth-code flows), and mint a new access token. The refresh token itself
+// is non-rotating: the same token value is returned, paired with a new
+// access token. Revocation happens either via ALLOWED_USERS changes or by
+// setting `revoked: true` on the KV entry.
 async function handleRefreshTokenGrant(
 	body: { refresh_token?: string; client_id?: string },
 	env: Env
@@ -484,12 +487,20 @@ async function handleRefreshTokenGrant(
 		return jsonError('invalid_request', 'Missing refresh_token parameter', 400);
 	}
 
-	const refreshInfo = await validateRefreshToken(env.OAUTH_KV, body.refresh_token);
-	if (!refreshInfo) {
+	const validated = await validateRefreshToken(env.OAUTH_KV, body.refresh_token);
+	if (!validated) {
 		return jsonError('invalid_grant', 'Invalid or revoked refresh token', 400);
 	}
+	const { data: refreshData, token_hash: refreshTokenHash } = validated;
 
-	if (body.client_id && body.client_id !== refreshInfo.client_id) {
+	// Re-check allowlist on every refresh. Without this, removing a user
+	// from ALLOWED_USERS would only block new auth-code flows — an existing
+	// refresh token could mint access tokens indefinitely.
+	if (!isUserAllowed(refreshData.user_login, env.ALLOWED_USERS || '')) {
+		return jsonError('invalid_grant', 'User no longer authorized', 403);
+	}
+
+	if (body.client_id && body.client_id !== refreshData.client_id) {
 		return jsonError('invalid_grant', 'client_id mismatch', 400);
 	}
 
@@ -499,22 +510,26 @@ async function handleRefreshTokenGrant(
 	const tokenExpiresAt = getExpiresAt(TOKEN_TTL_SECONDS);
 
 	const accessData: OAuthTokenData = {
-		client_id: refreshInfo.client_id,
-		user_id: refreshInfo.user_id,
-		user_login: refreshInfo.user_login,
-		scope: refreshInfo.scope,
+		client_id: refreshData.client_id,
+		user_id: refreshData.user_id,
+		user_login: refreshData.user_login,
+		scope: refreshData.scope,
 		expires_at: tokenExpiresAt,
 	};
 	await env.OAUTH_KV.put(`token:${accessTokenHash}`, JSON.stringify(accessData), {
 		expirationTtl: TOKEN_TTL_SECONDS,
 	});
 
-	// Update the refresh token's access_token_hash link (audit trail).
-	const refreshTokenHash = await hashToken(body.refresh_token);
-	const existing = await env.OAUTH_KV.get<OAuthRefreshTokenData>(`refresh_token:${refreshTokenHash}`, 'json');
-	if (existing) {
-		existing.access_token_hash = accessTokenHash;
-		await env.OAUTH_KV.put(`refresh_token:${refreshTokenHash}`, JSON.stringify(existing));
+	// Update the refresh token record with the new access_token_hash link
+	// and last_used_at stamp — single write using the record we already have
+	// in hand, avoiding a second (eventually-consistent) KV read. Best-effort:
+	// the access token above is the source of truth returned to the client.
+	try {
+		refreshData.access_token_hash = accessTokenHash;
+		refreshData.last_used_at = new Date().toISOString();
+		await env.OAUTH_KV.put(`refresh_token:${refreshTokenHash}`, JSON.stringify(refreshData));
+	} catch (e) {
+		console.warn(`[oauth] Failed to update refresh token metadata (non-fatal): ${e}`);
 	}
 
 	return new Response(
@@ -523,8 +538,8 @@ async function handleRefreshTokenGrant(
 			refresh_token: body.refresh_token,
 			token_type: 'Bearer',
 			expires_in: TOKEN_TTL_SECONDS,
-			scope: refreshInfo.scope,
-			user_login: refreshInfo.user_login,
+			scope: refreshData.scope,
+			user_login: refreshData.user_login,
 		}),
 		{
 			status: 200,

@@ -178,12 +178,13 @@ export async function validateAccessToken(
 }
 
 // Validate refresh token (KV-based). Refresh tokens never expire — only
-// `revoked=true` invalidates them. Stamps `last_used_at` for observability
-// (best-effort; never blocks auth).
+// `revoked=true` invalidates them. Returns the full KV record plus the
+// computed `token_hash` so callers can stamp `last_used_at` (and any other
+// mutations) in a single write without a second eventually-consistent read.
 export async function validateRefreshToken(
 	kv: KVNamespace,
 	token: string
-): Promise<{ client_id: string; user_id: string; user_login: string; scope: string | null } | null> {
+): Promise<{ data: OAuthRefreshTokenData; token_hash: string } | null> {
 	const tokenHash = await hashToken(token);
 	const data = await kv.get<OAuthRefreshTokenData>(`refresh_token:${tokenHash}`, 'json');
 
@@ -191,18 +192,5 @@ export async function validateRefreshToken(
 		return null;
 	}
 
-	try {
-		data.last_used_at = new Date().toISOString();
-		// No expirationTtl — refresh tokens live until explicitly revoked.
-		await kv.put(`refresh_token:${tokenHash}`, JSON.stringify(data));
-	} catch (e) {
-		console.warn(`[oauth] Failed to stamp refresh token last_used_at (non-fatal): ${e}`);
-	}
-
-	return {
-		client_id: data.client_id,
-		user_id: data.user_id,
-		user_login: data.user_login,
-		scope: data.scope,
-	};
+	return { data, token_hash: tokenHash };
 }
