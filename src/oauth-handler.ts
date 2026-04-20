@@ -497,7 +497,8 @@ async function handleRefreshTokenGrant(
 	// from ALLOWED_USERS would only block new auth-code flows — an existing
 	// refresh token could mint access tokens indefinitely.
 	if (!isUserAllowed(refreshData.user_login, env.ALLOWED_USERS || '')) {
-		return jsonError('invalid_grant', 'User no longer authorized', 403);
+		// RFC 6749 §5.2: all token-endpoint error responses use HTTP 400.
+		return jsonError('invalid_grant', 'User no longer authorized', 400);
 	}
 
 	if (body.client_id && body.client_id !== refreshData.client_id) {
