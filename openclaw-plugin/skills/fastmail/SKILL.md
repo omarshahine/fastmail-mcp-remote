@@ -28,9 +28,16 @@ The `fastmail` CLI must be installed and authenticated before using these tools.
 
 | Tool | Purpose |
 |------|---------|
-| `fastmail_send_email` | Send an email (text, HTML, or markdown body) |
-| `fastmail_create_draft` | Create an email draft |
-| `fastmail_reply_to_email` | Reply to an email (reply-all, send or draft) |
+| `fastmail_send_email` | Send a NEW email (text, HTML, or markdown body) |
+| `fastmail_create_draft` | Create a NEW draft (no source email). **Never use for replies.** |
+| `fastmail_reply_to_email` | Reply to an email. Use this for ALL replies — draft OR send. |
+
+### Replies — Critical Rules
+
+- **For replies, ALWAYS use `fastmail_reply_to_email`.** Never use `fastmail_create_draft` for a reply — it produces an orphan email with no `In-Reply-To`/`References` headers and no quoted source, so the recipient sees a fresh email instead of a reply.
+- **Draft vs. send:** `fastmail_reply_to_email` defaults to `sendImmediately: false` (saves as a draft). Leave it as the default. Only pass `sendImmediately: true` when the user has explicitly asked to send the reply right now — and confirm once more before doing so.
+- **Reply-all:** Pass `replyAll: true` only when the user explicitly selected "reply all". The default is reply-to-sender-only.
+- **Quoting:** `fastmail_reply_to_email` quotes the original message automatically. Don't paste the original body into your reply content.
 
 ### Email Organization (6 optional tools)
 
@@ -116,7 +123,7 @@ ID: M1234abc | Thread: T5678
 ### Search, read, and reply
 1. `fastmail_search_emails` with query
 2. `fastmail_get_email` with the ID
-3. `fastmail_reply_to_email` with body and `send: true`
+3. `fastmail_reply_to_email` with body (defaults to draft — user reviews in Fastmail before sending). Only pass `send: true` (or `sendImmediately: true` for the raw MCP tool) when the user explicitly confirmed they want to send now.
 
 ### Triage inbox
 1. `fastmail_inbox` with limit 20

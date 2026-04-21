@@ -327,11 +327,11 @@ export function registerAllTools(
         inReplyTo: z
           .array(z.string())
           .optional()
-          .describe("Message-ID(s) this email is replying to. Get from original email's messageId field."),
+          .describe("Advanced: Message-ID(s) this email is replying to. For true replies, prefer `reply_to_email` — it handles threading, recipients, subject, and quoted source. Only use this here for edge cases (forwards, cross-thread references) where you explicitly do not want auto-quoting."),
         references: z
           .array(z.string())
           .optional()
-          .describe("Message-ID chain for threading. Combine original email's references with its messageId."),
+          .describe("Advanced: Message-ID chain for threading. For true replies, prefer `reply_to_email` — it computes this from the source email automatically."),
       },
       async ({ to, cc, bcc, from, subject, textBody, htmlBody, markdownBody, attachments, inReplyTo, references }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates even if the outer Hono check is bypassed
@@ -387,7 +387,7 @@ export function registerAllTools(
   if (shouldRegister("create_draft")) {
     server.tool(
       "create_draft",
-      "Create an email draft in the Drafts folder without sending it. Supports file attachments via base64-encoded content. For reply drafts, set inReplyTo and references from the original email.",
+      "Create a NET-NEW email draft in the Drafts folder without sending it. Supports file attachments via base64-encoded content. DO NOT USE FOR REPLIES — use `reply_to_email` with sendImmediately=false instead. `create_draft` does not fetch the source email, quote its body, or produce correct threading; passing `inReplyTo` alone only sets a header and still produces an orphan-looking email to the recipient. `reply_to_email` handles recipients, subject, threading headers, and quoted source automatically.",
       {
         to: z.array(z.string()).describe("Recipient email addresses"),
         cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
@@ -413,11 +413,11 @@ export function registerAllTools(
         inReplyTo: z
           .array(z.string())
           .optional()
-          .describe("Message-ID(s) this email is replying to. Get from original email's messageId field."),
+          .describe("Advanced: Message-ID(s) this email is replying to. For true replies, prefer `reply_to_email` — it handles threading, recipients, subject, and quoted source. Only use this here for edge cases (forwards, cross-thread references) where you explicitly do not want auto-quoting."),
         references: z
           .array(z.string())
           .optional()
-          .describe("Message-ID chain for threading. Combine original email's references with its messageId."),
+          .describe("Advanced: Message-ID chain for threading. For true replies, prefer `reply_to_email` — it computes this from the source email automatically."),
       },
       async ({ to, cc, bcc, from, subject, textBody, htmlBody, markdownBody, attachments, inReplyTo, references }) => {
         if (!textBody && !htmlBody && !markdownBody) {
@@ -461,7 +461,7 @@ export function registerAllTools(
   if (shouldRegister("reply_to_email")) {
     server.tool(
       "reply_to_email",
-      "Reply to an email with proper threading and quoting, just like Fastmail's reply button. Automatically handles recipients, subject, threading headers, and quotes the original message.",
+      "Reply to an email with proper threading and quoting, just like Fastmail's reply button. Automatically handles recipients, subject, threading headers, and quotes the original message. This is the ONLY correct way to draft or send a reply — use it with sendImmediately=false (default) to create a reply draft the user can review. Do NOT use `create_draft` for replies; it loses threading and the quoted source.",
       {
         emailId: z.string().describe("ID of the email to reply to"),
         body: z.string().describe("Your reply message (plain text)"),

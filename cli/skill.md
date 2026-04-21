@@ -49,11 +49,20 @@ fastmail email search "" --attachments --limit 5     # Emails with attachments
 
 ```bash
 fastmail email send --to user@example.com --subject "Hi" --body "Hello!"
-fastmail email draft --to user@example.com --subject "Draft" --body "..."
-fastmail email reply <id> --body "Thanks!" --send    # Send reply immediately
-fastmail email reply <id> --body "Thanks!"           # Save as draft
-fastmail email reply <id> --body "Noted" --all       # Reply all
+fastmail email draft --to user@example.com --subject "Draft" --body "..."   # NEW draft only — never for replies
+fastmail email reply <id> --body "Thanks!"           # Save reply as draft (default, correct for replies)
+fastmail email reply <id> --body "Thanks!" --send    # Send reply immediately (confirm with user first)
+fastmail email reply <id> --body "Noted" --all       # Reply all (only when user selected reply-all)
 ```
+
+### Replies — Critical Rules
+
+- **For replies, ALWAYS use `fastmail email reply <id>`.** Never use `fastmail email draft ...` to fake a reply — `draft` produces an orphan email with no `In-Reply-To`/`References` headers and no quoted source, so the recipient sees a fresh email rather than a threaded reply.
+- **Draft vs. send:** `fastmail email reply` saves as a draft by default (the user reviews in Fastmail, then hits send). Only pass `--send` when the user explicitly asked to send the reply right now — and confirm once more before doing so.
+- **Reply-all:** Pass `--all` only when the user explicitly selected "reply all". The default is reply-to-sender-only.
+- **Quoting:** `fastmail email reply` quotes the original message automatically. Don't paste the original body into `--body`.
+
+> **Regression guard for agents:** If your plan has a "draft a reply" branch that calls `fastmail email draft` (CLI) or `create_draft` (MCP), that is a bug. Route the branch to `fastmail email reply <id>` (CLI) or `reply_to_email` (MCP) with `sendImmediately=false`.
 
 ### Email Actions
 
@@ -191,7 +200,8 @@ fastmail email M1234abc       # Read the email
 ```bash
 fastmail email search "invoice"       # Find emails
 fastmail email M5678def               # Read one
-fastmail email reply M5678def --body "Received, thanks." --send
+fastmail email reply M5678def --body "Received, thanks."          # Save as draft (default)
+fastmail email reply M5678def --body "Received, thanks." --send   # Only after user confirms "send now"
 ```
 
 ### Triage inbox
