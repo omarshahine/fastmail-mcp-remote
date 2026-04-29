@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "plugin": {
+    "id": "fastmail-cli",
+    "priority": "high",
+    "seams": [
+      "plugin-runtime"
+    ]
+  },
+  "capture": {
+    "mockSdk": true
+  }
+}

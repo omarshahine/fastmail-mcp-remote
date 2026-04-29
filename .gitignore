@@ -186,3 +186,4 @@ notes.md
 site/node_modules/
 site/dist/
 site/.astro/
+openclaw-plugin/reports/

@@ -1,6 +1,6 @@
 {
   "name": "fastmail-cli",
-  "version": "3.1.1",
+  "version": "3.1.2",
   "description": "OpenClaw plugin for Fastmail email, contacts, and calendar",
   "type": "module",
   "files": [
@@ -39,5 +39,9 @@
     "build": {
       "openclawVersion": "2026.4.15"
     }
+  },
+  "scripts": {
+    "plugin:check": "npx --yes @openclaw/plugin-inspector inspect --no-openclaw",
+    "plugin:ci": "npx --yes @openclaw/plugin-inspector ci --no-openclaw --runtime --mock-sdk --allow-execute"
   }
 }
