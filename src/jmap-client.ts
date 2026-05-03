@@ -754,6 +754,169 @@ export class JmapClient {
     return submissionResult.created?.submission?.id || 'unknown';
   }
 
+  /**
+   * Send a copy of an existing email to a new recipient. Equivalent to Fastmail's
+   * "Send a copy..." menu item — preserves the original email's subject, body,
+   * MIME parts, and embedded images. The SMTP envelope is changed to route to the
+   * new recipient(s), and the From header is rewritten to a verified identity (Fastmail
+   * rejects submissions whose From header doesn't match an identity the user owns).
+   *
+   * Implementation:
+   *   1. Email/get the source email with its full bodyStructure + bodyValues.
+   *   2. Email/set/create a clone in Drafts that re-uses the source's body parts
+   *      (HTML and text) and inline-image attachments by blobId — no new uploads.
+   *   3. EmailSubmission/set the clone with a custom envelope.
+   *   4. onSuccessUpdateEmail moves the clone to Sent (and the destroyOnSent flag
+   *      removes it from Drafts).
+   *
+   * Result: the recipient sees an email with the original Subject and body content,
+   * From the user's verified address. Any cid: image references inside the HTML body
+   * resolve correctly because the underlying attachment blobs are re-referenced.
+   */
+  async sendCopy(params: {
+    emailId: string;
+    to: string[];
+    cc?: string[];
+    bcc?: string[];
+    from?: string;
+  }): Promise<string> {
+    const session = await this.getSession();
+
+    const identities = await this.getIdentities();
+    if (!identities || identities.length === 0) {
+      throw new Error('No sending identities found');
+    }
+
+    let selectedIdentity;
+    if (params.from) {
+      selectedIdentity = identities.find(id =>
+        id.email.toLowerCase() === params.from?.toLowerCase()
+      );
+      if (!selectedIdentity) {
+        throw new Error('From address is not verified for sending. Choose one of your verified identities.');
+      }
+    } else {
+      selectedIdentity = identities.find(id => id.mayDelete === false) || identities[0];
+    }
+    const fromEmail = selectedIdentity.email;
+
+    // 1. Load the source email with body + attachments
+    const sourceRequest: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/get', {
+          accountId: session.accountId,
+          ids: [params.emailId],
+          properties: [
+            'subject',
+            'bodyStructure',
+            'bodyValues',
+            'textBody',
+            'htmlBody',
+            'attachments',
+          ],
+          bodyProperties: ['partId', 'blobId', 'size', 'name', 'type', 'charset', 'disposition', 'cid'],
+          fetchAllBodyValues: true,
+          maxBodyValueBytes: 1_000_000,
+        }, 'getSource'],
+      ],
+    };
+    const sourceResponse = await this.makeRequest(sourceRequest);
+    const source = sourceResponse.methodResponses[0][1].list?.[0];
+    if (!source) {
+      throw new Error(`Source email not found: ${params.emailId}`);
+    }
+
+    // Find Drafts and Sent mailboxes
+    const mailboxes = await this.getMailboxes();
+    const draftsMailbox = mailboxes.find(mb => mb.role === 'drafts')
+      || mailboxes.find(mb => mb.name.toLowerCase().includes('draft'));
+    const sentMailbox = mailboxes.find(mb => mb.role === 'sent')
+      || mailboxes.find(mb => mb.name.toLowerCase().includes('sent'));
+    if (!draftsMailbox) throw new Error('Could not find Drafts mailbox');
+    if (!sentMailbox) throw new Error('Could not find Sent mailbox');
+
+    // 2. Build the clone: re-use source's body parts and attachments by reference
+    const draftMailboxIds: Record<string, boolean> = { [draftsMailbox.id]: true };
+    const sentMailboxIds: Record<string, boolean> = { [sentMailbox.id]: true };
+
+    const allRcpt = [
+      ...params.to,
+      ...(params.cc || []),
+      ...(params.bcc || []),
+    ].map(addr => ({ email: addr }));
+
+    const cloneEmail: JmapEmailObject = {
+      mailboxIds: draftMailboxIds,
+      keywords: { $draft: true },
+      from: [{ email: fromEmail }],
+      to: params.to.map(e => ({ email: e })),
+      cc: params.cc?.map(e => ({ email: e })) || [],
+      bcc: params.bcc?.map(e => ({ email: e })) || [],
+      subject: source.subject,
+      // Re-reference the source's textBody parts (preserves bodyStructure)
+      textBody: (source.textBody || []).map((p: any) => ({ partId: p.partId, type: p.type })),
+      htmlBody: (source.htmlBody || []).map((p: any) => ({ partId: p.partId, type: p.type })),
+      bodyValues: source.bodyValues || {},
+    };
+
+    // Preserve attachments (including inline cid: images) by blobId — no re-upload needed
+    if (source.attachments && source.attachments.length > 0) {
+      cloneEmail.attachments = source.attachments.map((att: any) => ({
+        blobId: att.blobId,
+        type: att.type,
+        name: att.name,
+        ...(att.cid && { cid: att.cid }),
+        ...(att.disposition && { disposition: att.disposition }),
+      }));
+    }
+
+    // 3. Create the clone, then submit it, then move to Sent on success
+    const submitRequest: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission'],
+      methodCalls: [
+        ['Email/set', {
+          accountId: session.accountId,
+          create: { clone: cloneEmail },
+        }, 'createClone'],
+        ['EmailSubmission/set', {
+          accountId: session.accountId,
+          create: {
+            submission: {
+              emailId: '#clone',
+              identityId: selectedIdentity.id,
+              envelope: {
+                mailFrom: { email: fromEmail },
+                rcptTo: allRcpt,
+              },
+            },
+          },
+          onSuccessUpdateEmail: {
+            '#submission': {
+              mailboxIds: sentMailboxIds,
+              keywords: { $seen: true },
+            },
+          },
+        }, 'submitClone'],
+      ],
+    };
+
+    const submitResponse = await this.makeRequest(submitRequest);
+    const cloneResult = submitResponse.methodResponses[0][1];
+    if (cloneResult.notCreated?.clone) {
+      const err = cloneResult.notCreated.clone;
+      throw new Error(`Failed to clone email: ${err.type || 'unknown'}. ${err.description || ''}`);
+    }
+
+    const submissionResult = submitResponse.methodResponses[1][1];
+    if (submissionResult.notCreated?.submission) {
+      const err = submissionResult.notCreated.submission;
+      throw new Error(`Failed to submit copy: ${err.type || 'unknown'}. ${err.description || ''}`);
+    }
+
+    return submissionResult.created?.submission?.id || 'unknown';
+  }
+
   async searchEmails(query: string, limit: number = 20): Promise<any[]> {
     const session = await this.getSession();
 

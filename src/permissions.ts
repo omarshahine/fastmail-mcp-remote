@@ -88,6 +88,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
 
 	// SEND
 	send_email: 'SEND',
+	send_copy: 'SEND',
 
 	// EMAIL_READ (incremental sync)
 	get_inbox_updates: 'EMAIL_READ',
@@ -113,6 +114,7 @@ const DELEGATE_ALLOWED_CATEGORIES: Set<ToolCategory> = new Set([
 /** Actionable error hints for denied tools. */
 const DENIAL_HINTS: Record<string, string> = {
 	send_email: "Use 'create_draft' to compose emails as drafts instead.",
+	send_copy: "Send-copy / redirect requires SEND permission. Delegates cannot redirect emails to external addresses.",
 	create_calendar_event: 'Calendar write access is not available for delegate accounts.',
 	reply_to_email: "Use 'reply_to_email' without sendImmediately:true to create a draft reply instead.",
 };

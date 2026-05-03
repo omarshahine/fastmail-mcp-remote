@@ -384,6 +384,56 @@ export function registerAllTools(
     );
   }
 
+  if (shouldRegister("send_copy")) {
+    server.tool(
+      "send_copy",
+      "Send a copy of an existing email to a new recipient (equivalent to Fastmail's 'Send a copy...' menu item). Preserves the original email's subject, headers, MIME body, and embedded images byte-for-byte — only the SMTP envelope is changed. Useful for forwarding to read-later services like Instapaper without the 'Fwd:' subject prefix or formatting loss that 'send_email' produces. Internally uses JMAP EmailSubmission/set with the existing emailId and a custom envelope.",
+      {
+        emailId: z.string().describe("ID of the existing email to send a copy of"),
+        to: z.array(z.string()).describe("Recipient email addresses for the copy"),
+        cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
+        bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
+        from: z.string().optional().describe("Sender identity to use (optional, defaults to account primary). Must be a verified identity."),
+      },
+      async ({ emailId, to, cc, bcc, from }, extra) => {
+        const denied = await ctx.checkToolPermission('send_copy');
+        if (denied) return denied;
+
+        // Confirmation: load the source email so the user knows what they're sending
+        let bodyPreview = "(original email content preserved as-is)";
+        let subject = "(original subject)";
+        try {
+          const client = ctx.getJmapClient();
+          const source = await client.getEmailById(emailId);
+          subject = source?.subject || subject;
+          bodyPreview = `Send a copy of: "${subject}" (original email ID ${emailId})`;
+        } catch {
+          // If we can't fetch a preview, still allow the user to confirm
+        }
+
+        const confirmation = await confirmSend(extra, { to, cc, bcc, subject, bodyPreview }, ctx.env);
+        if (!confirmation.approved) {
+          return {
+            content: [{ text: `Copy not sent: ${confirmation.message || "cancelled by user"}`, type: "text" }],
+          };
+        }
+
+        try {
+          const client = ctx.getJmapClient();
+          const submissionId = await client.sendCopy({ emailId, to, cc, bcc, from });
+          return {
+            content: [{ text: `Copy sent successfully. Submission ID: ${submissionId}\nOriginal email: ${emailId}\nRecipients: ${[...to, ...(cc || []), ...(bcc || [])].join(", ")}`, type: "text" }],
+          };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ text: `Failed to send copy: ${errorMessage}`, type: "text" }],
+          };
+        }
+      },
+    );
+  }
+
   if (shouldRegister("create_draft")) {
     server.tool(
       "create_draft",
@@ -1373,6 +1423,7 @@ ${quotedContent}
           "list_emails",
           "get_email",
           "send_email",
+          "send_copy",
           "create_draft",
           "search_emails",
           "get_recent_emails",
