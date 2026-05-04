@@ -44,5 +44,45 @@
   },
   "skills": [
     "./skills"
-  ]
+  ],
+  "contracts": {
+    "tools": [
+      "fastmail_inbox",
+      "fastmail_get_email",
+      "fastmail_search_emails",
+      "fastmail_get_thread",
+      "fastmail_list_mailboxes",
+      "fastmail_get_mailbox_stats",
+      "fastmail_get_account_summary",
+      "fastmail_list_identities",
+      "fastmail_get_attachments",
+      "fastmail_download_attachment",
+      "fastmail_get_inbox_updates",
+      "fastmail_get_memo",
+      "fastmail_list_contacts",
+      "fastmail_get_contact",
+      "fastmail_search_contacts",
+      "fastmail_list_calendars",
+      "fastmail_list_events",
+      "fastmail_get_event",
+      "fastmail_create_event",
+      "fastmail_mark_read",
+      "fastmail_mark_unread",
+      "fastmail_flag",
+      "fastmail_unflag",
+      "fastmail_delete",
+      "fastmail_move",
+      "fastmail_bulk_read",
+      "fastmail_bulk_unread",
+      "fastmail_bulk_flag",
+      "fastmail_bulk_unflag",
+      "fastmail_bulk_delete",
+      "fastmail_bulk_move",
+      "fastmail_create_memo",
+      "fastmail_delete_memo",
+      "fastmail_create_draft",
+      "fastmail_reply_to_email",
+      "fastmail_send_email"
+    ]
+  }
 }
