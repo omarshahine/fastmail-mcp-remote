@@ -846,6 +846,15 @@ export class JmapClient {
       ...(params.bcc || []),
     ].map(addr => ({ email: addr }));
 
+    // textBody must NOT contain text/html parts on Email/set, even though Fastmail's
+    // Email/get returns the HTML blob in both textBody and htmlBody for HTML-only
+    // newsletters (Verge/Sailthru, MailerLite, etc.). Sending text/html in textBody
+    // fails the clone with `invalidProperties`. Keep only true text/* parts that aren't
+    // text/html — usually empty for HTML-only emails, in which case textBody is omitted.
+    const textBodyParts = (source.textBody || [])
+      .filter((p: any) => p.type !== 'text/html')
+      .map((p: any) => ({ partId: p.partId, type: p.type }));
+
     const cloneEmail: JmapEmailObject = {
       mailboxIds: draftMailboxIds,
       keywords: { $draft: true },
@@ -854,8 +863,7 @@ export class JmapClient {
       cc: params.cc?.map(e => ({ email: e })) || [],
       bcc: params.bcc?.map(e => ({ email: e })) || [],
       subject: source.subject,
-      // Re-reference the source's textBody parts (preserves bodyStructure)
-      textBody: (source.textBody || []).map((p: any) => ({ partId: p.partId, type: p.type })),
+      ...(textBodyParts.length > 0 && { textBody: textBodyParts }),
       htmlBody: (source.htmlBody || []).map((p: any) => ({ partId: p.partId, type: p.type })),
       bodyValues: source.bodyValues || {},
     };
