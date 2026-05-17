@@ -17,6 +17,174 @@ export function getAccessBaseUrl(teamName: string): string {
 	return `https://${teamName}.cloudflareaccess.com/cdn-cgi/access/sso/oidc`;
 }
 
+export interface AccessIdTokenClaims {
+	sub: string;
+	email: string;
+	name?: string;
+	iss: string;
+	aud: string | string[];
+	exp: number;
+	iat?: number;
+}
+
+interface AccessJsonWebKey extends JsonWebKey {
+	kid?: string;
+	alg?: string;
+	use?: string;
+}
+
+interface AccessJwks {
+	keys: AccessJsonWebKey[];
+}
+
+const JWT_CLOCK_SKEW_SECONDS = 60;
+
+function base64UrlToBytes(value: string): Uint8Array {
+	const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+	const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+	const binary = atob(padded);
+	const bytes = new Uint8Array(binary.length);
+	for (let i = 0; i < binary.length; i++) {
+		bytes[i] = binary.charCodeAt(i);
+	}
+	return bytes;
+}
+
+function decodeJwtPart(value: string): unknown {
+	const bytes = base64UrlToBytes(value);
+	const json = new TextDecoder().decode(bytes);
+	return JSON.parse(json);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
+}
+
+function assertStringClaim(claims: Record<string, unknown>, name: string): string {
+	const value = claims[name];
+	if (typeof value !== 'string' || value.length === 0) {
+		throw new Error(`Access ID token missing ${name}`);
+	}
+	return value;
+}
+
+function assertNumberClaim(claims: Record<string, unknown>, name: string): number {
+	const value = claims[name];
+	if (typeof value !== 'number' || !Number.isFinite(value)) {
+		throw new Error(`Access ID token missing ${name}`);
+	}
+	return value;
+}
+
+function validateAudience(audience: unknown, clientId: string): string | string[] {
+	if (typeof audience === 'string') {
+		if (audience !== clientId) {
+			throw new Error('Access ID token audience mismatch');
+		}
+		return audience;
+	}
+	if (Array.isArray(audience) && audience.every((item) => typeof item === 'string')) {
+		if (!audience.includes(clientId)) {
+			throw new Error('Access ID token audience mismatch');
+		}
+		return audience;
+	}
+	throw new Error('Access ID token missing aud');
+}
+
+async function importAccessSigningKey(jwk: AccessJsonWebKey): Promise<CryptoKey> {
+	return crypto.subtle.importKey(
+		'jwk',
+		jwk,
+		{
+			name: 'RSASSA-PKCS1-v1_5',
+			hash: 'SHA-256',
+		},
+		false,
+		['verify']
+	);
+}
+
+export async function verifyAccessIdToken(
+	idToken: string,
+	args: { teamName: string; clientId: string; now?: Date }
+): Promise<AccessIdTokenClaims> {
+	const parts = idToken.split('.');
+	if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
+		throw new Error('Access ID token must be a signed JWT');
+	}
+
+	const header = decodeJwtPart(parts[0]);
+	const payload = decodeJwtPart(parts[1]);
+	if (!isRecord(header) || !isRecord(payload)) {
+		throw new Error('Access ID token is malformed');
+	}
+
+	if (header.alg !== 'RS256') {
+		throw new Error('Access ID token uses unsupported alg');
+	}
+	const kid = assertStringClaim(header, 'kid');
+
+	const accessBaseUrl = getAccessBaseUrl(args.teamName);
+	const issuer = `${accessBaseUrl}/${args.clientId}`;
+	const jwksUrl = `${issuer}/jwks`;
+	const jwksResponse = await fetch(jwksUrl, {
+		headers: { Accept: 'application/json' },
+	});
+	if (!jwksResponse.ok) {
+		throw new Error(`Failed to fetch Access JWKs: ${jwksResponse.status}`);
+	}
+
+	const jwks = (await jwksResponse.json()) as AccessJwks;
+	const jwk = jwks.keys?.find((key) => key.kid === kid);
+	if (!jwk) {
+		throw new Error('Access ID token signing key not found');
+	}
+
+	const key = await importAccessSigningKey(jwk);
+	const signedData = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
+	const signature = base64UrlToBytes(parts[2]);
+	const validSignature = await crypto.subtle.verify(
+		'RSASSA-PKCS1-v1_5',
+		key,
+		signature,
+		signedData
+	);
+	if (!validSignature) {
+		throw new Error('Access ID token signature invalid');
+	}
+
+	const tokenIssuer = assertStringClaim(payload, 'iss');
+	if (tokenIssuer !== issuer) {
+		throw new Error('Access ID token issuer mismatch');
+	}
+
+	const aud = validateAudience(payload.aud, args.clientId);
+	const exp = assertNumberClaim(payload, 'exp');
+	const nowSeconds = Math.floor((args.now ?? new Date()).getTime() / 1000);
+	if (exp <= nowSeconds - JWT_CLOCK_SKEW_SECONDS) {
+		throw new Error('Access ID token expired');
+	}
+
+	let iat: number | undefined;
+	if (payload.iat !== undefined) {
+		iat = assertNumberClaim(payload, 'iat');
+		if (iat > nowSeconds + JWT_CLOCK_SKEW_SECONDS) {
+			throw new Error('Access ID token issued in the future');
+		}
+	}
+
+	return {
+		sub: assertStringClaim(payload, 'sub'),
+		email: assertStringClaim(payload, 'email'),
+		name: typeof payload.name === 'string' ? payload.name : undefined,
+		iss: tokenIssuer,
+		aud,
+		exp,
+		iat,
+	};
+}
+
 // Generate cryptographically secure random string
 export function generateRandomString(length: number): string {
 	const array = new Uint8Array(length);

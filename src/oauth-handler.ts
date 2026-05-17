@@ -13,6 +13,7 @@ import {
 	isUserAllowed,
 	verifyCodeChallenge,
 	validateRefreshToken,
+	verifyAccessIdToken,
 	STATE_TTL_SECONDS,
 	CODE_TTL_SECONDS,
 	TOKEN_TTL_SECONDS,
@@ -297,11 +298,11 @@ export async function handleCallback(request: Request, env: Env, url: URL): Prom
 			throw new Error(tokenData.error_description || tokenData.error);
 		}
 
-		// Decode ID token to get user info
 		const idToken = tokenData.id_token!;
-		const parts = idToken.split('.');
-		const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-		const userInfo = { sub: payload.sub, email: payload.email, name: payload.name };
+		const userInfo = await verifyAccessIdToken(idToken, {
+			teamName,
+			clientId: env.ACCESS_CLIENT_ID,
+		});
 
 		// Check if user is allowed
 		if (!isUserAllowed(userInfo.email, env.ALLOWED_USERS || '')) {
@@ -882,10 +883,11 @@ export async function handleGetTokenCallback(request: Request, env: Env, url: UR
 			throw new Error(tokenData.error || 'No ID token received');
 		}
 
-		// Decode ID token to get user info
-		const parts = tokenData.id_token.split('.');
-		const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-		const userEmail = payload.email;
+		const userInfo = await verifyAccessIdToken(tokenData.id_token, {
+			teamName,
+			clientId: env.ACCESS_CLIENT_ID,
+		});
+		const userEmail = userInfo.email;
 
 		// Check if user is allowed
 		if (!isUserAllowed(userEmail, env.ALLOWED_USERS || '')) {
@@ -899,7 +901,7 @@ export async function handleGetTokenCallback(request: Request, env: Env, url: UR
 
 		const mcpTokenData: OAuthTokenData = {
 			client_id: 'direct-token',
-			user_id: payload.sub,
+			user_id: userInfo.sub,
 			user_login: userEmail,
 			scope: DEFAULT_SCOPE,
 			expires_at: tokenExpiresAt,
