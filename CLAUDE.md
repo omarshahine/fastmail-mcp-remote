@@ -392,6 +392,69 @@ Fastmail does **not** expose `urn:ietf:params:jmap:sieve` in their production JM
 - Edit custom Sieve code directly in Settings → Filters & Rules → "Edit custom Sieve code"
 
 This limitation may change in a future Fastmail update. Monitor their [API documentation](https://www.fastmail.com/dev/) for capability additions.
+
+## Clawpatch (Automated Code Review)
+
+This repo is set up for [clawpatch](https://clawpatch.ai) — an automated, semantic-feature-driven code review tool that wraps Codex CLI. Findings are graded by severity/confidence and stored in `.clawpatch/` (gitignored).
+
+### Install once per machine
+
+```bash
+npm install -g clawpatch     # v0.1.0+
+clawpatch doctor             # verifies Node 22+, Git, Codex CLI 0.130+
+```
+
+### Standard workflow
+
+```bash
+clawpatch init               # creates .clawpatch/ + config.json (first time only)
+clawpatch map                # heuristic feature discovery (package bins/scripts + configs)
+clawpatch review --limit 50 --jobs 5   # review all pending features
+clawpatch report --output .clawpatch/reports/summary.md
+clawpatch show --finding <id>          # inspect a single finding
+clawpatch fix --finding <id>           # land a fix (requires clean worktree)
+clawpatch revalidate --finding <id>    # re-verify a fix
+clawpatch status             # quick state summary
+clawpatch next               # surface the next actionable finding
+```
+
+### Repo-specific config (`.clawpatch/config.json`)
+
+- `commands.typecheck: "npm run type-check"` — fixes get type-checked before clawpatch accepts them
+- `commands.test: "npm run test"` — runs Vitest after each fix
+- `git.requireCleanWorktreeForFix: true` — fixes refuse to run on dirty trees
+- `review.minConfidenceToFix: "medium"` — fix command skips low-confidence findings
+
+### ⚠ Heuristic mapping limitation (v0.1.0)
+
+`clawpatch map` only discovers `package.json` bins/scripts and top-level config files. It does **not** walk `src/` to find:
+- Hono routes (`/mcp`, `/mcp/authorize`, `/mcp/callback`, `/mcp/token`, `/mcp/code`, `/sse`, `/.well-known/*`)
+- MCP tool registrations in `src/tools.ts`
+- Library modules (`jmap-client`, `permissions`, `prompt-guard`, `html-to-markdown`, `action-urls`)
+- CLI subcommands in `cli/commands/`
+- The `openclaw-plugin/` sub-package
+
+For full coverage, hand-author feature files into `.clawpatch/features/<featureId>.json` matching the schema in `dist/types.d.ts` (kinds: `route`, `service`, `agent-tool`, `library`, `cli-command`, `infra`). Use clawpatch's `stableId` (`sha256(parts.join("\0")).slice(0,10)` prefixed with `feat_<slug>_`).
+
+**Caveat:** hand-authored features survive on disk but are marked `skipped` on the next `clawpatch map` run (mapper treats anything not produced by its seeds as stale). Either don't re-run `map`, or re-apply the authored feature files after each map. A bootstrap script lives at `/tmp/clawpatch-feature-augment.mjs` in past sessions and can be regenerated from `dist/mapper.js` if needed.
+
+### High-signal areas in this repo
+
+Based on the first full review (52 findings across 29 features), the surfaces where clawpatch consistently flags real issues:
+- `src/oauth-handler.ts` + `src/oauth-utils.ts` — JWT verification, redirect URI allowlisting, token revocation
+- `src/tools.ts` + `src/jmap-client.ts` — `send_email` CC/BCC handling, keyword preservation on read/unread flips, datamarking of external content
+- `src/index.ts` `/mcp/code` route — send-confirmation must apply through Code Mode bridge
+- `openclaw-plugin/package.json` — `bin` field alignment with what `fastmail-cli` ships
+
+### Reports
+
+Markdown + JSON reports persist in `.clawpatch/reports/<runId>.{md,json}`. Filter views:
+```bash
+clawpatch report --severity high --output high-only.md
+clawpatch report --category security --json
+clawpatch report --feature feat_route_1f1d6bface
+```
+
 ## Claude Code GitHub Actions
 
 This repo uses Claude Code GitHub Actions for PR automation:

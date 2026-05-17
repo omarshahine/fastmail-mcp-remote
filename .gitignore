@@ -108,6 +108,10 @@ web_modules/
 .cache
 .parcel-cache
 
+# Clawpatch state (per-developer review cache + reports)
+
+.clawpatch/
+
 # Next.js build output
 
 .next
