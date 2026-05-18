@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_service_cb1d8e5866",
+  "title": "Fastmail JMAP authentication",
+  "summary": "Fetches JMAP session, resolves accountId, and signs JMAP requests with FASTMAIL_API_TOKEN. Single entrypoint for all downstream JMAP calls.",
+  "kind": "service",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/fastmail-auth.ts",
+      "symbol": "fastmailAuth",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/fastmail-auth.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [],
+  "tests": [],
+  "tags": [
+    "jmap",
+    "auth"
+  ],
+  "trustBoundaries": [
+    "network",
+    "secrets"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-service-cb1d8e5866-5e40_c960e64720",
+    "fnd_sig-feat-service-cb1d8e5866-2cbd_65ddf504da"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "2 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:20:12.557Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.644Z"
+}

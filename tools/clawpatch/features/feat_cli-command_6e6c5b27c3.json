@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_cli-command_6e6c5b27c3",
+  "title": "CLI memo subcommands",
+  "summary": "fastmail memo create/get/delete. Private notes stored as $memo-keyworded emails in the memos mailbox.",
+  "kind": "cli-command",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "cli/commands/memo.ts",
+      "symbol": null,
+      "route": null,
+      "command": "fastmail memo"
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "cli/commands/memo.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "cli/main.ts",
+      "reason": "commander wiring"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "cli",
+    "memo"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-cli-command-6e6c5b27c3-_483f76e749"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "1 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:12:59.254Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.639Z"
+}

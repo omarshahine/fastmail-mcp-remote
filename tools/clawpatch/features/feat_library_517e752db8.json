@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_517e752db8",
+  "title": "CLI formatters",
+  "summary": "Compact text output formatters (email/contact/calendar/memo). Goal: 5-7x token savings vs raw JMAP responses.",
+  "kind": "library",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "cli/formatters.ts",
+      "symbol": null,
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "cli/formatters.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [],
+  "tests": [],
+  "tags": [
+    "formatting",
+    "tokens",
+    "cli"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-library-517e752db8-73f7_c4cccace4b",
+    "fnd_sig-feat-library-517e752db8-e046_9905785726"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "2 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:14:57.151Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.641Z"
+}

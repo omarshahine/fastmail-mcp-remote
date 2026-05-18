@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_5e2d216dfb",
+  "title": "Contacts + Calendar client",
+  "summary": "CardDAV (contacts) and CalDAV (calendar) clients. Backs the contacts/* and calendar/* MCP tools and CLI commands.",
+  "kind": "library",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/contacts-calendar.ts",
+      "symbol": null,
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/contacts-calendar.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [],
+  "tests": [],
+  "tags": [
+    "carddav",
+    "caldav",
+    "client"
+  ],
+  "trustBoundaries": [
+    "network"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-library-5e2d216dfb-0653_6707e7ef60",
+    "fnd_sig-feat-library-5e2d216dfb-c08a_db1f40aa41"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "2 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:15:37.588Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.641Z"
+}

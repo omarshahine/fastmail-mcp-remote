@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_cli-command_aed6f6e2f5",
+  "title": "CLI contacts subcommands",
+  "summary": "fastmail contacts list/search/get/create/update/delete via CardDAV.",
+  "kind": "cli-command",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "cli/commands/contacts.ts",
+      "symbol": null,
+      "route": null,
+      "command": "fastmail contacts"
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "cli/commands/contacts.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "cli/main.ts",
+      "reason": "commander wiring"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "cli",
+    "contacts"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-cli-command-aed6f6e2f5-_c1e43203c7"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "1 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:12:07.110Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.640Z"
+}

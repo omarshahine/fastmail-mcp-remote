@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_route_00028c07b9",
+  "title": "MCP Code Mode endpoint",
+  "summary": "Wraps all Fastmail tools in a single 'code' tool using Cloudflare Dynamic Workers (worker_loaders binding). LLM writes TypeScript that chains tool calls in a sandboxed V8 isolate.",
+  "kind": "route",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/index.ts",
+      "symbol": "codeModeEndpoint",
+      "route": "/mcp/code",
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/index.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/tools.ts",
+      "reason": "tools bridged via codemode"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "mcp",
+    "code-mode",
+    "dynamic-workers",
+    "sandbox"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network",
+    "process-exec"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-route-00028c07b9-60e768_8e9526ca1f",
+    "fnd_sig-feat-route-00028c07b9-5376fe_9d7945e8e9"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "2 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:20:13.379Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.643Z"
+}

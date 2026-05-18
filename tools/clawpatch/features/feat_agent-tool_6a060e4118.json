@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_agent-tool_6a060e4118",
+  "title": "MCP tool registry (Fastmail)",
+  "summary": "Registers every Fastmail MCP tool (email read/write/search/bulk, mailbox, attachments, memos, contacts, calendar, identities, account, action URLs). Shared by /mcp DO and /mcp/code endpoints. Enforces permissions and prompt-guard.",
+  "kind": "agent-tool",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/tools.ts",
+      "symbol": "registerAllTools",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/tools.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/jmap-client.ts",
+      "reason": "JMAP backend"
+    },
+    {
+      "path": "src/contacts-calendar.ts",
+      "reason": "contacts and calendar backend"
+    },
+    {
+      "path": "src/permissions.ts",
+      "reason": "tool filtering"
+    },
+    {
+      "path": "src/prompt-guard.ts",
+      "reason": "external-content guard"
+    },
+    {
+      "path": "src/action-urls.ts",
+      "reason": "HMAC-signed action URLs"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "mcp",
+    "tools",
+    "fastmail"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network",
+    "secrets"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-agent-tool-6a060e4118-c_7bd8aa639d",
+    "fnd_sig-feat-agent-tool-6a060e4118-8_cf414f0945",
+    "fnd_sig-feat-agent-tool-6a060e4118-e_5796411ec9"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T160752-f44c54",
+      "kind": "review",
+      "summary": "3 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:10:47.315Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.638Z"
+}

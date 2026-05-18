@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_755db43836",
+  "title": "CLI auth + PKCE flow",
+  "summary": "PKCE OAuth flow + token caching at ~/.config/fastmail-cli/. Supports browser flow and --headless mode for SSH.",
+  "kind": "library",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "cli/auth.ts",
+      "symbol": null,
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "cli/auth.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [],
+  "tests": [],
+  "tags": [
+    "oauth",
+    "pkce",
+    "cli"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "filesystem",
+    "network",
+    "secrets"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-library-755db43836-f848_49b8c581bd",
+    "fnd_sig-feat-library-755db43836-2e04_7bffeaee65",
+    "fnd_sig-feat-library-755db43836-13ed_785957a665"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "3 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:15:43.969Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.642Z"
+}

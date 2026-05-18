@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_route_db57de8a3b",
+  "title": "MCP transport endpoints",
+  "summary": "Streamable HTTP MCP endpoint (/mcp) and SSE endpoint (/sse). Bearer-token authenticated. Routes tool calls to FastmailMCP Durable Object.",
+  "kind": "route",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/index.ts",
+      "symbol": "mcpEndpoint",
+      "route": "/mcp",
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/index.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/tools.ts",
+      "reason": "tools registered here"
+    },
+    {
+      "path": "src/permissions.ts",
+      "reason": "request filtering"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "mcp",
+    "hono",
+    "sse",
+    "streamable-http"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-route-db57de8a3b-7da9e8_7ea949dbbb"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "1 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:18:32.600Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.644Z"
+}

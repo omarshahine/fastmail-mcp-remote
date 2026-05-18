@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_af51797697",
+  "title": "Role-based permissions",
+  "summary": "admin vs delegate roles, tool categorization (read/write/sensitive), and SSE-aware tools/list response filtering. Filters MCP tool surface per authenticated user.",
+  "kind": "library",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/permissions.ts",
+      "symbol": null,
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/permissions.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [],
+  "tests": [],
+  "tags": [
+    "security",
+    "rbac",
+    "mcp"
+  ],
+  "trustBoundaries": [
+    "user-input"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-library-af51797697-3072_9d3a90043b",
+    "fnd_sig-feat-library-af51797697-5f18_1457fb2def"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "2 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:18:03.844Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.643Z"
+}

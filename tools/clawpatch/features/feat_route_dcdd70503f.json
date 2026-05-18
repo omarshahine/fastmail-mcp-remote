@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_route_dcdd70503f",
+  "title": "OAuth discovery endpoints",
+  "summary": "RFC 8414 metadata: /.well-known/oauth-authorization-server and /.well-known/oauth-protected-resource. Advertises Bearer-token requirement and supported scopes to MCP clients.",
+  "kind": "route",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/index.ts",
+      "symbol": "discoveryRoutes",
+      "route": "/.well-known/oauth-authorization-server",
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/index.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [],
+  "tests": [],
+  "tags": [
+    "oauth",
+    "discovery",
+    "rfc-8414"
+  ],
+  "trustBoundaries": [
+    "network"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-route-dcdd70503f-63f023_6fcf05bb7f"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "1 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:19:25.182Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.644Z"
+}

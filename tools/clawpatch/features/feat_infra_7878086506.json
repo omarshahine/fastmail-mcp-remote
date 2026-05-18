@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_infra_7878086506",
+  "title": "Cloudflare Workers config",
+  "summary": "wrangler.jsonc (gitignored, contains account_id / domain / KV id) \u2014 template at wrangler.jsonc.example. Bindings: OAUTH_KV, FastmailMCP DurableObject, LOADER (worker_loaders for Code Mode).",
+  "kind": "infra",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "wrangler.jsonc.example",
+      "symbol": null,
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "wrangler.jsonc.example",
+      "reason": "template"
+    },
+    {
+      "path": ".dev.vars.example",
+      "reason": "local secrets template"
+    }
+  ],
+  "contextFiles": [],
+  "tests": [],
+  "tags": [
+    "infra",
+    "cloudflare",
+    "wrangler"
+  ],
+  "trustBoundaries": [
+    "secrets",
+    "filesystem"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-infra-7878086506-f567ea_04e37c6a89",
+    "fnd_sig-feat-infra-7878086506-3e8d3e_18f090bd36"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "2 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:14:32.235Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.640Z"
+}

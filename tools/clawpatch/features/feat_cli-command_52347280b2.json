@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_cli-command_52347280b2",
+  "title": "CLI email subcommands",
+  "summary": "fastmail email/inbox/bulk/mailbox/account/identities subcommands. Full read/write surface over the MCP transport.",
+  "kind": "cli-command",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "cli/commands/email.ts",
+      "symbol": null,
+      "route": null,
+      "command": "fastmail email"
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "cli/commands/email.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "cli/main.ts",
+      "reason": "commander wiring"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "cli",
+    "email"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-cli-command-52347280b2-_83068f20db",
+    "fnd_sig-feat-cli-command-52347280b2-_c7b5d4ee11",
+    "fnd_sig-feat-cli-command-52347280b2-_eae5ad1315"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "3 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:14:00.037Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.639Z"
+}

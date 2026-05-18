@@ -434,9 +434,13 @@ clawpatch next               # surface the next actionable finding
 - CLI subcommands in `cli/commands/`
 - The `openclaw-plugin/` sub-package
 
-For full coverage, hand-author feature files into `.clawpatch/features/<featureId>.json` matching the schema in `dist/types.d.ts` (kinds: `route`, `service`, `agent-tool`, `library`, `cli-command`, `infra`). Use clawpatch's `stableId` (`sha256(parts.join("\0")).slice(0,10)` prefixed with `feat_<slug>_`).
+For full coverage, keep hand-authored feature files in `tools/clawpatch/features/` and sync them into `.clawpatch/features/` before review:
 
-**Caveat:** hand-authored features survive on disk but are marked `skipped` on the next `clawpatch map` run (mapper treats anything not produced by its seeds as stale). Either don't re-run `map`, or re-apply the authored feature files after each map. A bootstrap script lives at `/tmp/clawpatch-feature-augment.mjs` in past sessions and can be regenerated from `dist/mapper.js` if needed.
+```bash
+tools/clawpatch/sync-features.sh
+```
+
+The synced files match the schema in `dist/types.d.ts` (kinds: `route`, `service`, `agent-tool`, `library`, `cli-command`, `infra`). Use clawpatch's `stableId` (`sha256(parts.join("\0")).slice(0,10)` prefixed with `feat_<slug>_`). Do not commit generated `.clawpatch/` state.
 
 ### High-signal areas in this repo
 

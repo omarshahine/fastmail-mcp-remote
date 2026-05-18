@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_bb7ff7c303",
+  "title": "JMAP client",
+  "summary": "JMAP protocol client for Fastmail (Email/get, Email/query, Email/set, Mailbox/get, Thread/get, etc.). Used by all email and memo tools.",
+  "kind": "library",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/jmap-client.ts",
+      "symbol": null,
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/jmap-client.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [],
+  "tests": [],
+  "tags": [
+    "jmap",
+    "client"
+  ],
+  "trustBoundaries": [
+    "network"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-library-bb7ff7c303-9739_61412f2ada",
+    "fnd_sig-feat-library-bb7ff7c303-7c80_d98086a319",
+    "fnd_sig-feat-library-bb7ff7c303-4160_2c3211fb9a",
+    "fnd_sig-feat-library-bb7ff7c303-785e_c6efca18af"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "4 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:17:38.204Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.643Z"
+}

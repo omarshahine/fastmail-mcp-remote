@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_37bf8536c5",
+  "title": "HTML to Markdown converter",
+  "summary": "Converts email HTML bodies to Markdown for token-efficient agent consumption. Uses linkedom (parseHTML) + Turndown \u2014 Worker-compatible (no DOMParser).",
+  "kind": "library",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/html-to-markdown.ts",
+      "symbol": null,
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/html-to-markdown.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [],
+  "tests": [],
+  "tags": [
+    "markdown",
+    "html",
+    "linkedom",
+    "turndown"
+  ],
+  "trustBoundaries": [
+    "user-input"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-library-37bf8536c5-9a9c_c9159566c2",
+    "fnd_sig-feat-library-37bf8536c5-bc41_19273df1ab",
+    "fnd_sig-feat-library-37bf8536c5-05d3_6d0d6331b2"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "3 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:16:49.769Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.641Z"
+}

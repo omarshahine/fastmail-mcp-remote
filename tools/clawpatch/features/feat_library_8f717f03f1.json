@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_8f717f03f1",
+  "title": "Server-side formatters",
+  "summary": "Compact text formatters for MCP tool responses (email lists, threads, mailboxes). Mirrors CLI formatters for token-efficient output.",
+  "kind": "library",
+  "source": "hand-authored",
+  "confidence": "medium",
+  "entrypoints": [
+    {
+      "path": "src/formatters.ts",
+      "symbol": null,
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/formatters.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [],
+  "tests": [],
+  "tags": [
+    "formatting",
+    "tokens"
+  ],
+  "trustBoundaries": [],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-library-8f717f03f1-9325_21a317fa03"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "1 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:16:33.497Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.642Z"
+}

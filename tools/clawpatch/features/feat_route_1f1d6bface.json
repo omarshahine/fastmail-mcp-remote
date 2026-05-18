@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_route_1f1d6bface",
+  "title": "OAuth authorization flow",
+  "summary": "Cloudflare Access OAuth flow: /mcp/authorize, /mcp/callback, /mcp/token, /mcp/register. Issues Bearer tokens for MCP clients after Access ID-token validation.",
+  "kind": "route",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/index.ts",
+      "symbol": "oauthRoutes",
+      "route": "/mcp/authorize",
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/oauth-handler.ts",
+      "reason": "entrypoint"
+    },
+    {
+      "path": "src/oauth-utils.ts",
+      "reason": "implementation"
+    },
+    {
+      "path": "src/index.ts",
+      "reason": "route mounting"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "src/fastmail-auth.ts",
+      "reason": "downstream JMAP auth"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "oauth",
+    "cloudflare-access",
+    "hono"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network",
+    "secrets"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-route-1f1d6bface-ee7d9c_1afe651cc7",
+    "fnd_sig-feat-route-1f1d6bface-d2ed16_5d0bc1b6b4",
+    "fnd_sig-feat-route-1f1d6bface-03c3e3_ff9d0170f2"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "3 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:19:04.693Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.643Z"
+}

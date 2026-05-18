@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_service_95da868dea",
+  "title": "Cloudflare Access OAuth handler",
+  "summary": "Exchanges Access codes for ID tokens, validates JWT signature against Access JWKs, enforces ALLOWED_USERS email allowlist. Backed by OAUTH_KV (10min state TTL, 30day token TTL).",
+  "kind": "service",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/oauth-handler.ts",
+      "symbol": "oauthHandler",
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/oauth-handler.ts",
+      "reason": "entrypoint"
+    },
+    {
+      "path": "src/oauth-utils.ts",
+      "reason": "JWT + PKCE helpers"
+    }
+  ],
+  "contextFiles": [],
+  "tests": [],
+  "tags": [
+    "oauth",
+    "jwt",
+    "pkce"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network",
+    "secrets"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-service-95da868dea-dd49_c7f9d29c8a",
+    "fnd_sig-feat-service-95da868dea-75c1_33f4ecb6f8",
+    "fnd_sig-feat-service-95da868dea-beb1_97c9014300",
+    "fnd_sig-feat-service-95da868dea-73d4_a1fd4b53d8",
+    "fnd_sig-feat-service-95da868dea-d077_2327683c0f"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "5 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:20:35.269Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.644Z"
+}

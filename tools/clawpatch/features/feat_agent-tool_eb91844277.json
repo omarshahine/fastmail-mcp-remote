@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_agent-tool_eb91844277",
+  "title": "OpenClaw plugin (fastmail-cli)",
+  "summary": "Published as npm 'fastmail-cli'. Registers 36 OpenClaw agent tools that shell out to the local `fastmail` CLI via execFile. Zero runtime deps.",
+  "kind": "agent-tool",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "openclaw-plugin/index.ts",
+      "symbol": null,
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "openclaw-plugin/index.ts",
+      "reason": "entrypoint"
+    },
+    {
+      "path": "openclaw-plugin/src/cli-runner.ts",
+      "reason": "execFile wrapper"
+    },
+    {
+      "path": "openclaw-plugin/src/tools/email.ts",
+      "reason": "email tools"
+    },
+    {
+      "path": "openclaw-plugin/src/tools/contacts.ts",
+      "reason": "contacts tools"
+    },
+    {
+      "path": "openclaw-plugin/src/tools/calendar.ts",
+      "reason": "calendar tools"
+    },
+    {
+      "path": "openclaw-plugin/src/tools/memo.ts",
+      "reason": "memo tools"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "openclaw-plugin/openclaw.plugin.json",
+      "reason": "manifest + configSchema"
+    },
+    {
+      "path": "openclaw-plugin/package.json",
+      "reason": "npm publish source"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "openclaw",
+    "plugin",
+    "cli-wrapper"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "process-exec",
+    "filesystem"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-agent-tool-eb91844277-3_6f426b8bf5"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "1 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:13:46.374Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.639Z"
+}

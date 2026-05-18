@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_library_c5dc8fe0da",
+  "title": "HMAC-signed action URLs",
+  "summary": "Generates one-click email action URLs (archive, delete, mark read) signed with ACTION_SIGNING_KEY. Stateless server-side verification.",
+  "kind": "library",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "src/action-urls.ts",
+      "symbol": null,
+      "route": null,
+      "command": null
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "src/action-urls.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [],
+  "tests": [],
+  "tags": [
+    "security",
+    "hmac",
+    "stateless-actions"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "secrets"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-library-c5dc8fe0da-527c_24e0912fee",
+    "fnd_sig-feat-library-c5dc8fe0da-a44c_7058532c56",
+    "fnd_sig-feat-library-c5dc8fe0da-3348_544ca14724"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "3 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:16:50.387Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.643Z"
+}

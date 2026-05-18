@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "featureId": "feat_cli-command_6b0de27732",
+  "title": "CLI calendar subcommands",
+  "summary": "fastmail calendars/events list/create/update/delete via CalDAV.",
+  "kind": "cli-command",
+  "source": "hand-authored",
+  "confidence": "high",
+  "entrypoints": [
+    {
+      "path": "cli/commands/calendar.ts",
+      "symbol": null,
+      "route": null,
+      "command": "fastmail calendar"
+    }
+  ],
+  "ownedFiles": [
+    {
+      "path": "cli/commands/calendar.ts",
+      "reason": "entrypoint"
+    }
+  ],
+  "contextFiles": [
+    {
+      "path": "cli/main.ts",
+      "reason": "commander wiring"
+    }
+  ],
+  "tests": [],
+  "tags": [
+    "cli",
+    "calendar"
+  ],
+  "trustBoundaries": [
+    "user-input",
+    "network"
+  ],
+  "status": "pending",
+  "lock": null,
+  "findingIds": [
+    "fnd_sig-feat-cli-command-6b0de27732-_0a2afb5f74",
+    "fnd_sig-feat-cli-command-6b0de27732-_272a71b743"
+  ],
+  "patchAttemptIds": [],
+  "analysisHistory": [
+    {
+      "runId": "20260517T161118-7aef06",
+      "kind": "review",
+      "summary": "2 finding(s)",
+      "provider": "codex",
+      "model": null,
+      "createdAt": "2026-05-17T16:12:28.079Z"
+    }
+  ],
+  "createdAt": "2026-05-17T05:33:46.124Z",
+  "updatedAt": "2026-05-18T16:58:06.639Z"
+}
