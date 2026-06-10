@@ -9,7 +9,7 @@
  * category is disabled, so agents only see tools they can actually use.
  */
 
-import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { definePluginEntry, type OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import { execFileSync } from "node:child_process";
 import { registerEmailTools } from "./src/tools/email.js";
 import { registerContactTools } from "./src/tools/contacts.js";
@@ -152,7 +152,7 @@ function withCategoryFilter(api: PluginApi, disabled: Set<string>): PluginApi {
   };
 }
 
-export default definePluginEntry({
+const pluginEntry: OpenClawPluginDefinition = definePluginEntry({
   id: "fastmail-cli",
   name: "Fastmail CLI",
   description: "Email, contacts, and calendar tools via the Fastmail CLI",
@@ -192,3 +192,5 @@ export default definePluginEntry({
     }
   },
 });
+
+export default pluginEntry;
