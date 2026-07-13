@@ -756,6 +756,7 @@ export function registerAllTools(
             draftId,
             textBody: finalTextBody,
             htmlBody: finalHtmlBody,
+            draft,
           });
 
           return {

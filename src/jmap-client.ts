@@ -487,7 +487,9 @@ export class JmapClient {
           accountId: session.accountId,
           ids: [id],
           properties: ['id', 'subject', 'from', 'replyTo', 'to', 'cc', 'bcc', 'receivedAt', 'preview', 'textBody', 'htmlBody', 'attachments', 'bodyValues', 'messageId', 'inReplyTo', 'references', 'threadId', 'keywords', 'mailboxIds'],
-          bodyProperties: ['partId', 'blobId', 'type', 'size', 'name'],
+          // cid + disposition are needed so callers preserving attachments (e.g. updateDraft)
+          // can re-reference inline cid: images correctly.
+          bodyProperties: ['partId', 'blobId', 'type', 'size', 'name', 'cid', 'disposition'],
           fetchTextBodyValues: true,
           fetchHTMLBodyValues: true,
         }, 'email']
@@ -677,6 +679,7 @@ export class JmapClient {
     draftId: string;
     textBody?: string;
     htmlBody?: string;
+    draft?: any;
   }): Promise<string> {
     const session = await this.getSession();
 
@@ -684,7 +687,9 @@ export class JmapClient {
       throw new Error('Either textBody or htmlBody must be provided');
     }
 
-    const existing = await this.getEmailById(params.draftId);
+    // Reuse a draft the caller already fetched (getEmailById) to avoid a redundant
+    // Email/get; fall back to fetching when called standalone.
+    const existing = params.draft ?? await this.getEmailById(params.draftId);
     if (!existing) {
       throw new Error(`Draft not found: ${params.draftId}`);
     }
