@@ -82,6 +82,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
 
 	// DRAFT
 	create_draft: 'DRAFT',
+	update_draft: 'DRAFT',
 
 	// REPLY (dual behavior — checked specially for sendImmediately)
 	reply_to_email: 'REPLY',

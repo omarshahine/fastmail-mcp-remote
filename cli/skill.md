@@ -53,6 +53,8 @@ fastmail email draft --to user@example.com --subject "Draft" --body "..."   # NE
 fastmail email reply <id> --body "Thanks!"           # Save reply as draft (default, correct for replies)
 fastmail email reply <id> --body "Thanks!" --send    # Send reply immediately (confirm with user first)
 fastmail email reply <id> --body "Noted" --all       # Reply all (only when user selected reply-all)
+fastmail email update-draft <draftId> --body "Revised text"                 # Edit an existing draft's body
+fastmail email update-draft <draftId> --body "Revised" --reply-to <srcId>   # Edit a reply draft, regenerate the quote
 ```
 
 ### Replies — Critical Rules
@@ -61,6 +63,12 @@ fastmail email reply <id> --body "Noted" --all       # Reply all (only when user
 - **Draft vs. send:** `fastmail email reply` saves as a draft by default (the user reviews in Fastmail, then hits send). Only pass `--send` when the user explicitly asked to send the reply right now — and confirm once more before doing so.
 - **Reply-all:** Pass `--all` only when the user explicitly selected "reply all". The default is reply-to-sender-only.
 - **Quoting:** `fastmail email reply` quotes the original message automatically. Don't paste the original body into `--body`.
+
+### Editing a Draft
+
+- **`fastmail email update-draft <draftId>`** edits an existing draft's body. JMAP bodies are immutable, so this replaces the draft — **the draft ID changes**. Use the new ID printed in the output for any further edits.
+- Recipients, subject, sender, threading, and attachments are preserved automatically. Pass only the new `--body` (plus optional `--html`/`--markdown`).
+- **For reply drafts:** provide only your message text. The quoted original is re-derived and re-appended — pass `--reply-to <sourceEmailId>` to point at the email being replied to, or omit it to let the draft's `In-Reply-To` header locate the source automatically. Use `--no-quote` to drop the quote entirely.
 
 > **Regression guard for agents:** If your plan has a "draft a reply" branch that calls `fastmail email draft` (CLI) or `create_draft` (MCP), that is a bug. Route the branch to `fastmail email reply <id>` (CLI) or `reply_to_email` (MCP) with `sendImmediately=false`.
 

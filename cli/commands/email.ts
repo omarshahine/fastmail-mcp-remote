@@ -268,6 +268,39 @@ export function registerEmailCommands(
       console.log(typeof result === "string" ? result : JSON.stringify(result));
     });
 
+  // ── email update-draft ───────────────────────────────────
+
+  email
+    .command("update-draft <draftId>")
+    .description("Edit an existing draft's body (creates a replacement — the draft ID changes)")
+    .requiredOption("--body <text>", "New message body (plain text)")
+    .option("--html <text>", "New HTML body")
+    .option("--markdown <text>", "New Markdown body")
+    .option("--reply-to <emailId>", "For reply drafts: source email ID to regenerate the quoted original")
+    .option("--no-quote", "Exclude quoted original (body becomes the entire draft)")
+    .option("--dry-run", "Preview what would be updated without updating")
+    .action(async (draftId, opts) => {
+      validateIds(draftId, "draft ID");
+      validateTextArg(opts.body, "body");
+      if (opts.html) validateTextArg(opts.html, "HTML body");
+      if (opts.markdown) validateTextArg(opts.markdown, "markdown body");
+      if (opts.replyTo) validateIds(opts.replyTo, "reply-to email ID");
+
+      const args = {
+        draftId,
+        body: opts.body,
+        htmlBody: opts.html,
+        markdownBody: opts.markdown,
+        replyToEmailId: opts.replyTo,
+        excludeQuote: !opts.quote,
+      };
+
+      if (opts.dryRun) return dryRunOutput("update_draft", args);
+
+      const result = await client.callTool("update_draft", args);
+      console.log(typeof result === "string" ? result : JSON.stringify(result));
+    });
+
   // ── email mark actions ───────────────────────────────────
 
   email
