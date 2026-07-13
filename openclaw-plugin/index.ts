@@ -112,6 +112,7 @@ const TOOL_CATEGORIES: Record<string, string> = {
 
   // DRAFT
   fastmail_create_draft: "DRAFT",
+  fastmail_update_draft: "DRAFT",
 
   // REPLY
   fastmail_reply_to_email: "REPLY",

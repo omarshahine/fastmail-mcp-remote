@@ -8,7 +8,7 @@ Fastmail has a powerful API ([JMAP](https://jmap.io/)) and supports IMAP, but it
 
 - **Any MCP client** (Claude.ai, Claude Code, GitHub Copilot) connects directly to the Worker via OAuth
 - **[Fastmail CLI](cli/)** — a local command-line tool that calls the Worker and formats responses as compact text, saving 5-7x tokens
-- **[Fastmail CLI for OpenClaw](openclaw-plugin/)** — an OpenClaw plugin (36 agent tools) published as [`fastmail-cli` on npm](https://www.npmjs.com/package/fastmail-cli)
+- **[Fastmail CLI for OpenClaw](openclaw-plugin/)** — an OpenClaw plugin (37 agent tools) published as [`fastmail-cli` on npm](https://www.npmjs.com/package/fastmail-cli)
 
 ## Architecture
 
@@ -104,6 +104,7 @@ cli/
 - `get_email` - Get a specific email by ID (includes threading: messageId, inReplyTo, references, threadId)
 - `send_email` - Send an email (supports attachments and reply threading)
 - `create_draft` - Create a draft email (supports attachments and reply threading)
+- `update_draft` - Edit an existing draft's body (creates a replacement draft — the ID changes; re-derives the quoted original for reply drafts)
 - `reply_to_email` - Reply to an email with automatic threading and quoting (like Fastmail's reply button)
 - `search_emails` - Search emails
 - `get_recent_emails` - Get most recent emails
@@ -460,7 +461,7 @@ The server supports role-based access control with two layers:
 | `CALENDAR_READ` | list_calendars, list_calendar_events, get_calendar_event | Yes | Yes |
 | `CALENDAR_WRITE` | create_calendar_event | Yes | No |
 | `INBOX_MANAGE` | mark_email_read, flag_email, delete_email, move_email, bulk_mark_read, bulk_move, bulk_delete, bulk_flag, create_memo, delete_memo, generate_email_action_urls | Yes | Yes |
-| `DRAFT` | create_draft | Yes | Yes |
+| `DRAFT` | create_draft, update_draft | Yes | Yes |
 | `REPLY` | reply_to_email | Yes | Yes* |
 | `SEND` | send_email | Yes | No |
 | `META` | check_function_availability | Yes | Yes |

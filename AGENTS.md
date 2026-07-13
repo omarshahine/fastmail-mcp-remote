@@ -54,7 +54,7 @@ openclaw-plugin/                     # OpenClaw plugin: "fastmail-cli" on npm
 ├── src/
 │   ├── cli-runner.ts                # execFile wrapper, buildArgs, runTool helpers
 │   └── tools/
-│       ├── email.ts                 # 26 email tools (read + write + organize + bulk)
+│       ├── email.ts                 # 27 email tools (read + write + organize + bulk)
 │       ├── contacts.ts              # 3 contact tools
 │       ├── calendar.ts              # 4 calendar tools
 │       └── memo.ts                  # 3 memo tools
@@ -143,7 +143,7 @@ curl https://<your-worker-domain>/
 
 ## OpenClaw Plugin (npm: fastmail-cli)
 
-The `openclaw-plugin/` directory is published to npm as `fastmail-cli`. It registers 36 OpenClaw agent tools that shell out to the `fastmail` CLI. Zero runtime dependencies — the CLI handles MCP connection, auth, and formatting.
+The `openclaw-plugin/` directory is published to npm as `fastmail-cli`. It registers 37 OpenClaw agent tools that shell out to the `fastmail` CLI. Zero runtime dependencies — the CLI handles MCP connection, auth, and formatting.
 
 ```
 Agent -> Plugin -> execFile(fastmail, args) -> CLI -> MCP SDK -> Remote Worker -> Fastmail JMAP

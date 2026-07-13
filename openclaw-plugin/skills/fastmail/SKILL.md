@@ -30,6 +30,7 @@ The `fastmail` CLI must be installed and authenticated before using these tools.
 |------|---------|
 | `fastmail_send_email` | Send a NEW email (text, HTML, or markdown body) |
 | `fastmail_create_draft` | Create a NEW draft (no source email). **Never use for replies.** |
+| `fastmail_update_draft` | Edit an existing draft's body. **The draft ID changes** — use the returned new ID afterward. |
 | `fastmail_reply_to_email` | Reply to an email. Use this for ALL replies — draft OR send. |
 
 ### Replies — Critical Rules
@@ -38,6 +39,12 @@ The `fastmail` CLI must be installed and authenticated before using these tools.
 - **Draft vs. send:** `fastmail_reply_to_email` defaults to `sendImmediately: false` (saves as a draft). Leave it as the default. Only pass `sendImmediately: true` when the user has explicitly asked to send the reply right now — and confirm once more before doing so.
 - **Reply-all:** Pass `replyAll: true` only when the user explicitly selected "reply all". The default is reply-to-sender-only.
 - **Quoting:** `fastmail_reply_to_email` quotes the original message automatically. Don't paste the original body into your reply content.
+
+### Editing a Draft
+
+- **`fastmail_update_draft`** edits an existing draft's body. JMAP bodies are immutable, so it replaces the draft — **the draft ID changes**. Use the new ID from the response for any further edits.
+- Recipients, subject, sender, threading, and attachments are preserved. Provide only the new `body` (plus optional `htmlBody`/`markdownBody`).
+- **For reply drafts:** pass only your message text. The quoted original is re-derived and re-appended — pass `replyToEmailId` (the email being replied to) to regenerate it, or omit it to auto-locate the source via the draft's `In-Reply-To` header. Pass `excludeQuote: true` to drop the quote.
 
 ### Email Organization (6 optional tools)
 

@@ -240,6 +240,29 @@ export function registerEmailTools(api: PluginApi, cli: string) {
       }), cli),
   }, { optional: true });
 
+  api.registerTool({
+    name: "fastmail_update_draft",
+    description:
+      "Edit an existing draft's body. JMAP bodies are immutable, so this creates a replacement draft and deletes the old one — the draft ID changes (use the returned new ID for further edits). Recipients, subject, sender, threading, and attachments are preserved. For a reply draft, pass only your message text; the quoted original is re-derived and re-appended (from replyToEmailId if given, otherwise via the draft's In-Reply-To header).",
+    parameters: {
+      type: "object",
+      properties: {
+        draftId: { type: "string", description: "ID of the draft to edit" },
+        body: { type: "string", description: "New message body (plain text). For reply drafts, only your message — the quote is re-appended automatically." },
+        htmlBody: { type: "string", description: "New HTML body" },
+        markdownBody: { type: "string", description: "New Markdown body" },
+        replyToEmailId: { type: "string", description: "For reply drafts: source email ID used to regenerate the quoted original. If omitted, the draft's In-Reply-To header is used." },
+        excludeQuote: { type: "boolean", default: false, description: "Exclude quoted original — body becomes the entire draft" },
+      },
+      required: ["draftId", "body"],
+    },
+    execute: (_id, params: { draftId: string; body: string; htmlBody?: string; markdownBody?: string; replyToEmailId?: string; excludeQuote?: boolean }) =>
+      runTool(buildArgs(["email", "update-draft", params.draftId], {
+        body: params.body, html: params.htmlBody, markdown: params.markdownBody,
+        "reply-to": params.replyToEmailId, "no-quote": params.excludeQuote,
+      }), cli),
+  }, { optional: true });
+
   // -- Organize (6 tools, optional) -----------------------------------
 
   api.registerTool({

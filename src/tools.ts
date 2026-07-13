@@ -216,6 +216,56 @@ async function confirmSend(
 }
 
 /**
+ * Build the quoted-original text and HTML for a reply, matching Fastmail's reply
+ * button. Shared by `reply_to_email` (initial draft/send) and `update_draft`
+ * (re-appended when a reply draft's message is edited).
+ */
+function buildReplyQuotes(original: any): { quotedText: string; quotedHtml: string } {
+  const originalFrom = original.from?.[0];
+  const senderName = originalFrom?.name || originalFrom?.email || "Unknown";
+  const senderEmail = originalFrom?.email || "";
+
+  const receivedDate = new Date(original.receivedAt);
+  const dateStr = receivedDate.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const timeStr = receivedDate.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+  const bodyValues = original.bodyValues as Record<string, { value: string }> | undefined;
+  const textPartId = original.textBody?.[0]?.partId;
+  const htmlPartId = original.htmlBody?.[0]?.partId;
+  const originalTextBody =
+    (textPartId && bodyValues?.[textPartId]?.value) || (bodyValues ? Object.values(bodyValues)[0]?.value : "") || "";
+
+  const quotedLines = originalTextBody
+    .split("\n")
+    .map((line: string) => `> ${line}`)
+    .join("\n");
+  const quotedText = `\n\nOn ${dateStr}, at ${timeStr}, ${senderName} <${senderEmail}> wrote:\n\n${quotedLines}`;
+
+  const originalHtmlBody = (htmlPartId && bodyValues?.[htmlPartId]?.value) || "";
+
+  const quotedContent =
+    originalHtmlBody ||
+    `<pre style="white-space: pre-wrap; font-family: inherit;">${originalTextBody.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`;
+
+  const quotedHtml = `
+<br><br>
+<div style="color: #666;">On ${dateStr}, at ${timeStr}, ${senderName} &lt;${senderEmail}&gt; wrote:</div>
+<blockquote type="cite" style="margin: 10px 0 0 0; padding: 0 0 0 10px; border-left: 2px solid #ccc;">
+${quotedContent}
+</blockquote>`;
+
+  return { quotedText, quotedHtml };
+}
+
+/**
  * Register all Fastmail MCP tools on the given server.
  *
  * @param server - McpServer instance to register tools on
@@ -579,46 +629,7 @@ export function registerAllTools(
           let quotedHtml = "";
 
           if (!excludeQuote) {
-            const originalFrom = original.from?.[0];
-            const senderName = originalFrom?.name || originalFrom?.email || "Unknown";
-            const senderEmail = originalFrom?.email || "";
-
-            const receivedDate = new Date(original.receivedAt);
-            const dateStr = receivedDate.toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            });
-            const timeStr = receivedDate.toLocaleTimeString("en-US", {
-              hour: "numeric",
-              minute: "2-digit",
-              hour12: true,
-            });
-
-            const bodyValues = original.bodyValues as Record<string, { value: string }> | undefined;
-            const textPartId = original.textBody?.[0]?.partId;
-            const htmlPartId = original.htmlBody?.[0]?.partId;
-            const originalTextBody =
-              (textPartId && bodyValues?.[textPartId]?.value) || (bodyValues ? Object.values(bodyValues)[0]?.value : "") || "";
-
-            const quotedLines = originalTextBody
-              .split("\n")
-              .map((line: string) => `> ${line}`)
-              .join("\n");
-            quotedText = `\n\nOn ${dateStr}, at ${timeStr}, ${senderName} <${senderEmail}> wrote:\n\n${quotedLines}`;
-
-            const originalHtmlBody = (htmlPartId && bodyValues?.[htmlPartId]?.value) || "";
-
-            const quotedContent =
-              originalHtmlBody ||
-              `<pre style="white-space: pre-wrap; font-family: inherit;">${originalTextBody.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>`;
-
-            quotedHtml = `
-<br><br>
-<div style="color: #666;">On ${dateStr}, at ${timeStr}, ${senderName} &lt;${senderEmail}&gt; wrote:</div>
-<blockquote type="cite" style="margin: 10px 0 0 0; padding: 0 0 0 10px; border-left: 2px solid #ccc;">
-${quotedContent}
-</blockquote>`;
+            ({ quotedText, quotedHtml } = buildReplyQuotes(original));
           }
 
           const finalTextBody = body + quotedText;
@@ -684,6 +695,81 @@ ${quotedContent}
           const errorMessage = error instanceof Error ? error.message : String(error);
           return {
             content: [{ text: `Failed to create reply: ${errorMessage}`, type: "text" }],
+          };
+        }
+      },
+    );
+  }
+
+  if (shouldRegister("update_draft")) {
+    server.tool(
+      "update_draft",
+      "Edit the body of an existing draft, including reply drafts created by `reply_to_email`. JMAP email bodies are immutable, so this creates a replacement draft and deletes the old one — THE DRAFT ID CHANGES. Use the returned new draft ID for any further edits. Recipients, subject, sender identity, threading, and attachments are preserved automatically. For a reply draft, provide only your message text: the quoted original is re-derived and re-appended beneath it (from `replyToEmailId` if given, otherwise found via the draft's In-Reply-To header). Only messages in Drafts can be edited.",
+      {
+        draftId: z.string().describe("ID of the draft to edit."),
+        body: z.string().describe("The new message body (plain text). For a reply draft, provide only your message — the quoted original is re-appended automatically."),
+        htmlBody: z.string().optional().describe("New message body (HTML, optional). If not provided, plain text body is used."),
+        markdownBody: z
+          .string()
+          .optional()
+          .describe("New message body (Markdown, optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
+        replyToEmailId: z
+          .string()
+          .optional()
+          .describe("For reply drafts: ID of the email being replied to, used to regenerate the quoted original beneath your message. If omitted, the draft's In-Reply-To header is used to locate the source automatically."),
+        excludeQuote: z
+          .boolean()
+          .default(false)
+          .describe("If true, don't include a quoted original — your body becomes the entire draft. Default re-derives and keeps the quote for reply drafts."),
+      },
+      async ({ draftId, body, htmlBody, markdownBody, replyToEmailId, excludeQuote }) => {
+        try {
+          const client = ctx.getJmapClient();
+          const draft = await client.getEmailById(draftId);
+          if (!draft) {
+            return {
+              content: [{ text: `Error: Draft with ID '${draftId}' not found`, type: "text" }],
+            };
+          }
+
+          // Resolve the source email so the reply quote can be regenerated, unless
+          // the caller opted out. Prefer an explicit replyToEmailId; otherwise fall
+          // back to the draft's own In-Reply-To header.
+          let source: any = null;
+          if (!excludeQuote) {
+            if (replyToEmailId) {
+              source = await client.getEmailById(replyToEmailId);
+            } else if (draft.inReplyTo && draft.inReplyTo.length > 0) {
+              source = await client.getEmailByMessageId(draft.inReplyTo[0]);
+            }
+          }
+
+          const { quotedText, quotedHtml } = source ? buildReplyQuotes(source) : { quotedText: "", quotedHtml: "" };
+
+          const finalTextBody = body + quotedText;
+          const replyHtml = markdownBody ? await marked.parse(markdownBody) : htmlBody;
+          const finalHtmlBody = replyHtml
+            ? `<div>${replyHtml}</div>${quotedHtml}`
+            : `<div style="white-space: pre-wrap;">${body.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>${quotedHtml}`;
+
+          const newDraftId = await client.updateDraft({
+            draftId,
+            textBody: finalTextBody,
+            htmlBody: finalHtmlBody,
+          });
+
+          return {
+            content: [
+              {
+                text: `Draft updated. New draft ID: ${newDraftId}\nThe old ID (${draftId}) no longer exists — use the new ID for any further edits.${source ? "\nQuoted original preserved beneath your message." : ""}`,
+                type: "text",
+              },
+            ],
+          };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ text: `Failed to update draft: ${errorMessage}`, type: "text" }],
           };
         }
       },
@@ -1425,6 +1511,7 @@ ${quotedContent}
           "send_email",
           "send_copy",
           "create_draft",
+          "update_draft",
           "search_emails",
           "get_recent_emails",
           "get_inbox_updates",

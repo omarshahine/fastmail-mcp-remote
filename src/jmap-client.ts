@@ -625,6 +625,147 @@ export class JmapClient {
     return emailResult.created?.draft?.id || 'unknown';
   }
 
+  /**
+   * Find an email by its RFC5322 Message-ID header value (the bare id, no angle
+   * brackets — same form as the `messageId`/`inReplyTo` fields JMAP returns).
+   * Used to locate the source of a reply draft so its quote can be regenerated.
+   * Returns the first match (with full text + HTML body values) or null.
+   */
+  async getEmailByMessageId(messageId: string): Promise<any | null> {
+    const session = await this.getSession();
+
+    const request: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/query', {
+          accountId: session.accountId,
+          filter: { header: ['Message-Id', messageId] },
+          limit: 1,
+        }, 'query'],
+        ['Email/get', {
+          accountId: session.accountId,
+          '#ids': { resultOf: 'query', name: 'Email/query', path: '/ids' },
+          properties: ['id', 'subject', 'from', 'receivedAt', 'textBody', 'htmlBody', 'bodyValues', 'messageId', 'references'],
+          fetchTextBodyValues: true,
+          fetchHTMLBodyValues: true,
+        }, 'source'],
+      ],
+    };
+
+    const response = await this.makeRequest(request);
+    const list = response.methodResponses[1][1].list;
+    return list && list.length > 0 ? list[0] : null;
+  }
+
+  /**
+   * Edit the body of an existing draft. JMAP email bodies are immutable — the only
+   * mutable Email properties are `keywords` and `mailboxIds` — so "editing" a draft
+   * means creating a replacement with the new body and destroying the original. The
+   * new draft therefore gets a NEW id, which is returned.
+   *
+   * Everything except the body is preserved from the existing draft: recipients,
+   * subject, From identity, threading headers (inReplyTo/references), mailboxes, and
+   * attachments (re-referenced by blobId — no re-upload). Callers pass the final
+   * text/HTML body (any reply quote already appended), matching createDraft's contract.
+   *
+   * The create runs first as its own request; the destroy only runs once we have a
+   * valid replacement, so a failed create can never lose the draft's content. If the
+   * destroy then fails, the new draft is still good and we surface the leftover
+   * duplicate rather than silently leaving two copies.
+   */
+  async updateDraft(params: {
+    draftId: string;
+    textBody?: string;
+    htmlBody?: string;
+  }): Promise<string> {
+    const session = await this.getSession();
+
+    if (!params.textBody && !params.htmlBody) {
+      throw new Error('Either textBody or htmlBody must be provided');
+    }
+
+    const existing = await this.getEmailById(params.draftId);
+    if (!existing) {
+      throw new Error(`Draft not found: ${params.draftId}`);
+    }
+
+    // Guard: only edit true drafts. Destroying a sent or received message would be
+    // destructive, so refuse anything without the $draft keyword.
+    if (existing.keywords?.$draft !== true) {
+      throw new Error(`Email ${params.draftId} is not a draft — refusing to edit. Only messages in Drafts (with the $draft keyword) can be edited.`);
+    }
+
+    const emailObject: JmapEmailObject = {
+      mailboxIds: existing.mailboxIds,
+      keywords: existing.keywords || { $draft: true },
+      from: existing.from || undefined,
+      to: existing.to || [],
+      cc: existing.cc || [],
+      bcc: existing.bcc || [],
+      subject: existing.subject || '',
+      textBody: params.textBody ? [{ partId: 'text', type: 'text/plain' }] : undefined,
+      htmlBody: params.htmlBody ? [{ partId: 'html', type: 'text/html' }] : undefined,
+      bodyValues: {
+        ...(params.textBody && { text: { value: params.textBody } }),
+        ...(params.htmlBody && { html: { value: params.htmlBody } }),
+      },
+      ...(existing.inReplyTo && { inReplyTo: existing.inReplyTo }),
+      ...(existing.references && { references: existing.references }),
+    };
+
+    // Preserve attachments (including inline cid: images) by blobId — no re-upload.
+    if (existing.attachments && existing.attachments.length > 0) {
+      emailObject.attachments = existing.attachments.map((att: any) => ({
+        blobId: att.blobId,
+        type: att.type,
+        name: att.name,
+        ...(att.cid && { cid: att.cid }),
+        ...(att.disposition && { disposition: att.disposition }),
+      }));
+    }
+
+    // 1. Create the replacement draft first — never destroy before we have a good copy.
+    const createResponse = await this.makeRequest({
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/set', {
+          accountId: session.accountId,
+          create: { draft: emailObject },
+        }, 'createDraft'],
+      ],
+    });
+
+    const createResult = createResponse.methodResponses[0][1];
+    if (createResult.notCreated?.draft) {
+      const error = createResult.notCreated.draft;
+      throw new Error(`Failed to update draft: ${error.type || 'unknown error'}. ${error.description || ''}`);
+    }
+    const newId = createResult.created?.draft?.id;
+    if (!newId) {
+      throw new Error('Draft update did not return a new draft id');
+    }
+
+    // 2. Destroy the old draft. The replacement already exists, so a failure here means
+    // a recoverable duplicate — surface it rather than losing anything.
+    const destroyResponse = await this.makeRequest({
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/set', {
+          accountId: session.accountId,
+          destroy: [params.draftId],
+        }, 'destroyOldDraft'],
+      ],
+    });
+
+    const destroyResult = destroyResponse.methodResponses[0][1];
+    if (destroyResult.notDestroyed?.[params.draftId]) {
+      const error = destroyResult.notDestroyed[params.draftId];
+      throw new Error(`Updated draft created as ${newId}, but the old draft ${params.draftId} could not be removed (${error.type || 'unknown'}). You now have two drafts — delete ${params.draftId} manually.`);
+    }
+
+    return newId;
+  }
+
   async sendEmail(email: {
     to: string[];
     cc?: string[];
