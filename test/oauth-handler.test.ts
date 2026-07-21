@@ -158,4 +158,61 @@ describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => 
 
 		expect(response.status).toBe(302);
 	});
+
+	// RFC 8252 §7.3: a REGISTERED client's loopback callback must still match
+	// when the runtime port differs, since native clients bind ephemeral ports.
+	// This is exactly how the fastmail CLI behaves: it registers a portless
+	// loopback URI, then authorizes on whatever port it got.
+	describe('registered-client loopback matching ignores the port', () => {
+		function makeRegisteredEnv(registeredUris: string[]) {
+			const kv = {
+				get: vi.fn(async (key: string) =>
+					key.startsWith('client:')
+						? JSON.stringify({ client_id: 'cli', client_name: 'cli', redirect_uris: registeredUris })
+						: null
+				),
+				put: vi.fn(async () => undefined),
+				delete: vi.fn(async () => undefined),
+			};
+			return {
+				OAUTH_KV: kv,
+				ACCESS_TEAM_NAME: TEAM_NAME,
+				ACCESS_CLIENT_ID: CLIENT_ID,
+			} as unknown as Env;
+		}
+
+		it.each([
+			['IPv4', 'http://127.0.0.1/callback', 'http://127.0.0.1:53187/callback'],
+			['localhost', 'http://localhost/callback', 'http://localhost:53187/callback'],
+			['IPv6', 'http://[::1]/callback', 'http://[::1]:53187/callback'],
+		])('allows a %s loopback callback on a different port', async (_label, registered, requested) => {
+			const env = makeRegisteredEnv([registered]);
+			const { request, url } = authorizeRequest({
+				client_id: 'cli',
+				redirect_uri: requested,
+				response_type: 'code',
+				code_challenge: 'a'.repeat(43),
+				code_challenge_method: 'S256',
+			});
+
+			const response = await handleAuthorize(request, env, url);
+
+			expect(response.status).toBe(302);
+		});
+
+		it('still rejects a loopback callback whose path differs from the registered one', async () => {
+			const env = makeRegisteredEnv(['http://127.0.0.1/callback']);
+			const { request, url } = authorizeRequest({
+				client_id: 'cli',
+				redirect_uri: 'http://127.0.0.1:53187/evil',
+				response_type: 'code',
+				code_challenge: 'a'.repeat(43),
+				code_challenge_method: 'S256',
+			});
+
+			const response = await handleAuthorize(request, env, url);
+
+			expect(response.status).toBe(400);
+		});
+	});
 });

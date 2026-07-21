@@ -21,7 +21,13 @@ export const DEFAULT_SCOPE = 'mcp:read mcp:write';
 // via the ALLOWED_REDIRECT_HOSTS env var (comma-separated hostnames).
 const DEFAULT_REDIRECT_HOSTS = ['claude.ai', 'claude.com', 'anthropic.com'];
 
-function isLoopbackHost(hostname: string): boolean {
+/**
+ * Loopback hosts for native/CLI clients. Exported so every redirect_uri check
+ * shares one definition — the allowlist and the registered-URI matcher must
+ * agree on what counts as loopback, or an IPv6 client passes one and fails the
+ * other. `URL.hostname` yields the bracketed form for IPv6, so accept both.
+ */
+export function isLoopbackHost(hostname: string): boolean {
 	return (
 		hostname === 'localhost' ||
 		hostname === '127.0.0.1' ||

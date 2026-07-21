@@ -12,6 +12,7 @@ import {
 	isExpired,
 	isUserAllowed,
 	isAllowedRedirectUri,
+	isLoopbackHost,
 	verifyCodeChallenge,
 	validateRefreshToken,
 	verifyAccessIdToken,
@@ -606,9 +607,18 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
 }
 
 // Whether a requested redirect_uri is covered by a client's registered set.
-// Exact string match, except loopback URIs (localhost/127.0.0.1) match on
-// scheme+host+path while ignoring the port, per RFC 8252 §7.3 — native/CLI
-// clients bind an ephemeral port that won't equal the registered one.
+// Exact string match, except loopback URIs match on scheme+host+path while
+// ignoring the port, per RFC 8252 §7.3 — native/CLI clients bind an ephemeral
+// port that won't equal the one they registered.
+//
+// Loopback detection MUST come from the shared isLoopbackHost (IPv4, IPv6, and
+// localhost). An inline copy here previously omitted IPv6, so a client that
+// registered http://[::1]/callback passed the global allowlist but was then
+// rejected by this matcher.
+function isLoopbackUrl(u: URL): boolean {
+	return isLoopbackHost(u.hostname) && (u.protocol === 'http:' || u.protocol === 'https:');
+}
+
 function redirectUriMatchesRegistered(redirectUri: string, registered: string[]): boolean {
 	if (registered.includes(redirectUri)) return true;
 
@@ -618,19 +628,13 @@ function redirectUriMatchesRegistered(redirectUri: string, registered: string[])
 	} catch {
 		return false;
 	}
-	const isLoopback =
-		(reqUrl.hostname === 'localhost' || reqUrl.hostname === '127.0.0.1') &&
-		(reqUrl.protocol === 'http:' || reqUrl.protocol === 'https:');
-	if (!isLoopback) return false;
+	if (!isLoopbackUrl(reqUrl)) return false;
 
 	return registered.some((entry) => {
 		try {
 			const regUrl = new URL(entry);
-			const regIsLoopback =
-				(regUrl.hostname === 'localhost' || regUrl.hostname === '127.0.0.1') &&
-				(regUrl.protocol === 'http:' || regUrl.protocol === 'https:');
 			return (
-				regIsLoopback &&
+				isLoopbackUrl(regUrl) &&
 				regUrl.protocol === reqUrl.protocol &&
 				regUrl.hostname === reqUrl.hostname &&
 				regUrl.pathname === reqUrl.pathname
