@@ -312,6 +312,11 @@ Add `ACCESS_TEAM_NAME` and `ALLOWED_USERS` as plaintext vars in your `wrangler.j
 - **ACCESS_TEAM_NAME**: Your Cloudflare Zero Trust team name (the subdomain before `.cloudflareaccess.com`)
 - **ALLOWED_USERS**: Comma-separated list of email addresses allowed to access the server
 
+Two optional vars tighten things further:
+
+- **ALLOWED_REDIRECT_HOSTS**: Extra hostnames permitted as OAuth `redirect_uri` targets. Loopback (native/CLI clients) and the worker's own origin are always allowed; everything else must be an `https` host on this list. Defaults to `claude.ai,claude.com,anthropic.com`. Setting it **replaces** the defaults rather than adding to them.
+- **ACTION_ALLOWED_ORIGINS**: Browser origins allowed to call the signed `/api/action/*` endpoints. Leave unset (`*`) if you open the reading-digest page from a local file, which sends `Origin: null`.
+
 For local development, also add these to `.dev.vars` (gitignored).
 
 > **Warning**: Deploying without the `vars` section in `wrangler.jsonc` will wipe all dashboard-set plaintext vars. Always keep `vars` in your local config.

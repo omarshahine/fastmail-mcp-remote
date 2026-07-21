@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { verifyAccessIdToken } from '../src/oauth-utils';
+import { verifyAccessIdToken, isAllowedRedirectUri } from '../src/oauth-utils';
 
 const TEAM_NAME = 'example-team';
 const CLIENT_ID = 'access-client-id';
@@ -126,5 +126,56 @@ describe('verifyAccessIdToken', () => {
 		await expect(
 			verifyAccessIdToken(token, { teamName: TEAM_NAME, clientId: CLIENT_ID, now: NOW })
 		).rejects.toThrow('audience mismatch');
+	});
+});
+
+describe('isAllowedRedirectUri', () => {
+	const ORIGIN = 'https://worker.example';
+
+	it('rejects an arbitrary external https origin (the phishing vector)', () => {
+		expect(isAllowedRedirectUri('https://evil.example/cb', ORIGIN)).toBe(false);
+	});
+
+	it('allows the default Claude/Anthropic hosts and their subdomains', () => {
+		expect(isAllowedRedirectUri('https://claude.ai/api/mcp/auth_callback', ORIGIN)).toBe(true);
+		expect(isAllowedRedirectUri('https://claude.com/cb', ORIGIN)).toBe(true);
+		expect(isAllowedRedirectUri('https://console.anthropic.com/cb', ORIGIN)).toBe(true);
+	});
+
+	it("does not treat an attacker suffix domain as a subdomain match", () => {
+		expect(isAllowedRedirectUri('https://claude.ai.evil.example/cb', ORIGIN)).toBe(false);
+		expect(isAllowedRedirectUri('https://notclaude.ai/cb', ORIGIN)).toBe(false);
+	});
+
+	it('allows loopback on any port for native/CLI clients', () => {
+		expect(isAllowedRedirectUri('http://127.0.0.1:53187/callback', ORIGIN)).toBe(true);
+		expect(isAllowedRedirectUri('http://localhost:8080/callback', ORIGIN)).toBe(true);
+	});
+
+	it("allows the worker's own origin", () => {
+		expect(isAllowedRedirectUri('https://worker.example/mcp/callback', ORIGIN)).toBe(true);
+	});
+
+	it('allows OOB redirect targets', () => {
+		expect(isAllowedRedirectUri('urn:ietf:wg:oauth:2.0:oob', ORIGIN)).toBe(true);
+		expect(isAllowedRedirectUri('oob:custom', ORIGIN)).toBe(true);
+	});
+
+	it('rejects non-loopback plain http and custom app schemes', () => {
+		expect(isAllowedRedirectUri('http://claude.ai/cb', ORIGIN)).toBe(false);
+		expect(isAllowedRedirectUri('com.evil.app://cb', ORIGIN)).toBe(false);
+	});
+
+	it('honors an explicit ALLOWED_REDIRECT_HOSTS override, replacing the defaults', () => {
+		const allow = 'partner.example';
+		expect(isAllowedRedirectUri('https://partner.example/cb', ORIGIN, allow)).toBe(true);
+		expect(isAllowedRedirectUri('https://app.partner.example/cb', ORIGIN, allow)).toBe(true);
+		// Once an override is set, the built-in Claude defaults no longer apply.
+		expect(isAllowedRedirectUri('https://claude.ai/cb', ORIGIN, allow)).toBe(false);
+	});
+
+	it('rejects malformed redirect URIs', () => {
+		expect(isAllowedRedirectUri('not a url', ORIGIN)).toBe(false);
+		expect(isAllowedRedirectUri('', ORIGIN)).toBe(false);
 	});
 });

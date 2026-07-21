@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
 	type PermissionsConfig,
 	type UserConfig,
 	getUserConfig,
+	getPermissionsConfig,
 	isToolAllowed,
 	getVisibleTools,
 	checkMcpPermissions,
@@ -285,6 +286,67 @@ describe('checkMcpPermissions — fail-closed', () => {
 		});
 		const result = await checkMcpPermissions(body, 'delegate@example.com', mockKv);
 		expect(result).toBeNull();
+	});
+});
+
+describe('getPermissionsConfig — fail-closed defaults', () => {
+	beforeEach(() => {
+		_resetCache();
+	});
+
+	it('defaults to delegate when config:permissions is absent from KV', async () => {
+		const kv = { get: vi.fn(async () => null) } as unknown as KVNamespace;
+
+		const config = await getPermissionsConfig(kv);
+
+		expect(config.default_role).toBe('delegate');
+		expect(config.users).toEqual({});
+		// An identity with no explicit entry must NOT inherit admin.
+		expect(getUserConfig(config, 'someone@example.com').role).toBe('delegate');
+	});
+
+	it('does not grant send rights to an unlisted user under the default config', async () => {
+		const kv = { get: vi.fn(async () => null) } as unknown as KVNamespace;
+
+		const config = await getPermissionsConfig(kv);
+		const user = getUserConfig(config, 'unlisted@example.com');
+
+		expect(isToolAllowed(user, 'send_email').allowed).toBe(false);
+		expect(isToolAllowed(user, 'delete_email').allowed).toBe(true); // INBOX_MANAGE is delegate-allowed
+		expect(isToolAllowed(user, 'list_emails').allowed).toBe(true);
+	});
+
+	it('fails closed on a KV read error without caching the fallback', async () => {
+		const get = vi
+			.fn()
+			.mockRejectedValueOnce(new Error('KV unavailable'))
+			.mockResolvedValueOnce({
+				users: { 'omar@example.com': { role: 'admin', disabled_categories: [] } },
+				default_role: 'delegate',
+				default_disabled_categories: [],
+			});
+		const kv = { get } as unknown as KVNamespace;
+
+		// First call fails → fail-closed default.
+		const failed = await getPermissionsConfig(kv);
+		expect(failed.default_role).toBe('delegate');
+		expect(failed.users).toEqual({});
+
+		// A transient failure must not be cached for the 5-minute window: the
+		// very next call re-reads KV and picks up the real config.
+		const recovered = await getPermissionsConfig(kv);
+		expect(getUserConfig(recovered, 'omar@example.com').role).toBe('admin');
+		expect(get).toHaveBeenCalledTimes(2);
+	});
+
+	it('caches a genuine miss (does not re-read KV on every call)', async () => {
+		const get = vi.fn(async () => null);
+		const kv = { get } as unknown as KVNamespace;
+
+		await getPermissionsConfig(kv);
+		await getPermissionsConfig(kv);
+
+		expect(get).toHaveBeenCalledTimes(1);
 	});
 });
 

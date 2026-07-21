@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { handleGetTokenCallback } from '../src/oauth-handler';
+import { handleGetTokenCallback, handleAuthorize } from '../src/oauth-handler';
 
 const TEAM_NAME = 'example-team';
 const CLIENT_ID = 'access-client-id';
@@ -53,5 +53,109 @@ describe('handleGetTokenCallback', () => {
 		expect(response.status).toBe(400);
 		expect(await response.text()).toContain('unsupported alg');
 		expect(kv.put).not.toHaveBeenCalled();
+	});
+});
+
+describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => {
+	// KV with no registered client (the unregistered-client_id attack path).
+	function makeEnv() {
+		const kv = {
+			get: vi.fn(async () => null),
+			put: vi.fn(async () => undefined),
+			delete: vi.fn(async () => undefined),
+		};
+		const env = {
+			OAUTH_KV: kv,
+			ACCESS_TEAM_NAME: TEAM_NAME,
+			ACCESS_CLIENT_ID: CLIENT_ID,
+		} as unknown as Env;
+		return { env, kv };
+	}
+
+	function authorizeRequest(params: Record<string, string>) {
+		const url = new URL('https://worker.example/mcp/authorize');
+		for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+		return { request: new Request(url.toString()), url };
+	}
+
+	it('rejects an attacker-controlled redirect_uri for an unregistered client (the exploit)', async () => {
+		const { env, kv } = makeEnv();
+		const { request, url } = authorizeRequest({
+			client_id: 'attacker-random-id',
+			redirect_uri: 'https://evil.example/cb',
+			response_type: 'code',
+			code_challenge: 'a'.repeat(43),
+			code_challenge_method: 'S256',
+		});
+
+		const response = await handleAuthorize(request, env, url);
+
+		expect(response.status).toBe(400);
+		expect(await response.text()).toContain('Invalid redirect_uri');
+		// No state persisted — the flow never reached the CF Access redirect.
+		expect(kv.put).not.toHaveBeenCalled();
+	});
+
+	it('rejects a non-OOB authorize request with no PKCE challenge', async () => {
+		const { env, kv } = makeEnv();
+		const { request, url } = authorizeRequest({
+			client_id: 'some-client',
+			redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+			response_type: 'code',
+		});
+
+		const response = await handleAuthorize(request, env, url);
+
+		expect(response.status).toBe(400);
+		expect(await response.text()).toContain('PKCE');
+		expect(kv.put).not.toHaveBeenCalled();
+	});
+
+	it('rejects a plain PKCE method (downgrade attempt)', async () => {
+		const { env } = makeEnv();
+		const { request, url } = authorizeRequest({
+			client_id: 'some-client',
+			redirect_uri: 'https://claude.ai/cb',
+			response_type: 'code',
+			code_challenge: 'verifier-as-challenge',
+			code_challenge_method: 'plain',
+		});
+
+		const response = await handleAuthorize(request, env, url);
+
+		expect(response.status).toBe(400);
+		expect(await response.text()).toContain('S256');
+	});
+
+	it('accepts an allowlisted https redirect with S256 PKCE and 302s to CF Access', async () => {
+		const { env, kv } = makeEnv();
+		const { request, url } = authorizeRequest({
+			client_id: 'some-client',
+			redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+			response_type: 'code',
+			code_challenge: 'a'.repeat(43),
+			code_challenge_method: 'S256',
+		});
+
+		const response = await handleAuthorize(request, env, url);
+
+		expect(response.status).toBe(302);
+		expect(response.headers.get('Location')).toContain('cloudflareaccess.com');
+		expect(kv.put).toHaveBeenCalledOnce();
+	});
+
+	it('accepts a loopback redirect on an ephemeral port with S256 PKCE', async () => {
+		const { env } = makeEnv();
+		const { request, url } = authorizeRequest({
+			client_id: 'cli-client',
+			redirect_uri: 'http://127.0.0.1:53187/callback',
+			response_type: 'code',
+			code_challenge: 'a'.repeat(43),
+			code_challenge_method: 'S256',
+		});
+
+		const response = await handleAuthorize(request, env, url);
+
+		expect(response.status).toBe(302);
 	});
 });

@@ -11,12 +11,14 @@ import {
 	getExpiresAt,
 	isExpired,
 	isUserAllowed,
+	isAllowedRedirectUri,
 	verifyCodeChallenge,
 	validateRefreshToken,
 	verifyAccessIdToken,
 	STATE_TTL_SECONDS,
 	CODE_TTL_SECONDS,
 	TOKEN_TTL_SECONDS,
+	CLIENT_TTL_SECONDS,
 	DEFAULT_SCOPE,
 	getAccessBaseUrl,
 	type OAuthStateData,
@@ -78,7 +80,7 @@ export function handleOAuthDiscovery(url: URL): Response {
 		response_modes_supported: ['query'],
 		grant_types_supported: ['authorization_code', 'refresh_token'],
 		token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
-		code_challenge_methods_supported: ['S256', 'plain'],
+		code_challenge_methods_supported: ['S256'],
 		service_documentation: url.origin,
 		logo_uri: `${url.origin}/favicon.png`,
 	};
@@ -121,64 +123,39 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 		return new Response('Invalid response_type, only "code" is supported', { status: 400 });
 	}
 
-	// Validate PKCE if provided
-	if (codeChallenge && codeChallengeMethod !== 'S256' && codeChallengeMethod !== 'plain') {
-		return new Response('Invalid code_challenge_method', { status: 400 });
+	// PKCE: only S256 is accepted. `plain` is rejected because it offers no
+	// protection against an intercepted authorization code.
+	if (codeChallenge && codeChallengeMethod !== 'S256') {
+		return new Response('Only code_challenge_method=S256 is supported', { status: 400 });
 	}
 
-	// Validate redirect URI (allow HTTPS, localhost, OOB, or custom schemes for native apps)
+	// Validate redirect URI against the host allowlist. This is enforced for
+	// ALL clients — registered or not — so open dynamic registration can never
+	// whitelist an attacker-controlled origin and phish an auth code to it
+	// (the unregistered→any-https fallback that made this exploitable is gone).
 	const isOOBUri = redirectUri === 'urn:ietf:wg:oauth:2.0:oob' || redirectUri.startsWith('oob:');
+	if (!isAllowedRedirectUri(redirectUri, url.origin, env.ALLOWED_REDIRECT_HOSTS)) {
+		return new Response('Invalid redirect_uri', { status: 400 });
+	}
 	if (!isOOBUri) {
-		try {
-			const redirectUrl = new URL(redirectUri);
-			const proto = redirectUrl.protocol;
-
-			// Per RFC 8252 §7.3, loopback redirect URIs for native apps must match on
-			// scheme, host, and path — but the port MUST be ignored because native apps
-			// bind to ephemeral ports.
-			const isLoopback =
-				(redirectUrl.hostname === 'localhost' || redirectUrl.hostname === '127.0.0.1') &&
-				(proto === 'http:' || proto === 'https:');
-
-			// Look up dynamically-registered client to validate redirect_uri
-			const clientJson = await env.OAUTH_KV.get(`client:${clientId}`);
-			if (clientJson) {
-				// Client was dynamically registered — validate redirect_uri
-				const clientData = JSON.parse(clientJson) as OAuthClientData;
-				const exactMatch = clientData.redirect_uris.includes(redirectUri);
-
-				// For loopback URIs, match scheme + host + path, ignoring port (RFC 8252 §7.3)
-				const loopbackMatch = isLoopback && clientData.redirect_uris.some((registered) => {
-					try {
-						const regUrl = new URL(registered);
-						const regIsLoopback =
-							(regUrl.hostname === 'localhost' || regUrl.hostname === '127.0.0.1') &&
-							(regUrl.protocol === 'http:' || regUrl.protocol === 'https:');
-						return regIsLoopback &&
-							regUrl.protocol === redirectUrl.protocol &&
-							regUrl.hostname === redirectUrl.hostname &&
-							regUrl.pathname === redirectUrl.pathname;
-					} catch {
-						return false;
-					}
-				});
-
-				if (!exactMatch && !loopbackMatch) {
-					return new Response('Invalid redirect_uri', { status: 400 });
-				}
-			} else {
-				// No registration record — fall back to scheme validation
-				// Allow https, localhost HTTP, and custom schemes for native apps (RFC 8252)
-				const isHttps = proto === 'https:';
-				const isCustomScheme = proto !== 'http:' && proto !== 'https:';
-
-				if (!isHttps && !isLoopback && !isCustomScheme) {
-					return new Response('Invalid redirect_uri', { status: 400 });
-				}
+		// For a pre-registered client, additionally require membership in its
+		// registered redirect_uris. Loopback URIs match on scheme+host+path but
+		// ignore the port, because native/CLI clients bind an ephemeral port at
+		// runtime that differs from the one registered (RFC 8252 §7.3).
+		const clientJson = await env.OAUTH_KV.get(`client:${clientId}`);
+		if (clientJson) {
+			const clientData = JSON.parse(clientJson) as OAuthClientData;
+			if (!redirectUriMatchesRegistered(redirectUri, clientData.redirect_uris)) {
+				return new Response('Invalid redirect_uri', { status: 400 });
 			}
-		} catch {
-			return new Response('Invalid redirect_uri', { status: 400 });
 		}
+	}
+
+	// Require PKCE (S256) for every non-OOB flow. Without this, an intercepted
+	// authorization code alone is enough to mint a full-scope token. OOB is
+	// exempt because its code is shown on-screen and never auto-redirected.
+	if (!isOOBUri && (!codeChallenge || codeChallengeMethod !== 'S256')) {
+		return new Response('PKCE (code_challenge with S256) is required for non-OOB flows', { status: 400 });
 	}
 
 	// Generate state and store OAuth parameters in KV
@@ -430,13 +407,25 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
 		return jsonError('invalid_grant', 'redirect_uri mismatch', 400);
 	}
 
-	// Validate PKCE if code challenge was provided
+	// Defense in depth: re-check the bound redirect_uri against the host
+	// allowlist at token time, so a code minted before an allowlist change
+	// (or via any future authorize-side gap) still cannot be redeemed for a
+	// token destined to a disallowed origin.
+	if (!isAllowedRedirectUri(authCode.redirect_uri, new URL(request.url).origin, env.ALLOWED_REDIRECT_HOSTS)) {
+		return jsonError('invalid_grant', 'redirect_uri not permitted', 400);
+	}
+
+	// Validate PKCE if code challenge was provided. Only S256 is accepted —
+	// `plain` offers no protection against an intercepted code.
 	if (authCode.code_challenge) {
+		if (authCode.code_challenge_method !== 'S256') {
+			return jsonError('invalid_grant', 'Only S256 PKCE is supported', 400);
+		}
 		if (!body.code_verifier) {
 			return jsonError('invalid_request', 'Missing code_verifier for PKCE', 400);
 		}
 
-		const isValid = await verifyCodeChallenge(body.code_verifier, authCode.code_challenge, authCode.code_challenge_method || 'plain');
+		const isValid = await verifyCodeChallenge(body.code_verifier, authCode.code_challenge, 'S256');
 		if (!isValid) {
 			return jsonError('invalid_grant', 'Invalid code_verifier', 400);
 		}
@@ -579,6 +568,15 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
 		return jsonError('invalid_request', 'Missing or invalid redirect_uris', 400);
 	}
 
+	// Reject registration outright if any redirect_uri is outside the host
+	// allowlist, so unauthenticated registration cannot stage a phishing target.
+	const workerOrigin = new URL(request.url).origin;
+	for (const uri of body.redirect_uris) {
+		if (typeof uri !== 'string' || !isAllowedRedirectUri(uri, workerOrigin, env.ALLOWED_REDIRECT_HOSTS)) {
+			return jsonError('invalid_redirect_uri', `redirect_uri not permitted: ${uri}`, 400);
+		}
+	}
+
 	// Generate client credentials
 	const clientId = generateState();
 
@@ -588,8 +586,11 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
 		redirect_uris: body.redirect_uris,
 	};
 
-	// Store in KV (no expiration for clients)
-	await env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(clientData));
+	// TTL-bounded so open, unauthenticated registration cannot grow OAUTH_KV
+	// without limit. Clients re-register transparently once a record lapses.
+	await env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(clientData), {
+		expirationTtl: CLIENT_TTL_SECONDS,
+	});
 
 	return new Response(
 		JSON.stringify({
@@ -604,11 +605,80 @@ export async function handleRegister(request: Request, env: Env): Promise<Respon
 	);
 }
 
+// Whether a requested redirect_uri is covered by a client's registered set.
+// Exact string match, except loopback URIs (localhost/127.0.0.1) match on
+// scheme+host+path while ignoring the port, per RFC 8252 §7.3 — native/CLI
+// clients bind an ephemeral port that won't equal the registered one.
+function redirectUriMatchesRegistered(redirectUri: string, registered: string[]): boolean {
+	if (registered.includes(redirectUri)) return true;
+
+	let reqUrl: URL;
+	try {
+		reqUrl = new URL(redirectUri);
+	} catch {
+		return false;
+	}
+	const isLoopback =
+		(reqUrl.hostname === 'localhost' || reqUrl.hostname === '127.0.0.1') &&
+		(reqUrl.protocol === 'http:' || reqUrl.protocol === 'https:');
+	if (!isLoopback) return false;
+
+	return registered.some((entry) => {
+		try {
+			const regUrl = new URL(entry);
+			const regIsLoopback =
+				(regUrl.hostname === 'localhost' || regUrl.hostname === '127.0.0.1') &&
+				(regUrl.protocol === 'http:' || regUrl.protocol === 'https:');
+			return (
+				regIsLoopback &&
+				regUrl.protocol === reqUrl.protocol &&
+				regUrl.hostname === reqUrl.hostname &&
+				regUrl.pathname === reqUrl.pathname
+			);
+		} catch {
+			return false;
+		}
+	});
+}
+
 function jsonError(error: string, description: string, status: number): Response {
 	return new Response(JSON.stringify({ error, error_description: description }), {
 		status,
 		headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', Pragma: 'no-cache' },
 	});
+}
+
+// Security headers for every HTML page this worker serves. These pages can
+// carry a bearer token or authorization code, so:
+//  - Referrer-Policy stops the URL leaking to any third party via Referer
+//  - CSP denies by default; there is no connect/form/frame surface at all, so
+//    even a hypothetical injection has no network path to exfiltrate the token
+//  - scripts run only under a per-response nonce (no 'unsafe-inline')
+function htmlSecurityHeaders(nonce?: string): Record<string, string> {
+	const scriptSrc = nonce ? `'nonce-${nonce}'` : "'none'";
+	return {
+		'Content-Type': 'text/html; charset=utf-8',
+		'Cache-Control': 'no-store',
+		'Referrer-Policy': 'no-referrer',
+		'X-Content-Type-Options': 'nosniff',
+		'X-Frame-Options': 'DENY',
+		'Content-Security-Policy': [
+			"default-src 'none'",
+			"style-src 'unsafe-inline'",
+			`script-src ${scriptSrc}`,
+			"img-src 'self'",
+			"base-uri 'none'",
+			"form-action 'none'",
+			"frame-ancestors 'none'",
+		].join('; '),
+	};
+}
+
+// Per-response CSP nonce.
+function generateNonce(): string {
+	const bytes = new Uint8Array(16);
+	crypto.getRandomValues(bytes);
+	return btoa(String.fromCharCode(...bytes)).replace(/=+$/, '');
 }
 
 // Escape HTML special characters to prevent XSS
@@ -624,6 +694,7 @@ function escapeHtml(str: string | null | undefined): string {
 
 // Render OOB page for explicit headless/SSH OAuth flow (no redirect attempt)
 function renderOOBPage(authCode: string, clientState: string | null, _unused: null): Response {
+	const nonce = generateNonce();
 	const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -737,7 +808,7 @@ function renderOOBPage(authCode: string, clientState: string | null, _unused: nu
 		<div class="code-label">Authorization Code</div>
 		<div class="code-box">
 			<code id="authCode">${authCode}</code>
-			<button class="copy-btn" onclick="copyCode()">Copy</button>
+			<button class="copy-btn" id="copyBtn">Copy</button>
 		</div>
 
 		<div class="instructions">
@@ -752,11 +823,11 @@ function renderOOBPage(authCode: string, clientState: string | null, _unused: nu
 		${clientState ? `<div class="state-info">State: ${escapeHtml(clientState)}</div>` : ''}
 	</div>
 
-	<script>
-		function copyCode() {
+	<script nonce="${nonce}">
+		document.getElementById('copyBtn').addEventListener('click', () => {
 			const code = document.getElementById('authCode').textContent;
 			navigator.clipboard.writeText(code).then(() => {
-				const btn = document.querySelector('.copy-btn');
+				const btn = document.getElementById('copyBtn');
 				btn.textContent = 'Copied!';
 				btn.classList.add('copied');
 				setTimeout(() => {
@@ -764,17 +835,14 @@ function renderOOBPage(authCode: string, clientState: string | null, _unused: nu
 					btn.classList.remove('copied');
 				}, 2000);
 			});
-		}
+		});
 	</script>
 </body>
 </html>`;
 
 	return new Response(html, {
 		status: 200,
-		headers: {
-			'Content-Type': 'text/html; charset=utf-8',
-			'Cache-Control': 'no-store',
-		},
+		headers: htmlSecurityHeaders(nonce),
 	});
 }
 
@@ -925,6 +993,7 @@ export async function handleGetTokenCallback(request: Request, env: Env, url: UR
 }
 
 function renderDirectTokenSuccess(token: string, email: string, expiry: string, origin: string): Response {
+	const nonce = generateNonce();
 	const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1036,7 +1105,7 @@ function renderDirectTokenSuccess(token: string, email: string, expiry: string, 
 			<div class="section-title">Your Access Token</div>
 			<div class="token-box">
 				<code id="token">${token}</code>
-				<button class="copy-btn" onclick="copyToken()">Copy</button>
+				<button class="copy-btn" id="copyBtn">Copy</button>
 			</div>
 		</div>
 
@@ -1055,22 +1124,22 @@ function renderDirectTokenSuccess(token: string, email: string, expiry: string, 
 		<p class="expiry">Token expires: ${expiry}</p>
 	</div>
 
-	<script>
-		function copyToken() {
+	<script nonce="${nonce}">
+		document.getElementById('copyBtn').addEventListener('click', () => {
 			navigator.clipboard.writeText(document.getElementById('token').textContent).then(() => {
-				const btn = document.querySelector('.copy-btn');
+				const btn = document.getElementById('copyBtn');
 				btn.textContent = 'Copied!';
 				btn.classList.add('copied');
 				setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
 			});
-		}
+		});
 	</script>
 </body>
 </html>`;
 
 	return new Response(html, {
 		status: 200,
-		headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+		headers: htmlSecurityHeaders(nonce),
 	});
 }
 
@@ -1140,6 +1209,6 @@ function renderDirectTokenError(message: string): Response {
 
 	return new Response(html, {
 		status: 400,
-		headers: { 'Content-Type': 'text/html; charset=utf-8' },
+		headers: htmlSecurityHeaders(),
 	});
 }

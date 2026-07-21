@@ -66,13 +66,22 @@ export async function verifyAction(
 	// Check expiry first
 	if (Date.now() / 1000 > exp) return false;
 
+	// Reject anything that isn't a well-formed HMAC-SHA256 hex digest before
+	// decoding — hexToBuffer would otherwise produce NaN bytes for junk input.
+	if (!/^[0-9a-f]{64}$/i.test(sig)) return false;
+
 	const key = await importKey(signingKey);
 	const payload = buildPayload(action, emailId, mid, exp);
-	const expected = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload));
 
-	// Constant-time comparison via verify
-	return crypto.subtle.verify('HMAC', key, expected, new TextEncoder().encode(bufferToHex(expected)).buffer as ArrayBuffer)
-		.then(() => sig === bufferToHex(expected));
+	// Verify the CALLER's signature against the payload. crypto.subtle.verify
+	// does the digest comparison internally in constant time, so no signature
+	// bytes are compared with a short-circuiting JS `===`.
+	return crypto.subtle.verify(
+		'HMAC',
+		key,
+		hexToBuffer(sig),
+		new TextEncoder().encode(payload),
+	);
 }
 
 // ─── URL Generation ──────────────────────────────────────────────────────────
