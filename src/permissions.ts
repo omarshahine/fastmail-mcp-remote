@@ -127,9 +127,13 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 let cachedConfig: PermissionsConfig | null = null;
 let cachedAt = 0;
 
+// Fails CLOSED: with no config in KV, every identity resolves to the least
+// privileged role. Granting admin requires an explicit `users` entry — a
+// missing, deleted, or never-seeded `config:permissions` key must never
+// silently hand out full send/delete rights to everyone in ALLOWED_USERS.
 const DEFAULT_CONFIG: PermissionsConfig = {
 	users: {},
-	default_role: 'admin',
+	default_role: 'delegate',
 	default_disabled_categories: [],
 };
 
@@ -140,7 +144,19 @@ export async function getPermissionsConfig(kv: KVNamespace): Promise<Permissions
 		return cachedConfig;
 	}
 
-	const data = await kv.get<PermissionsConfig>('config:permissions', 'json');
+	let data: PermissionsConfig | null;
+	try {
+		data = await kv.get<PermissionsConfig>('config:permissions', 'json');
+	} catch (e) {
+		// A KV read FAILURE is not the same as a KV MISS. Caching the fallback
+		// here would pin it for the whole 5-minute window on one transient
+		// blip, so serve fail-closed for this request only and retry on the
+		// next one.
+		console.error(`[permissions] KV read failed — failing closed for this request: ${e}`);
+		return DEFAULT_CONFIG;
+	}
+
+	// A genuine miss (key absent) is cacheable: the fallback is fail-closed.
 	cachedConfig = data ?? DEFAULT_CONFIG;
 	cachedAt = now;
 	return cachedConfig;

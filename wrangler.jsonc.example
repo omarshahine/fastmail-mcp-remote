@@ -6,8 +6,12 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "fastmail-mcp-remote",
 	"account_id": "<your-cloudflare-account-id>",
-	"workers_dev": true,
-	"preview_urls": true,
+	// Serve ONLY via the custom domain below. Leaving these on also exposes
+	// <worker>.<account>.workers.dev and per-version preview URLs, which bypass
+	// any edge protection (WAF, rate limiting, hostname-scoped Access) bound to
+	// the custom hostname. Set them to true only if you have no custom domain.
+	"workers_dev": false,
+	"preview_urls": false,
 	"routes": [
 		{
 			"pattern": "<your-custom-domain>",

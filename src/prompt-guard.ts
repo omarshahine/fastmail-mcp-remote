@@ -13,8 +13,17 @@
  * 3. Content annotation: Adds warnings when suspicious patterns are detected
  */
 
-// Delimiter tokens for spotlighting - randomized per-session to prevent attacker adaptation
-const SESSION_TOKEN = Math.random().toString(36).substring(2, 8).toUpperCase();
+// Delimiter tokens for spotlighting - randomized per-session to prevent attacker
+// adaptation. Uses a CSPRNG so the token can't be predicted from other observed
+// output, which Math.random() would not guarantee.
+function randomSessionToken(): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+}
+
+const SESSION_TOKEN = randomSessionToken();
 const UNTRUSTED_START = `[UNTRUSTED_EXTERNAL_DATA_${SESSION_TOKEN}]`;
 const UNTRUSTED_END = `[/UNTRUSTED_EXTERNAL_DATA_${SESSION_TOKEN}]`;
 

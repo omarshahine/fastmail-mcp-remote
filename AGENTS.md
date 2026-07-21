@@ -241,6 +241,10 @@ ALLOWED_USERS=user1@example.com,user2@example.com
 |----------|-------------|
 | `ACCESS_TEAM_NAME` | Cloudflare Zero Trust team name |
 | `ALLOWED_USERS` | Comma-separated list of allowed email addresses |
+| `ALLOWED_REDIRECT_HOSTS` | Optional. Comma-separated extra hostnames permitted as OAuth `redirect_uri` targets. Loopback and the worker's own origin are always allowed. Defaults to `claude.ai,claude.com,anthropic.com` when unset. **Setting this replaces the defaults** — include them if you still need them. |
+| `ACTION_ALLOWED_ORIGINS` | Optional. Comma-separated browser origins allowed to call `/api/action/*`. Unset means `*`, which is required if the reading-digest page is opened from a local `file://` URL (`Origin: null`). |
+
+> **Security note:** `workers_dev` and `preview_urls` are set to `false` so the worker is reachable only via the custom domain. Turning them on re-exposes `*.workers.dev` and per-version preview URLs, which bypass any WAF / rate-limit / hostname-scoped Access policy bound to the custom hostname.
 
 ## KV Keys
 
@@ -249,7 +253,7 @@ ALLOWED_USERS=user1@example.com,user2@example.com
 | `state:{id}` | OAuth state (client_id, redirect_uri, PKCE, etc.) | 10 min |
 | `code:{id}` | Auth code (user info, PKCE challenge) | 1 min |
 | `token:{hash}` | Access token info (user_id, scope) | 30 days |
-| `client:{id}` | Registered client info | None |
+| `client:{id}` | Registered client info | 90 days |
 
 ## Debugging
 
@@ -505,7 +509,8 @@ Durable memory promoted from `~/.claude/projects/-Users-omarshahine-GitHub-fastm
 
 ### Wrangler Custom Domains
 - Custom domain configured in gitignored `wrangler.jsonc` via `routes` array with `custom_domain: true`
-- Adding `routes` causes wrangler to default `workers_dev` and `preview_urls` to `false` — set both to `true` explicitly
+- Adding `routes` causes wrangler to default `workers_dev` and `preview_urls` to `false`
+- **Keep both `false`** (set explicitly as of the 2026-07-20 security audit, issue #52). Serving only via the custom domain preserves any WAF / rate-limit / hostname-scoped Access policy bound to that hostname; `*.workers.dev` and preview URLs bypass it.
 
 ### MCP Streamable HTTP uses SSE, not plain JSON
 - The `@anthropic-ai/agents` SDK returns `text/event-stream` for ALL MCP responses, including `tools/list`

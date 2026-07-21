@@ -10,7 +10,83 @@
 export const STATE_TTL_SECONDS = 600; // 10 minutes
 export const CODE_TTL_SECONDS = 60; // 1 minute
 export const TOKEN_TTL_SECONDS = 86400 * 30; // 30 days
+export const CLIENT_TTL_SECONDS = 86400 * 90; // 90 days — bounds unauthenticated /register growth
 export const DEFAULT_SCOPE = 'mcp:read mcp:write';
+
+// Redirect URIs are constrained to a host allowlist at authorize, token, and
+// registration time so that open, unauthenticated dynamic client registration
+// cannot be used to phish an auth code to an attacker-controlled origin.
+// Loopback (native CLI clients) and the worker's own origin are always allowed;
+// hosted connectors default to the Anthropic/Claude domains and can be extended
+// via the ALLOWED_REDIRECT_HOSTS env var (comma-separated hostnames).
+const DEFAULT_REDIRECT_HOSTS = ['claude.ai', 'claude.com', 'anthropic.com'];
+
+/**
+ * Loopback hosts for native/CLI clients. Exported so every redirect_uri check
+ * shares one definition — the allowlist and the registered-URI matcher must
+ * agree on what counts as loopback, or an IPv6 client passes one and fails the
+ * other. `URL.hostname` yields the bracketed form for IPv6, so accept both.
+ */
+export function isLoopbackHost(hostname: string): boolean {
+	return (
+		hostname === 'localhost' ||
+		hostname === '127.0.0.1' ||
+		hostname === '::1' ||
+		hostname === '[::1]'
+	);
+}
+
+/**
+ * Whether a client redirect_uri may receive an auth code. This is enforced for
+ * ALL clients (registered or not) — registration alone can never whitelist a
+ * host.
+ *
+ * Allowed:
+ *  - OOB (code is shown on-screen, never auto-redirected)
+ *  - http(s) loopback on any port (native/CLI clients)
+ *  - the worker's own origin
+ *  - https on a host in the allowlist (exact or subdomain match)
+ * Everything else (arbitrary external https, custom app schemes) is rejected.
+ */
+export function isAllowedRedirectUri(
+	redirectUri: string,
+	workerOrigin: string,
+	allowedHostsCsv?: string | null
+): boolean {
+	if (redirectUri === 'urn:ietf:wg:oauth:2.0:oob' || redirectUri.startsWith('oob:')) {
+		return true;
+	}
+
+	let u: URL;
+	try {
+		u = new URL(redirectUri);
+	} catch {
+		return false;
+	}
+
+	const proto = u.protocol;
+	if ((proto === 'http:' || proto === 'https:') && isLoopbackHost(u.hostname)) {
+		return true;
+	}
+
+	// Beyond loopback, only https is permitted.
+	if (proto !== 'https:') return false;
+
+	try {
+		if (u.host === new URL(workerOrigin).host) return true;
+	} catch {
+		// workerOrigin malformed — fall through to allowlist check
+	}
+
+	const extraHosts = (allowedHostsCsv || '')
+		.split(',')
+		.map((h) => h.trim().toLowerCase())
+		.filter(Boolean);
+	const hosts = extraHosts.length > 0 ? extraHosts : DEFAULT_REDIRECT_HOSTS;
+
+	const host = u.hostname.toLowerCase();
+	return hosts.some((h) => host === h || host.endsWith(`.${h}`));
+}
 
 // Build Access base URL from team name (set via ACCESS_TEAM_NAME env var)
 export function getAccessBaseUrl(teamName: string): string {

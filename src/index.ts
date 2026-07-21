@@ -354,18 +354,36 @@ app.get("/download/:token", async (c) => {
 // These endpoints are called directly from the reading-digest HTML page.
 // Auth is via HMAC signature in the URL — no Bearer token or CF Access needed.
 
-function corsHeaders(): Record<string, string> {
+// These endpoints carry no ambient credentials — the capability IS the signed,
+// single-use URL — so CORS is not what protects them. Still, ACTION_ALLOWED_ORIGINS
+// (comma-separated) narrows which browser origins may read the response. When it
+// is unset we fall back to "*", which keeps the locally-opened digest page
+// (file:// → "Origin: null") working.
+function corsHeaders(env: Env, requestOrigin: string | null): Record<string, string> {
+  const configured = (env.ACTION_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+  let allowOrigin = "*";
+  if (configured.length > 0) {
+    // Echo back only an origin we recognize; otherwise name the primary one so
+    // a disallowed origin is refused by the browser rather than silently allowed.
+    allowOrigin = requestOrigin && configured.includes(requestOrigin) ? requestOrigin : configured[0];
+  }
+
   return {
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": allowOrigin,
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Content-Type": "application/json",
+    Vary: "Origin",
   };
 }
 
 // CORS preflight (defensive — simple POST won't trigger preflight, but browsers vary)
 app.options("/api/action/:action/:emailId", (c) => {
-  return new Response(null, { status: 204, headers: corsHeaders() });
+  return new Response(null, { status: 204, headers: corsHeaders(c.env, c.req.header("Origin") ?? null) });
 });
 
 // Execute email action (archive or delete)
@@ -376,33 +394,34 @@ app.post("/api/action/:action/:emailId", async (c) => {
   const expStr = c.req.query("exp") || "0";
   const sig = c.req.query("sig") || "";
   const exp = parseInt(expStr, 10);
+  const cors = corsHeaders(c.env, c.req.header("Origin") ?? null);
 
   // Validate action type
   if (action !== "archive" && action !== "delete") {
-    return c.json({ ok: false, error: "Invalid action. Must be 'archive' or 'delete'." }, { status: 400, headers: corsHeaders() });
+    return c.json({ ok: false, error: "Invalid action. Must be 'archive' or 'delete'." }, { status: 400, headers: cors });
   }
 
   // Archive requires a mailbox ID
   if (action === "archive" && !mid) {
-    return c.json({ ok: false, error: "Archive action requires 'mid' (mailbox ID) parameter." }, { status: 400, headers: corsHeaders() });
+    return c.json({ ok: false, error: "Archive action requires 'mid' (mailbox ID) parameter." }, { status: 400, headers: cors });
   }
 
   // Verify HMAC signature + expiry
   const signingKey = c.env.ACTION_SIGNING_KEY;
   if (!signingKey) {
     console.error("[action] ACTION_SIGNING_KEY not configured");
-    return c.json({ ok: false, error: "Server misconfigured." }, { status: 500, headers: corsHeaders() });
+    return c.json({ ok: false, error: "Server misconfigured." }, { status: 500, headers: cors });
   }
 
   const valid = await verifyAction(action, emailId, mid, exp, sig, signingKey);
   if (!valid) {
-    return c.json({ ok: false, error: "Invalid or expired signature." }, { status: 403, headers: corsHeaders() });
+    return c.json({ ok: false, error: "Invalid or expired signature." }, { status: 403, headers: cors });
   }
 
   // Single-use enforcement: consume the nonce (reject if already used)
   const nonce = await c.env.OAUTH_KV.get(nonceKey(sig));
   if (!nonce) {
-    return c.json({ ok: false, error: "Action URL already used." }, { status: 409, headers: corsHeaders() });
+    return c.json({ ok: false, error: "Action URL already used." }, { status: 409, headers: cors });
   }
   await c.env.OAUTH_KV.delete(nonceKey(sig));
 
@@ -418,11 +437,11 @@ app.post("/api/action/:action/:emailId", async (c) => {
       await client.deleteEmail(emailId);
     }
 
-    return c.json({ ok: true, action, emailId }, { status: 200, headers: corsHeaders() });
+    return c.json({ ok: true, action, emailId }, { status: 200, headers: cors });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[action] Failed to ${action} email ${emailId}: ${message}`);
-    return c.json({ ok: false, error: `Failed to ${action} email: ${message}` }, { status: 502, headers: corsHeaders() });
+    return c.json({ ok: false, error: `Failed to ${action} email: ${message}` }, { status: 502, headers: cors });
   }
 });
 
