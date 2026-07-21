@@ -509,7 +509,8 @@ Durable memory promoted from `~/.claude/projects/-Users-omarshahine-GitHub-fastm
 
 ### Wrangler Custom Domains
 - Custom domain configured in gitignored `wrangler.jsonc` via `routes` array with `custom_domain: true`
-- Adding `routes` causes wrangler to default `workers_dev` and `preview_urls` to `false` — set both to `true` explicitly
+- Adding `routes` causes wrangler to default `workers_dev` and `preview_urls` to `false`
+- **Keep both `false`** (set explicitly as of the 2026-07-20 security audit, issue #52). Serving only via the custom domain preserves any WAF / rate-limit / hostname-scoped Access policy bound to that hostname; `*.workers.dev` and preview URLs bypass it.
 
 ### MCP Streamable HTTP uses SSE, not plain JSON
 - The `@anthropic-ai/agents` SDK returns `text/event-stream` for ALL MCP responses, including `tools/list`
