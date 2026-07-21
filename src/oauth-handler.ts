@@ -138,25 +138,53 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 	if (!isAllowedRedirectUri(redirectUri, url.origin, env.ALLOWED_REDIRECT_HOSTS)) {
 		return new Response('Invalid redirect_uri', { status: 400 });
 	}
-	if (!isOOBUri) {
-		// For a pre-registered client, additionally require membership in its
-		// registered redirect_uris. Loopback URIs match on scheme+host+path but
-		// ignore the port, because native/CLI clients bind an ephemeral port at
-		// runtime that differs from the one registered (RFC 8252 §7.3).
-		const clientJson = await env.OAUTH_KV.get(`client:${clientId}`);
-		if (clientJson) {
-			const clientData = JSON.parse(clientJson) as OAuthClientData;
-			if (!redirectUriMatchesRegistered(redirectUri, clientData.redirect_uris)) {
-				return new Response('Invalid redirect_uri', { status: 400 });
-			}
-		}
-	}
-
 	// Require PKCE (S256) for every non-OOB flow. Without this, an intercepted
 	// authorization code alone is enough to mint a full-scope token. OOB is
 	// exempt because its code is shown on-screen and never auto-redirected.
+	//
+	// Checked before the client lookup below so a malformed request gets the
+	// accurate error and costs no KV read.
 	if (!isOOBUri && (!codeChallenge || codeChallengeMethod !== 'S256')) {
 		return new Response('PKCE (code_challenge with S256) is required for non-OOB flows', { status: 400 });
+	}
+
+	if (!isOOBUri) {
+		// The client MUST be pre-registered, and the redirect_uri must match one
+		// of its registered values. RFC 9700 §2.1 requires exact string matching
+		// for redirect URIs: the host allowlist above is *pattern* matching, so
+		// an open redirect on an allowlisted host (e.g. claude.ai) would other-
+		// wise be enough to bounce an auth code to an attacker. Requiring
+		// registration is what makes the match exact.
+		//
+		// Loopback URIs still match on scheme+host+path while ignoring the port,
+		// because native/CLI clients bind an ephemeral port at runtime that
+		// differs from the one registered (RFC 8252 §7.3).
+		//
+		// OOB is exempt: its code is displayed on-screen and never redirected,
+		// so there is no redirect target to match.
+		const clientJson = await env.OAUTH_KV.get(`client:${clientId}`);
+		if (!clientJson) {
+			return new Response('Unknown client_id — dynamic client registration is required', {
+				status: 400,
+			});
+		}
+		const clientData = JSON.parse(clientJson) as OAuthClientData;
+		if (!redirectUriMatchesRegistered(redirectUri, clientData.redirect_uris)) {
+			return new Response('Invalid redirect_uri', { status: 400 });
+		}
+
+		// Sliding window: refresh the registration TTL on each successful use.
+		// CLIENT_TTL_SECONDS is a hard KV expiry, so without this an actively
+		// used client would lapse after 90 days and then hard-fail with
+		// "Unknown client_id" (previously it degraded to the host allowlist and
+		// kept working). Best-effort — never blocks the auth flow.
+		try {
+			await env.OAUTH_KV.put(`client:${clientId}`, clientJson, {
+				expirationTtl: CLIENT_TTL_SECONDS,
+			});
+		} catch (e) {
+			console.warn(`[oauth] client TTL refresh failed (non-fatal): ${e}`);
+		}
 	}
 
 	// Generate state and store OAuth parameters in KV

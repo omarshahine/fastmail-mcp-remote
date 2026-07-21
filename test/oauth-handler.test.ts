@@ -72,6 +72,25 @@ describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => 
 		return { env, kv };
 	}
 
+	// KV holding a registered client with the given redirect_uris.
+	function makeRegisteredEnv(registeredUris: string[]) {
+		const kv = {
+			get: vi.fn(async (key: string) =>
+				key.startsWith('client:')
+					? JSON.stringify({ client_id: 'cli', client_name: 'cli', redirect_uris: registeredUris })
+					: null
+			),
+			put: vi.fn(async () => undefined),
+			delete: vi.fn(async () => undefined),
+		};
+		const env = {
+			OAUTH_KV: kv,
+			ACCESS_TEAM_NAME: TEAM_NAME,
+			ACCESS_CLIENT_ID: CLIENT_ID,
+		} as unknown as Env;
+		return { env, kv };
+	}
+
 	function authorizeRequest(params: Record<string, string>) {
 		const url = new URL('https://worker.example/mcp/authorize');
 		for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
@@ -127,8 +146,30 @@ describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => 
 		expect(await response.text()).toContain('S256');
 	});
 
-	it('accepts an allowlisted https redirect with S256 PKCE and 302s to CF Access', async () => {
+	// RFC 9700 §2.1 requires exact redirect_uri matching, which is only possible
+	// against a registered client. An allowlisted host alone is pattern matching
+	// (an open redirect on claude.ai would bounce the code onward), so an
+	// unregistered client_id is refused outright.
+	it('rejects an otherwise-valid request from an unregistered client', async () => {
 		const { env, kv } = makeEnv();
+		const { request, url } = authorizeRequest({
+			client_id: 'never-registered',
+			redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+			response_type: 'code',
+			code_challenge: 'a'.repeat(43),
+			code_challenge_method: 'S256',
+		});
+
+		const response = await handleAuthorize(request, env, url);
+
+		expect(response.status).toBe(400);
+		expect(await response.text()).toContain('dynamic client registration is required');
+		// No state persisted — the flow never reached the CF Access redirect.
+		expect(kv.put).not.toHaveBeenCalled();
+	});
+
+	it('accepts an allowlisted https redirect with S256 PKCE and 302s to CF Access', async () => {
+		const { env, kv } = makeRegisteredEnv(['https://claude.ai/api/mcp/auth_callback']);
 		const { request, url } = authorizeRequest({
 			client_id: 'some-client',
 			redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
@@ -141,11 +182,12 @@ describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => 
 
 		expect(response.status).toBe(302);
 		expect(response.headers.get('Location')).toContain('cloudflareaccess.com');
-		expect(kv.put).toHaveBeenCalledOnce();
+		// Two writes: the state row, plus the sliding-window client TTL refresh.
+		expect(kv.put).toHaveBeenCalledTimes(2);
 	});
 
 	it('accepts a loopback redirect on an ephemeral port with S256 PKCE', async () => {
-		const { env } = makeEnv();
+		const { env } = makeRegisteredEnv(['http://127.0.0.1/callback']);
 		const { request, url } = authorizeRequest({
 			client_id: 'cli-client',
 			redirect_uri: 'http://127.0.0.1:53187/callback',
@@ -164,29 +206,12 @@ describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => 
 	// This is exactly how the fastmail CLI behaves: it registers a portless
 	// loopback URI, then authorizes on whatever port it got.
 	describe('registered-client loopback matching ignores the port', () => {
-		function makeRegisteredEnv(registeredUris: string[]) {
-			const kv = {
-				get: vi.fn(async (key: string) =>
-					key.startsWith('client:')
-						? JSON.stringify({ client_id: 'cli', client_name: 'cli', redirect_uris: registeredUris })
-						: null
-				),
-				put: vi.fn(async () => undefined),
-				delete: vi.fn(async () => undefined),
-			};
-			return {
-				OAUTH_KV: kv,
-				ACCESS_TEAM_NAME: TEAM_NAME,
-				ACCESS_CLIENT_ID: CLIENT_ID,
-			} as unknown as Env;
-		}
-
 		it.each([
 			['IPv4', 'http://127.0.0.1/callback', 'http://127.0.0.1:53187/callback'],
 			['localhost', 'http://localhost/callback', 'http://localhost:53187/callback'],
 			['IPv6', 'http://[::1]/callback', 'http://[::1]:53187/callback'],
 		])('allows a %s loopback callback on a different port', async (_label, registered, requested) => {
-			const env = makeRegisteredEnv([registered]);
+			const { env } = makeRegisteredEnv([registered]);
 			const { request, url } = authorizeRequest({
 				client_id: 'cli',
 				redirect_uri: requested,
@@ -201,7 +226,7 @@ describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => 
 		});
 
 		it('still rejects a loopback callback whose path differs from the registered one', async () => {
-			const env = makeRegisteredEnv(['http://127.0.0.1/callback']);
+			const { env } = makeRegisteredEnv(['http://127.0.0.1/callback']);
 			const { request, url } = authorizeRequest({
 				client_id: 'cli',
 				redirect_uri: 'http://127.0.0.1:53187/evil',
