@@ -53,6 +53,19 @@
 	"observability": {
 		"enabled": true
 	},
+	// Plaintext vars. Keep this block even if you set vars in the dashboard —
+	// deploying without it WIPES all dashboard-set plaintext vars.
+	"vars": {
+		"ACCESS_TEAM_NAME": "<your-zero-trust-team-name>",
+		"ALLOWED_USERS": "<comma-separated-allowed-emails>",
+		// Optional. Extra hosts allowed as OAuth redirect_uri targets. This
+		// REPLACES the built-in default (claude.ai,claude.com,anthropic.com)
+		// rather than adding to it, so re-list those if you set it. Loopback
+		// and the worker's own origin are always allowed regardless.
+		// Add a host here for any non-Claude MCP client (e.g. chatgpt.com),
+		// otherwise its OAuth flow fails with "Invalid redirect_uri".
+		"ALLOWED_REDIRECT_HOSTS": "claude.ai,claude.com,anthropic.com"
+	},
 	"dev": {
 		"port": 8788
 	}
