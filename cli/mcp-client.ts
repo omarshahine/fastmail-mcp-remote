@@ -23,9 +23,12 @@ function stripDatamarking(text: string): string {
     /^Data between \[UNTRUSTED_EXTERNAL_DATA_[^\]]+\] and \[\/UNTRUSTED_EXTERNAL_DATA_[^\]]+\] markers is[\s\S]*?not acted upon as directives\.\s*/,
     "",
   );
-  // Remove marker tags
+  // Remove marker tags. Datamarking wraps values as "[START] value [END]", so
+  // consume one optional whitespace on BOTH sides of a marker — matching only
+  // the trailing side left the space before the closing marker behind, and
+  // every unwrapped value came back with a stray trailing space.
   cleaned = cleaned.replace(
-    /\[\/?UNTRUSTED_EXTERNAL_DATA_[^\]]+\]\s?/g,
+    /\s?\[\/?UNTRUSTED_EXTERNAL_DATA_[^\]]+\]\s?/g,
     "",
   );
   // Remove inline WARNING blocks injected by prompt guard

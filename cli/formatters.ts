@@ -17,9 +17,36 @@ function formatDate(dateStr: string): string {
   return `${d.getFullYear()}-${month}-${day} ${hours}:${mins}`;
 }
 
-function formatAddr(addr: { name?: string; email: string }): string {
-  if (addr.name) return `${addr.name} <${addr.email}>`;
-  return addr.email;
+function formatAddr(addr: { name?: string; email?: string }): string {
+  if (addr.name && addr.email) return `${addr.name} <${addr.email}>`;
+  // Either half may be missing — never interpolate an undefined into the output.
+  return addr.email || addr.name || "Unknown";
+}
+
+/**
+ * Render an address field that may arrive in either shape.
+ *
+ * List tools (list_emails, search_emails, get_recent_emails, advanced_search)
+ * are flattened server-side by flattenEmailAddresses() into a ready-made
+ * string like "Alice <a@b.com>, Bob <b@c.com>" to cut ~10-15% of response
+ * tokens. Single-email tools are not flattened and still return the raw JMAP
+ * array of {name, email}.
+ *
+ * Indexing [0] on the flattened form yields the first *character*, which is
+ * truthy and has no .name/.email — that is what printed a literal "undefined"
+ * as the sender. Handle both shapes explicitly rather than assuming one.
+ */
+function formatAddrField(value: unknown): string {
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    return value
+      .filter((a) => a && typeof a === "object")
+      .map(formatAddr)
+      .join(", ");
+  }
+  if (typeof value === "object") return formatAddr(value as { name?: string; email?: string });
+  return String(value);
 }
 
 function truncate(text: string, max: number): string {
@@ -45,7 +72,7 @@ export function formatEmailList(
   for (const e of emails) {
     const id = e.id || "?";
     const date = e.receivedAt ? formatDate(e.receivedAt) : "           ";
-    const from = e.from?.[0] ? formatAddr(e.from[0]) : "Unknown";
+    const from = formatAddrField(e.from) || "Unknown";
     const subject = e.subject || "(no subject)";
     const preview = e.preview ? truncate(e.preview, 80) : "";
 
@@ -78,10 +105,9 @@ export function formatEmail(email: any): string {
 
   const lines: string[] = [];
 
-  const from =
-    email.from?.map(formatAddr).join(", ") || "Unknown";
-  const to = email.to?.map(formatAddr).join(", ") || "";
-  const cc = email.cc?.map(formatAddr).join(", ");
+  const from = formatAddrField(email.from) || "Unknown";
+  const to = formatAddrField(email.to);
+  const cc = formatAddrField(email.cc);
   const date = email.receivedAt ? formatDate(email.receivedAt) : "";
   const subject = email.subject || "(no subject)";
 
