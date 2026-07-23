@@ -14,98 +14,56 @@ import {
   handleGetTokenCallback,
 } from "./oauth-handler";
 import { validateAccessToken } from "./oauth-utils";
-import { checkMcpPermissions, filterToolsListResponse, getPermissionsConfig, getUserConfig, getVisibleTools, isToolAllowed } from "./permissions";
+import { getPermissionsConfig, getUserConfig, getVisibleTools } from "./permissions";
 import { verifyAction, nonceKey } from "./action-urls";
 import { FastmailAuth } from "./fastmail-auth";
 import { JmapClient } from "./jmap-client";
-import { ContactsCalendarClient } from "./contacts-calendar";
-import { registerAllTools, guardResponse, buildToolContext } from "./tools";
-import type { GuardOptions, ToolResult } from "./tools";
+import { registerAllTools, buildToolContext } from "./tools";
 
-export class FastmailMCP extends McpAgent<Env, Record<string, never>, Record<string, never>> {
+/**
+ * Props passed into the Durable Object per session, set from the validated
+ * Bearer token at the Hono layer (see handleMcp()). The agents
+ * runtime persists these to DO storage on session init and hands them to
+ * onStart(props) -> this.props before init() runs, so init() can register a
+ * permission-filtered, user-scoped tool set. The session is bound to whoever
+ * initialized it; every subsequent request on that session id is still Bearer-
+ * validated at the edge before the runtime routes it here.
+ */
+interface McpSessionProps extends Record<string, unknown> {
+  /** Authenticated user login (email) that owns this session. */
+  userLogin: string;
+  /** Tool names this user may see, precomputed from the permissions config. */
+  visibleTools: string[];
+}
+
+export class FastmailMCP extends McpAgent<Env, Record<string, never>, McpSessionProps> {
   server = new McpServer({
     name: "Fastmail MCP Remote",
     version: "1.0.0",
   });
 
-  /** Current user email, set per-request via X-MCP-User header. */
-  private currentUser: string | null = null;
-
   /**
-   * Override onConnect to extract the user identity from the X-MCP-User header
-   * injected by the Hono middleware. This enables defense-in-depth permission
-   * checks inside individual tool handlers.
+   * Register the user-scoped, permission-filtered tool set for this session.
+   *
+   * Runs once per session, after the runtime has populated this.props from the
+   * session's persisted props (onStart -> updateProps -> init). Uses the SAME
+   * buildToolContext + registerAllTools path as the stateless /mcp/code handler,
+   * so the DO and stateless surfaces expose identical tools and identical inner
+   * permission checks — the only difference is the transport.
    */
-  async onConnect(conn: unknown, ctx: { request: Request }) {
-    this.currentUser = ctx.request.headers.get('X-MCP-User');
-    // @ts-expect-error — McpAgent.onConnect has complex generics; super call is safe
-    return super.onConnect(conn, ctx);
-  }
-
-  /**
-   * Defense-in-depth: Check if a tool call is allowed for the current user.
-   * Used inside sensitive tool handlers (send_email, reply_to_email).
-   * Returns an error result if denied, or null if allowed.
-   */
-  private async checkToolPermission(
-    toolName: string,
-    args?: Record<string, unknown>,
-  ): Promise<{ content: { text: string; type: "text" }[] } | null> {
-    if (!this.currentUser) {
-      console.error(`[permissions] INNER CHECK: No user identity for ${toolName} — denying`);
-      return {
-        content: [{ text: `Error: Permission denied — no user identity available.`, type: "text" }],
-      };
-    }
-
-    const config = await getPermissionsConfig(this.env.OAUTH_KV);
-    const userConfig = getUserConfig(config, this.currentUser);
-    const result = isToolAllowed(userConfig, toolName, args);
-
-    if (!result.allowed) {
-      console.warn(`[permissions] INNER DENIED: user=${this.currentUser} tool=${toolName}`);
-      return {
-        content: [{ text: `Error: ${result.error}`, type: "text" }],
-      };
-    }
-    return null;
-  }
-
-  private getJmapClient(): JmapClient {
-    const auth = new FastmailAuth({
-      apiToken: this.env.FASTMAIL_API_TOKEN,
-    });
-    return new JmapClient(auth);
-  }
-
-  private getContactsCalendarClient(): ContactsCalendarClient {
-    const auth = new FastmailAuth({
-      apiToken: this.env.FASTMAIL_API_TOKEN,
-    });
-    return new ContactsCalendarClient(auth);
-  }
-
-  /**
-   * Wrap a tool response with prompt injection datamarking and optional compact formatting.
-   * Delegates to the standalone guardResponse from tools.ts.
-   */
-  private guardResponse(
-    toolName: string,
-    data: unknown,
-    options?: GuardOptions,
-  ): ToolResult {
-    return guardResponse(toolName, data, options);
-  }
-
   async init() {
-    registerAllTools(this.server, {
-      env: this.env,
-      getCurrentUser: () => this.currentUser,
-      getJmapClient: () => this.getJmapClient(),
-      getContactsCalendarClient: () => this.getContactsCalendarClient(),
-      checkToolPermission: (name, args) => this.checkToolPermission(name, args),
-      guardResponse: (name, data, opts) => this.guardResponse(name, data, opts),
-    });
+    const props = this.props;
+    if (!props?.userLogin) {
+      // No identity means the session was created without going through the
+      // Bearer-validating edge handler. Register nothing rather than exposing
+      // an unscoped tool set.
+      console.error("[mcp] init() with no props.userLogin — registering no tools");
+      return;
+    }
+
+    const ctx = buildToolContext(this.env, props.userLogin);
+    const visibleTools = props.visibleTools ? new Set(props.visibleTools) : undefined;
+    registerAllTools(this.server, ctx, visibleTools);
   }
 }
 
@@ -256,31 +214,30 @@ app.post("/mcp/code", async (c) => {
   return withTokenExpiresAt(response, tokenInfo.expiresAt);
 });
 
-// GET /mcp — Reject SSE stream requests (stateless transport, no session to stream to).
-// Cloudflare Workers kill hung responses when no data is pushed on a fresh transport.
-// Clients fall back to POST-only mode per MCP Streamable HTTP spec.
-app.get("/mcp", (c) => {
-  return c.json({
-    jsonrpc: "2.0",
-    error: { code: -32000, message: "Method Not Allowed: This server does not support GET SSE streams" },
-    id: null,
-  }, 405, { Allow: "POST" });
-});
+// ─── /mcp — Main MCP endpoint, routed through the FastmailMCP Durable Object ──
+//
+// The DO gives the streamable-HTTP transport unlimited wall-clock (vs the ~30s
+// a stateless Worker gets after client disconnect), which is what a 60s send-
+// confirmation elicitation dialog needs. Tools register once per session in
+// FastmailMCP.init() instead of on every request. See issue #42.
+//
+// The agents runtime reads the per-session props off the ExecutionContext
+// (ctx.props) at session init and persists them in the DO. We validate the
+// Bearer token here at the edge and compute the user's visible-tools set, then
+// hand both to the DO as props. Every request — POST init, later POST messages,
+// GET SSE stream, DELETE teardown — is Bearer-validated here before the runtime
+// routes it to the (unguessable, DO-unique) session id.
+const mcpDurableObjectHandler = FastmailMCP.serve("/mcp", { binding: "MCP_OBJECT" });
 
-// DELETE /mcp — No sessions to clean up in stateless mode.
-app.delete("/mcp", (c) => {
-  return c.json({
-    jsonrpc: "2.0",
-    error: { code: -32000, message: "Method Not Allowed: Stateless server has no sessions to delete" },
-    id: null,
-  }, 405, { Allow: "POST" });
-});
-
-// POST /mcp — Main MCP endpoint (require Bearer token)
-// Uses WebStandard transport directly (no Durable Object) to enable MCP elicitation
-// for send confirmation dialogs.
-app.post("/mcp", async (c) => {
-  // Validate Bearer token
+/**
+ * Validate the Bearer token, attach per-session props to the ExecutionContext,
+ * and delegate to the Durable Object handler. Shared by GET/POST/DELETE /mcp.
+ */
+async function handleMcp(c: {
+  req: { url: string; raw: Request; header: (name: string) => string | undefined };
+  env: Env;
+  executionCtx: ExecutionContext;
+}): Promise<Response> {
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return unauthorizedResponse(c, "unauthorized", "Missing or invalid Authorization header");
@@ -292,21 +249,31 @@ app.post("/mcp", async (c) => {
     return unauthorizedResponse(c, "invalid_token", "Invalid or expired access token");
   }
 
-  // Build a fresh McpServer with permission-filtered tools
+  // Precompute the permission-filtered tool set and pass it, plus the user
+  // identity, into the DO via ctx.props. init() reads these to register the
+  // correct tools; the persisted userLogin also drives the inner defense-in-
+  // depth checks in buildToolContext.
   const config = await getPermissionsConfig(c.env.OAUTH_KV);
   const userConfig = getUserConfig(config, tokenInfo.user_login);
   const visibleTools = getVisibleTools(userConfig);
 
-  const server = new McpServer({ name: "Fastmail MCP Remote", version: "1.0.0" });
-  const ctx = buildToolContext(c.env, tokenInfo.user_login);
-  registerAllTools(server, ctx, visibleTools);
+  const props: McpSessionProps = {
+    userLogin: tokenInfo.user_login,
+    visibleTools: visibleTools ? [...visibleTools] : [],
+  };
+  // ctx.props is the agents runtime's sanctioned channel for per-request auth
+  // context; it is read off this exact ExecutionContext inside serve(). Capture
+  // the ctx once so the object we set props on is the object we pass through.
+  const execCtx = c.executionCtx as ExecutionContext & { props?: McpSessionProps };
+  execCtx.props = props;
 
-  // Serve via stateless WebStandard streamable HTTP transport (supports elicitation)
-  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  await server.connect(transport);
-  const response = await transport.handleRequest(c.req.raw);
+  const response = await mcpDurableObjectHandler.fetch(c.req.raw, c.env, execCtx);
   return withTokenExpiresAt(response, tokenInfo.expiresAt);
-});
+}
+
+app.get("/mcp", (c) => handleMcp(c));
+app.post("/mcp", (c) => handleMcp(c));
+app.delete("/mcp", (c) => handleMcp(c));
 
 // Attachment download proxy endpoint (no auth required - uses single-use token)
 app.get("/download/:token", async (c) => {
