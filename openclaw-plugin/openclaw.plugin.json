@@ -81,6 +81,7 @@
       "fastmail_create_memo",
       "fastmail_delete_memo",
       "fastmail_create_draft",
+      "fastmail_update_draft",
       "fastmail_reply_to_email",
       "fastmail_send_email"
     ]

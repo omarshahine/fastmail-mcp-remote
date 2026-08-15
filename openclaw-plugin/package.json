@@ -23,11 +23,17 @@
     "url": "git+https://github.com/omarshahine/fastmail-mcp-remote.git",
     "directory": "openclaw-plugin"
   },
-  "dependencies": {
-    "openclaw": "^2026.6.5"
+  "peerDependencies": {
+    "openclaw": ">=2026.6.5"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^25.0.8",
+    "openclaw": ">=2026.6.5",
     "typescript": "^5.9.0",
     "tsup": "^8.5.0"
   },
