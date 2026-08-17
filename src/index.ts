@@ -224,9 +224,12 @@ app.post("/mcp/code", async (c) => {
 // The agents runtime reads the per-session props off the ExecutionContext
 // (ctx.props) at session init and persists them in the DO. We validate the
 // Bearer token here at the edge and compute the user's visible-tools set, then
-// hand both to the DO as props. Every request — POST init, later POST messages,
-// GET SSE stream, DELETE teardown — is Bearer-validated here before the runtime
-// routes it to the (unguessable, DO-unique) session id.
+// hand both to the DO as props. POST messages and DELETE teardown are Bearer-
+// validated here before the runtime routes them to the (unguessable, DO-unique)
+// session id. Standalone GET streams are rejected at the edge below: a long-
+// lived SSE response would otherwise occupy the session DO and serialize every
+// later POST behind it. The server sends elicitation requests on POST responses
+// and does not rely on this optional server-initiated notification channel.
 const mcpDurableObjectHandler = FastmailMCP.serve("/mcp", { binding: "MCP_OBJECT" });
 
 /**
@@ -271,7 +274,17 @@ async function handleMcp(c: {
   return withTokenExpiresAt(response, tokenInfo.expiresAt);
 }
 
-app.get("/mcp", (c) => handleMcp(c));
+// The Streamable HTTP GET stream is optional. Do not route it through the
+// session Durable Object: DO requests are serialized, so an idle, held-open
+// stream would deadlock every subsequent POST for that session. Clients treat
+// 405 as POST-only mode per the MCP transport specification.
+app.get("/mcp", (c) => {
+  return c.json({
+    jsonrpc: "2.0",
+    error: { code: -32000, message: "Method Not Allowed: This server does not support GET SSE streams" },
+    id: null,
+  }, 405, { Allow: "POST" });
+});
 app.post("/mcp", (c) => handleMcp(c));
 app.delete("/mcp", (c) => handleMcp(c));
 
