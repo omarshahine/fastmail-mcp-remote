@@ -65,6 +65,25 @@ export class FastmailMcpClient {
     const authFetch: typeof fetch = async (input, init) => {
       const headers = new Headers(init?.headers);
       headers.set("Authorization", `Bearer ${token}`);
+
+      // Never open the standalone GET SSE stream.
+      //
+      // /mcp is served by a Durable Object, which handles requests serially. A
+      // long-lived SSE GET occupies it, so every subsequent POST queues behind
+      // the stream and only completes when it terminates (~300s) — far past the
+      // SDK's 60s request timeout. The symptom is every tool call failing with
+      // "MCP error -32001: Request timed out" while the server is perfectly
+      // healthy on each request in isolation.
+      //
+      // The stream is optional in the MCP spec: a server that does not offer it
+      // returns 405, and the client proceeds using POST responses only, which is
+      // all this CLI needs (it makes requests and reads replies; it consumes no
+      // server-initiated notifications). Synthesize that 405 rather than issuing
+      // a GET that would wedge the Durable Object.
+      if ((init?.method ?? "GET").toUpperCase() === "GET") {
+        return new Response(null, { status: 405, statusText: "Method Not Allowed" });
+      }
+
       const response = await fetch(input, { ...init, headers });
       const renewed = response.headers.get("X-Token-Expires-At");
       // Validate as a parseable ISO date before trusting it. A malformed header
