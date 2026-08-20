@@ -14,3 +14,10 @@ FASTMAIL_API_TOKEN=<your fastmail api token>
 
 # Worker URL (for local dev, use http://localhost:8788)
 WORKER_URL=http://localhost:8788
+
+# 256-bit HMAC key used for action URLs and MCP request-state integrity
+# Generate with: openssl rand -hex 32
+ACTION_SIGNING_KEY=<64-character hex key>
+
+# required (default), client, or off
+SEND_APPROVAL_MODE=required

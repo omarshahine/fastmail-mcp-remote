@@ -153,7 +153,7 @@ export function registerEmailCommands(
 
   email
     .command("send")
-    .description("Send an email")
+    .description("Prepare an email and open the server approval flow")
     .requiredOption("--to <addrs...>", "Recipient(s)")
     .requiredOption("--subject <text>", "Subject")
     .option("--body <text>", "Plain text body")
@@ -241,7 +241,7 @@ export function registerEmailCommands(
     .option("--markdown <text>", "Markdown reply body")
     .option("--from <addr>", "Sender address")
     .option("--all", "Reply to all recipients")
-    .option("--send", "Send immediately (default: create draft)")
+    .option("--send", "Prepare for immediate send through the server approval flow")
     .option("--no-quote", "Exclude quoted original message")
     .option("--dry-run", "Preview what would be sent without sending")
     .action(async (emailId, opts) => {

@@ -6,6 +6,20 @@ The NPM-published CLI (`fastmail-cli`) versions independently — see
 
 This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+- Server-enforced approval for all outbound email paths. Sends are prepared as
+  Fastmail drafts and require a short-lived, authenticated browser approval.
+- MCP 2026-07-28 stateless URL elicitation with signed request state, plus
+  authenticated URL results for Code Mode, CLI, OpenClaw, and older clients.
+- One-time Durable Object approval state and exact draft-content binding.
+
+### Changed
+- Outbound tools now advertise write/destructive, non-idempotent, open-world
+  annotations so supporting clients can apply native approval policies.
+- Cc and Bcc addresses are now included in direct-send SMTP envelopes.
+
 ## [1.12.0] - 2026-04-18
 
 ### Added

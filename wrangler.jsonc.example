@@ -29,6 +29,12 @@
 				"FastmailMCP"
 			],
 			"tag": "v1"
+		},
+		{
+			"new_sqlite_classes": [
+				"SendApprovalStore"
+			],
+			"tag": "v2"
 		}
 	],
 	"durable_objects": {
@@ -36,6 +42,10 @@
 			{
 				"class_name": "FastmailMCP",
 				"name": "MCP_OBJECT"
+			},
+			{
+				"class_name": "SendApprovalStore",
+				"name": "SEND_APPROVALS"
 			}
 		]
 	},
@@ -58,6 +68,10 @@
 	"vars": {
 		"ACCESS_TEAM_NAME": "<your-zero-trust-team-name>",
 		"ALLOWED_USERS": "<comma-separated-allowed-emails>",
+		// required (default): prepare a draft and require the authenticated
+		// approval page before submission. client: rely on client tool approval.
+		// off: direct sends without an approval gate.
+		"SEND_APPROVAL_MODE": "required",
 		// Optional. Extra hosts allowed as OAuth redirect_uri targets. This
 		// REPLACES the built-in default (claude.ai,claude.com,anthropic.com)
 		// rather than adding to it, so re-list those if you set it. Loopback

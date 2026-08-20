@@ -167,7 +167,7 @@ export function registerEmailTools(api: PluginApi, cli: string) {
 
   api.registerTool({
     name: "fastmail_send_email",
-    description: "Send an email. Supports plain text, HTML, or markdown body.",
+    description: "Prepare an email for server-enforced review and send approval. Supports plain text, HTML, or markdown body.",
     parameters: {
       type: "object",
       properties: {
@@ -217,7 +217,7 @@ export function registerEmailTools(api: PluginApi, cli: string) {
 
   api.registerTool({
     name: "fastmail_reply_to_email",
-    description: "Reply to an email. Can reply-all, send immediately or save as draft.",
+    description: "Reply to an email. Immediate sends return a server-enforced review and approval URL; the default saves a draft.",
     parameters: {
       type: "object",
       properties: {
