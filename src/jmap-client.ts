@@ -1,5 +1,5 @@
 import { FastmailAuth } from './fastmail-auth';
-import type { SendApprovalSnapshot } from './send-approval';
+import { digestSendSnapshot, type SendApprovalSnapshot } from './send-approval';
 
 export interface JmapSession {
   apiUrl: string;
@@ -638,7 +638,7 @@ export class JmapClient {
           accountId: session.accountId,
           ids: [draftId],
           properties: [
-            'id', 'keywords', 'from', 'to', 'cc', 'bcc', 'subject',
+            'id', 'blobId', 'keywords', 'from', 'to', 'cc', 'bcc', 'subject',
             'textBody', 'htmlBody', 'bodyValues', 'attachments',
             'inReplyTo', 'references',
           ],
@@ -651,12 +651,17 @@ export class JmapClient {
     const draft = response.methodResponses[0][1].list?.[0];
     if (!draft) throw new Error(`Draft not found: ${draftId}`);
     if (draft.keywords?.$draft !== true) throw new Error('Email is no longer a draft');
+    if (!draft.blobId) throw new Error('Draft has no immutable raw-message identifier');
 
     const bodyText = (parts: any[] | undefined) => (parts || [])
       .map((part) => draft.bodyValues?.[part.partId]?.value || '')
       .join('\n');
 
     return {
+      // RFC 8621 defines blobId as an immutable identifier for the raw RFC 5322
+      // octets. Binding it covers every header, address display name, MIME part,
+      // and disposition, including fields not rendered in the friendly preview.
+      blobId: draft.blobId,
       from: draft.from?.[0]?.email || '',
       to: (draft.to || []).map((address: any) => address.email),
       cc: (draft.cc || []).map((address: any) => address.email),
@@ -679,9 +684,15 @@ export class JmapClient {
   }
 
   /** Submit an existing, already-reviewed draft and move it to Sent. */
-  async submitDraft(draftId: string): Promise<string> {
+  async submitDraft(draftId: string, expectedPayloadDigest?: string): Promise<string> {
     const session = await this.getSession();
     const snapshot = await this.getDraftApprovalSnapshot(draftId);
+    if (expectedPayloadDigest) {
+      const currentDigest = await digestSendSnapshot(snapshot);
+      if (snapshot.truncated || currentDigest !== expectedPayloadDigest) {
+        throw new Error('Draft changed after approval; refusing to submit it');
+      }
+    }
     if (!snapshot.from) throw new Error('Draft has no sender identity');
 
     const identities = await this.getIdentities();
@@ -697,6 +708,11 @@ export class JmapClient {
     const sentMailbox = mailboxes.find((mailbox) => mailbox.role === 'sent')
       || mailboxes.find((mailbox) => mailbox.name.toLowerCase().includes('sent'));
     if (!sentMailbox) throw new Error('Could not find Sent mailbox');
+
+    // JMAP Email content and blobId are immutable. Editing a draft creates a new
+    // Email id; only mailboxIds and keywords can change on this id. The digest
+    // check above therefore remains valid through EmailSubmission/set. If this
+    // Email is destroyed concurrently, Fastmail rejects the submission instead.
 
     const response = await this.makeRequest({
       using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission'],

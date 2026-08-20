@@ -9,6 +9,8 @@ export type SendApprovalStatus =
   | "expired";
 
 export interface SendApprovalSnapshot {
+  /** Immutable JMAP identifier for the complete raw RFC 5322 message. */
+  blobId: string;
   from: string;
   to: string[];
   cc: string[];

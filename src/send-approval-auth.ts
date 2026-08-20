@@ -384,7 +384,9 @@ export async function handleSendApprovalDecision(env: Env, request: Request, app
     if (!claimId) throw new Error("Approval claim did not return an identifier");
 
     try {
-      const submissionId = await client.submitDraft(record.draftId);
+      // Re-check the full payload digest inside submitDraft immediately before
+      // EmailSubmission/set. The digest includes the immutable raw-message blobId.
+      const submissionId = await client.submitDraft(record.draftId, record.payloadDigest);
       const complete = await completeSendApproval(env, approvalId, claimId, submissionId);
       if (!complete.ok) throw new Error(complete.error);
       return terminalPage(complete.record)!;

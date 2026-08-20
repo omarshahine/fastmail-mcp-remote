@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { JmapClient } from "../src/jmap-client";
 import {
   SendApprovalStore,
   digestSendSnapshot,
@@ -42,6 +43,7 @@ class MemoryState {
 
 function snapshot(subject = "Approval test"): SendApprovalSnapshot {
   return {
+    blobId: "raw-message-1",
     from: "sender@example.com",
     to: ["recipient@example.com"],
     cc: [],
@@ -78,6 +80,7 @@ describe("SendApprovalStore", () => {
   it("binds approval to a canonical snapshot digest", async () => {
     const first = snapshot();
     const reordered = {
+      blobId: first.blobId,
       subject: first.subject,
       bcc: first.bcc,
       from: first.from,
@@ -93,6 +96,24 @@ describe("SendApprovalStore", () => {
 
     expect(await digestSendSnapshot(first)).toBe(await digestSendSnapshot(reordered));
     expect(await digestSendSnapshot({ ...first, subject: "Changed" })).not.toBe(await digestSendSnapshot(first));
+    expect(await digestSendSnapshot({ ...first, blobId: "raw-message-2" })).not.toBe(await digestSendSnapshot(first));
+  });
+
+  it("rechecks the approved raw message immediately before draft submission", async () => {
+    const client = new JmapClient({} as any);
+    const approved = snapshot();
+    const approvedDigest = await digestSendSnapshot(approved);
+    vi.spyOn(client, "getDraftApprovalSnapshot").mockResolvedValue({
+      ...approved,
+      blobId: "raw-message-edited",
+    });
+    const request = vi.fn();
+    (client as any).getSession = vi.fn().mockResolvedValue({ accountId: "account-1" });
+    (client as any).makeRequest = request;
+
+    await expect(client.submitDraft("draft-1", approvedDigest))
+      .rejects.toThrow("Draft changed after approval");
+    expect(request).not.toHaveBeenCalled();
   });
 
   it("allows only one concurrent send claim and makes completion idempotent", async () => {

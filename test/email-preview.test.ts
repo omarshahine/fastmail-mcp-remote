@@ -4,6 +4,7 @@ import { renderSendApprovalReview } from "../src/send-approval-auth";
 import type { SendApprovalRecord, SendApprovalSnapshot } from "../src/send-approval";
 
 const snapshot: SendApprovalSnapshot = {
+  blobId: "raw-message-1",
   from: "Sender <sender@example.com>",
   to: ["Recipient <recipient@example.com>"],
   cc: ["Team <team@example.com>"],
