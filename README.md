@@ -305,12 +305,14 @@ Add `ACCESS_TEAM_NAME` and `ALLOWED_USERS` as plaintext vars in your `wrangler.j
 ```jsonc
 "vars": {
   "ACCESS_TEAM_NAME": "yourteam",
-  "ALLOWED_USERS": "user1@example.com,user2@example.com"
+  "ALLOWED_USERS": "user1@example.com,user2@example.com",
+  "SEND_APPROVAL_MODE": "required"
 }
 ```
 
 - **ACCESS_TEAM_NAME**: Your Cloudflare Zero Trust team name (the subdomain before `.cloudflareaccess.com`)
 - **ALLOWED_USERS**: Comma-separated list of email addresses allowed to access the server
+- **SEND_APPROVAL_MODE**: Outbound mail policy. `required` is the default and server-enforced. `client` relies on the MCP client's tool approval UI. `off` sends directly.
 
 Two optional vars tighten things further:
 
@@ -320,6 +322,17 @@ Two optional vars tighten things further:
 For local development, also add these to `.dev.vars` (gitignored).
 
 > **Warning**: Deploying without the `vars` section in `wrangler.jsonc` will wipe all dashboard-set plaintext vars. Always keep `vars` in your local config.
+
+### Outbound email approval
+
+With `SEND_APPROVAL_MODE=required`, `send_email`, `send_copy`, and immediate replies never submit mail during the initial tool call. The server:
+
+1. Creates a Fastmail draft containing the exact recipients, subject, body, and attachments.
+2. Stores a ten-minute approval bound to the authenticated MCP user and a digest of that draft.
+3. Opens an authenticated review page through MCP URL elicitation when the client supports it, or returns the review URL in the tool result.
+4. Re-checks the draft digest and submits it once after approval. Declined and expired approvals leave the draft unsent.
+
+The review URL works with regular MCP, Code Mode, the CLI, and OpenClaw. MCP 2026-07-28 clients use the stateless multi-round-trip elicitation flow. Older and headless clients receive the authenticated URL in the normal tool result. Tool annotations also mark outbound tools as write operations for clients with native approval policies. Code Mode cannot expose annotations for its inner tools, so it always applies the server gate unless approval mode is explicitly `off`.
 
 ### 4. Get Fastmail API Token
 

@@ -48,10 +48,10 @@ fastmail email search "" --attachments --limit 5     # Emails with attachments
 ### Composing
 
 ```bash
-fastmail email send --to user@example.com --subject "Hi" --body "Hello!"
+fastmail email send --to user@example.com --subject "Hi" --body "Hello!"   # Returns authenticated approval URL
 fastmail email draft --to user@example.com --subject "Draft" --body "..."   # NEW draft only — never for replies
 fastmail email reply <id> --body "Thanks!"           # Save reply as draft (default, correct for replies)
-fastmail email reply <id> --body "Thanks!" --send    # Send reply immediately (confirm with user first)
+fastmail email reply <id> --body "Thanks!" --send    # Prepare immediate reply for server approval
 fastmail email reply <id> --body "Noted" --all       # Reply all (only when user selected reply-all)
 fastmail email update-draft <draftId> --body "Revised text"                 # Edit an existing draft's body
 fastmail email update-draft <draftId> --body "Revised" --reply-to <srcId>   # Edit a reply draft, regenerate the quote
@@ -61,6 +61,7 @@ fastmail email update-draft <draftId> --body "Revised" --reply-to <srcId>   # Ed
 
 - **For replies, ALWAYS use `fastmail email reply <id>`.** Never use `fastmail email draft ...` to fake a reply — `draft` produces an orphan email with no `In-Reply-To`/`References` headers and no quoted source, so the recipient sees a fresh email rather than a threaded reply.
 - **Draft vs. send:** `fastmail email reply` saves as a draft by default (the user reviews in Fastmail, then hits send). Only pass `--send` when the user explicitly asked to send the reply right now — and confirm once more before doing so.
+- **Server approval:** `email send` and `email reply --send` leave the message as a Fastmail draft and print an authenticated review URL. Nothing is submitted until the user approves that page.
 - **Reply-all:** Pass `--all` only when the user explicitly selected "reply all". The default is reply-to-sender-only.
 - **Quoting:** `fastmail email reply` quotes the original message automatically. Don't paste the original body into `--body`.
 

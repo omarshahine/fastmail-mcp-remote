@@ -37,6 +37,7 @@ The `fastmail` CLI must be installed and authenticated before using these tools.
 
 - **For replies, ALWAYS use `fastmail_reply_to_email`.** Never use `fastmail_create_draft` for a reply — it produces an orphan email with no `In-Reply-To`/`References` headers and no quoted source, so the recipient sees a fresh email instead of a reply.
 - **Draft vs. send:** `fastmail_reply_to_email` defaults to `sendImmediately: false` (saves as a draft). Leave it as the default. Only pass `sendImmediately: true` when the user has explicitly asked to send the reply right now — and confirm once more before doing so.
+- **Server approval:** New sends and immediate replies return an authenticated review URL. The email remains a Fastmail draft until the user approves that page.
 - **Reply-all:** Pass `replyAll: true` only when the user explicitly selected "reply all". The default is reply-to-sender-only.
 - **Quoting:** `fastmail_reply_to_email` quotes the original message automatically. Don't paste the original body into your reply content.
 

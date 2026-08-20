@@ -6,8 +6,10 @@ declare namespace Cloudflare {
   interface Env {
     ACTION_SIGNING_KEY: string;
     LOADER: WorkerLoader;
-    /** Set to "true" to enable MCP elicitation-based send confirmation dialogs. Defaults to off. */
-    ENABLE_SEND_CONFIRMATION?: string;
+    /** Server-enforced outbound mail policy. Defaults to "required". */
+    SEND_APPROVAL_MODE?: "off" | "client" | "required";
+    /** One Durable Object per short-lived outbound approval. */
+    SEND_APPROVALS: DurableObjectNamespace;
     /**
      * Comma-separated extra hostnames permitted as OAuth redirect_uri targets,
      * beyond loopback and the worker's own origin. Defaults to the Anthropic/

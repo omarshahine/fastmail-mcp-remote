@@ -1,6 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  McpServer as ModernMcpServer,
+  createRequestStateCodec,
+  isLegacyRequest,
+} from "@modelcontextprotocol/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { McpAgent } from "agents/mcp";
+import { createMcpHandler } from "agents/mcp/server";
 import { DynamicWorkerExecutor } from "@cloudflare/codemode";
 import { buildCodeModeServer } from "./openapi-adapter";
 import { Hono } from "hono";
@@ -18,7 +24,15 @@ import { getPermissionsConfig, getUserConfig, getVisibleTools } from "./permissi
 import { verifyAction, nonceKey } from "./action-urls";
 import { FastmailAuth } from "./fastmail-auth";
 import { JmapClient } from "./jmap-client";
-import { registerAllTools, buildToolContext } from "./tools";
+import { registerAllTools, buildToolContext, legacyShapedModernServer } from "./tools";
+import {
+  handleSendApprovalCallback,
+  handleSendApprovalDecision,
+  handleSendApprovalStart,
+} from "./send-approval-auth";
+import { SendApprovalStore, type SendApprovalRequestState } from "./send-approval";
+
+export { SendApprovalStore };
 
 /**
  * Props passed into the Durable Object per session, set from the validated
@@ -108,6 +122,11 @@ app.get("/mcp/authorize", async (c) => {
 });
 
 app.get("/mcp/callback", async (c) => {
+  const url = new URL(c.req.url);
+  const state = url.searchParams.get("state");
+  if (state && await c.env.OAUTH_KV.get(`send-approval-auth:${state}`)) {
+    return handleSendApprovalCallback(c.env, url);
+  }
   return handleCallback(c.req.raw, c.env, new URL(c.req.url));
 });
 
@@ -132,6 +151,15 @@ app.get("/get-token", async (c) => {
 
 app.get("/get-token/callback", async (c) => {
   return handleGetTokenCallback(c.req.raw, c.env, new URL(c.req.url));
+});
+
+// Authenticated, short-lived review flow for server-enforced outbound approval.
+app.get("/approve/send/:approvalId", (c) => {
+  return handleSendApprovalStart(c.env, new URL(c.req.url));
+});
+
+app.post("/approve/send/:approvalId", (c) => {
+  return handleSendApprovalDecision(c.env, c.req.raw, c.req.param("approvalId"));
 });
 
 // Re-wrap a Response to add X-Token-Expires-At so CLI clients can track
@@ -200,7 +228,7 @@ app.post("/mcp/code", async (c) => {
   const visibleTools = getVisibleTools(userConfig);
 
   const upstreamServer = new McpServer({ name: "Fastmail MCP", version: "1.0.0" });
-  const ctx = buildToolContext(c.env, tokenInfo.user_login);
+  const ctx = buildToolContext(c.env, tokenInfo.user_login, undefined, true);
   registerAllTools(upstreamServer, ctx, visibleTools);
 
   // Wrap with search+execute Code Mode: ~1,000 tokens instead of full TypeScript blob
@@ -259,6 +287,40 @@ async function handleMcp(c: {
   const config = await getPermissionsConfig(c.env.OAUTH_KV);
   const userConfig = getUserConfig(config, tokenInfo.user_login);
   const visibleTools = getVisibleTools(userConfig);
+
+  // MCP 2026-07-28 uses a stateless multi-round-trip response for URL
+  // elicitation. Keep existing 2025 sessions on the feature-frozen DO path.
+  if (!(await isLegacyRequest(c.req.raw))) {
+    const requestStateCodec = createRequestStateCodec<SendApprovalRequestState>({
+      key: c.env.ACTION_SIGNING_KEY,
+      ttlSeconds: 10 * 60,
+      bind: (context) => `${tokenInfo.user_login}\0${context.mcpReq.method}`,
+    });
+    const modernHandler = createMcpHandler(() => {
+      const server = new ModernMcpServer(
+        { name: "Fastmail MCP Remote", version: "1.0.0" },
+        {
+          inputRequired: { legacyShim: false, maxRounds: 3 },
+          requestState: { verify: requestStateCodec.verify },
+        },
+      );
+      const toolContext = buildToolContext(c.env, tokenInfo.user_login, {
+        getClientCapabilities: () => server.server.getClientCapabilities(),
+        mintRequestState: (state, context) => requestStateCodec.mint(state, context),
+      });
+      registerAllTools(legacyShapedModernServer(server), toolContext, visibleTools);
+      return server;
+    }, { route: "/mcp", legacy: "reject" });
+    const response = await modernHandler.fetch(c.req.raw, {
+      authInfo: {
+        token,
+        clientId: tokenInfo.user_id,
+        scopes: ["mcp:read", "mcp:write"],
+        expiresAt: Math.floor(Date.parse(tokenInfo.expiresAt) / 1000),
+      },
+    });
+    return withTokenExpiresAt(response, tokenInfo.expiresAt);
+  }
 
   const props: McpSessionProps = {
     userLogin: tokenInfo.user_login,

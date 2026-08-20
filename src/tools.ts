@@ -7,7 +7,12 @@
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { ElicitResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import {
+  inputRequired,
+  inputResponse,
+  type McpServer as ModernMcpServer,
+  type ServerContext,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { marked } from "marked";
 import { formatEmailAsMarkdown } from "./html-to-markdown";
@@ -17,6 +22,16 @@ import { ContactsCalendarClient } from "./contacts-calendar";
 import { getPermissionsConfig, getUserConfig, getVisibleTools, isToolAllowed, TOOL_CATEGORIES } from "./permissions";
 import { markToolResult, markUntrustedText, isExternalDataTool, getDatamarkingPreamble } from "./prompt-guard";
 import { generateActionUrls } from "./action-urls";
+import {
+  approvalUrl,
+  createSendApproval,
+  decideSendApproval,
+  digestSendSnapshot,
+  getSendApproval,
+  getSendApprovalMode,
+  type SendApprovalRecord,
+  type SendApprovalRequestState,
+} from "./send-approval";
 import {
   formatEmailList,
   formatMailboxes,
@@ -64,13 +79,23 @@ export interface ToolContext {
     args?: Record<string, unknown>,
   ) => Promise<ToolResult | null>;
   guardResponse: (toolName: string, data: unknown, options?: GuardOptions) => ToolResult;
+  modernMcp?: {
+    getClientCapabilities: () => any;
+    mintRequestState: (state: SendApprovalRequestState, context: ServerContext) => Promise<string>;
+  };
+  forceServerApproval?: boolean;
 }
 
 /**
  * Build a ToolContext from environment and token info, for use outside the
  * Durable Object (e.g., the /mcp/code endpoint).
  */
-export function buildToolContext(env: Env, userLogin: string): ToolContext {
+export function buildToolContext(
+  env: Env,
+  userLogin: string,
+  modernMcp?: ToolContext["modernMcp"],
+  forceServerApproval = false,
+): ToolContext {
   return {
     env,
     getCurrentUser: () => userLogin,
@@ -86,7 +111,24 @@ export function buildToolContext(env: Env, userLogin: string): ToolContext {
       return null;
     },
     guardResponse: (toolName, data, options) => guardResponse(toolName, data, options),
+    modernMcp,
+    forceServerApproval,
   };
+}
+
+/** Adapt the SDK v2 registration API to the shared SDK v1-shaped registrar. */
+export function legacyShapedModernServer(server: ModernMcpServer): McpServer {
+  return {
+    tool(name: string, description: string, schema: any, annotationsOrHandler: any, maybeHandler?: any) {
+      const annotations = maybeHandler ? annotationsOrHandler : undefined;
+      const handler = maybeHandler || annotationsOrHandler;
+      server.registerTool(
+        name,
+        { description, inputSchema: schema, ...(annotations ? { annotations } : {}) },
+        handler,
+      );
+    },
+  } as unknown as McpServer;
 }
 
 /**
@@ -122,97 +164,134 @@ export function guardResponse(
   return { content: [{ text: json, type: "text" }] };
 }
 
-/**
- * Ask the MCP client to confirm an email send via elicitation.
- *
- * Uses `extra.sendRequest` (not `server.elicitInput`) so the elicitation request
- * is routed via the tool call's POST response stream instead of requiring a
- * standalone GET/SSE stream. This makes it work with Claude Code's HTTP transport.
- *
- * Returns { approved: true } if confirmed or client doesn't support elicitation (fail-open).
- * Returns { approved: false, message } if declined or cancelled.
- */
-async function confirmSend(
+const SEND_TOOL_ANNOTATIONS = {
+  title: "Send email",
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
+};
+
+function approvalResult(record: SendApprovalRecord, url: string): ToolResult {
+  if (record.status === "sent") {
+    return { content: [{ type: "text", text: `Email sent successfully. Submission ID: ${record.submissionId || "unknown"}` }] };
+  }
+  if (record.status === "declined") {
+    return { content: [{ type: "text", text: `Email not sent. The approval was declined. Draft ID: ${record.draftId}` }] };
+  }
+  if (record.status === "expired") {
+    return { content: [{ type: "text", text: `Email not sent. The approval expired. Draft ID: ${record.draftId}` }] };
+  }
+  if (record.status === "sending") {
+    return { content: [{ type: "text", text: `The email send is being processed. Check Fastmail Sent before retrying. Draft ID: ${record.draftId}` }] };
+  }
+  return {
+    content: [{
+      type: "text",
+      text: `Email prepared as a Fastmail draft. Nothing will be sent until you approve it.\n\nReview and approve: ${url}\nDraft ID: ${record.draftId}\nApproval expires: ${record.expiresAt}`,
+    }],
+  };
+}
+
+async function requestModernApproval(
+  ctx: ToolContext,
   extra: any,
-  details: {
-    to: string[];
-    cc?: string[];
-    bcc?: string[];
-    subject: string;
-    bodyPreview: string;
-    isReply?: boolean;
-  },
-  env?: Env,
-): Promise<{ approved: boolean; message?: string }> {
-  // Skip elicitation unless explicitly enabled — avoids Worker timeout issues
-  if (env?.ENABLE_SEND_CONFIRMATION !== "true") {
-    return { approved: true };
+  record: SendApprovalRecord,
+  url: string,
+): Promise<any | null> {
+  if (!ctx.modernMcp || !extra?.mcpReq) return null;
+  const capabilities = ctx.modernMcp.getClientCapabilities();
+  if (!capabilities?.elicitation?.url) return null;
+  const state: SendApprovalRequestState = {
+    approvalId: record.id,
+    draftId: record.draftId,
+    payloadDigest: record.payloadDigest,
+    toolName: record.toolName,
+    userLogin: record.userLogin,
+  };
+  const requestState = await ctx.modernMcp.mintRequestState(state, extra);
+  return inputRequired({
+    inputRequests: {
+      approval: inputRequired.elicitUrl({
+        message: `Review and approve ${record.toolName.replaceAll("_", " ")}`,
+        url,
+      }),
+    },
+    requestState,
+  });
+}
+
+async function resumeSendApproval(
+  ctx: ToolContext,
+  extra: any,
+  toolName: SendApprovalRecord["toolName"],
+): Promise<any | null> {
+  if (!ctx.modernMcp || !extra?.mcpReq?.requestState) return null;
+  const state = extra.mcpReq.requestState() as SendApprovalRequestState | undefined;
+  if (!state) return null;
+  const currentUser = ctx.getCurrentUser();
+  if (!currentUser || state.userLogin.toLowerCase() !== currentUser.toLowerCase() || state.toolName !== toolName) {
+    return { content: [{ type: "text", text: "Email not sent. Approval state does not match this request." }], isError: true };
   }
-
-  try {
-    const lines = [
-      details.isReply ? "Confirm Reply" : "Confirm Send",
-      "",
-      `To: ${details.to.join(", ")}`,
-    ];
-    if (details.cc?.length) lines.push(`CC: ${details.cc.join(", ")}`);
-    if (details.bcc?.length) lines.push(`BCC: ${details.bcc.join(", ")}`);
-    lines.push(`Subject: ${details.subject}`);
-    lines.push("");
-    const preview = details.bodyPreview.length > 500
-      ? details.bodyPreview.slice(0, 500) + "..."
-      : details.bodyPreview;
-    lines.push(preview);
-
-    const result = await extra.sendRequest(
-      {
-        method: "elicitation/create" as const,
-        params: {
-          message: lines.join("\n"),
-          mode: "form" as const,
-          requestedSchema: {
-            type: "object" as const,
-            required: ["confirm"],
-            properties: {
-              confirm: {
-                type: "boolean" as const,
-                title: "Send this email?",
-                description: "Uncheck to cancel sending",
-                default: true,
-              },
-            },
-          },
-        },
-      },
-      ElicitResultSchema,
-      { timeout: 60000 }, // 60s timeout for user to respond to confirmation dialog
-    );
-
-    if (result.action === "accept" && result.content?.confirm === true) {
-      return { approved: true };
-    }
-    const reason = result.action === "decline" ? "User declined"
-      : result.action === "cancel" ? "User cancelled"
-      : "Send not confirmed";
-    return { approved: false, message: reason };
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-
-    // Fail-open ONLY when the client doesn't support elicitation at all.
-    // This preserves backward compatibility with older MCP clients.
-    // Match the exact MCP SDK error messages from Server.elicitInput():
-    //   "Client does not support form elicitation."
-    //   "Client does not support url elicitation."
-    if (msg.includes("Client does not support")) {
-      console.warn(`[elicitation] Client does not support elicitation (fail-open): ${msg}`);
-      return { approved: true };
-    }
-
-    // For timeouts, disconnects, or any other error: fail-closed (don't send).
-    // This prevents emails from sending when the user declines or the connection drops.
-    console.warn(`[elicitation] Elicitation failed (fail-closed): ${msg}`);
-    return { approved: false, message: `Confirmation failed: ${msg}` };
+  const record = await getSendApproval(ctx.env, state.approvalId);
+  if (!record || record.draftId !== state.draftId || record.payloadDigest !== state.payloadDigest) {
+    return { content: [{ type: "text", text: "Email not sent. Approval state is invalid or expired." }], isError: true };
   }
+  const url = approvalUrl(ctx.env, record.id);
+  if (record.status === "pending") {
+    const response = inputResponse(extra.mcpReq.inputResponses, "approval");
+    if (response.kind === "elicit" && (response.action === "decline" || response.action === "cancel")) {
+      const declined = await decideSendApproval(ctx.env, record.id, currentUser, "decline");
+      return approvalResult(declined.record || record, url);
+    }
+    // URL `accept` means the client consented to open the browser, not that the
+    // review page approved the send. Complete the tool call with a pending URL;
+    // the authenticated page performs and records the actual approval.
+    if (response.kind === "elicit" && response.action === "accept") {
+      return approvalResult(record, url);
+    }
+    return (await requestModernApproval(ctx, extra, record, url)) || approvalResult(record, url);
+  }
+  if (record.status === "approved") {
+    return approvalResult(record, url);
+  }
+  return approvalResult(record, url);
+}
+
+async function prepareSendApproval(
+  ctx: ToolContext,
+  extra: any,
+  toolName: SendApprovalRecord["toolName"],
+  draftId: string,
+): Promise<any> {
+  const currentUser = ctx.getCurrentUser();
+  if (!currentUser) throw new Error("Authenticated user is unavailable");
+  const client = ctx.getJmapClient();
+  const snapshot = await client.getDraftApprovalSnapshot(draftId);
+  if (snapshot.truncated) {
+    throw new Error("Email body is too large to review safely; the prepared draft was not sent");
+  }
+  const payloadDigest = await digestSendSnapshot(snapshot);
+  const record = await createSendApproval(ctx.env, {
+    userLogin: currentUser,
+    toolName,
+    draftId,
+    payloadDigest,
+  });
+  const url = approvalUrl(ctx.env, record.id);
+
+  const modern = await requestModernApproval(ctx, extra, record, url);
+  if (modern) return modern;
+
+  // Legacy, Code Mode, CLI, and headless clients receive the authenticated
+  // URL as an ordinary result. This avoids pretending that 2025 URL consent
+  // is completion without a durable elicitation-complete notification route.
+  return approvalResult(record, url);
+}
+
+function requiresServerApproval(ctx: ToolContext): boolean {
+  const mode = getSendApprovalMode(ctx.env);
+  return mode === "required" || (mode === "client" && ctx.forceServerApproval === true);
 }
 
 /**
@@ -351,7 +430,7 @@ export function registerAllTools(
   if (shouldRegister("send_email")) {
     server.tool(
       "send_email",
-      "Send an email. Supports file attachments via base64-encoded content. For replies, set inReplyTo and references from the original email.",
+      "Prepare and send a new email. In the default required-approval mode, this creates a Fastmail draft and returns an authenticated review URL; the email is submitted only after approval. Supports file attachments via base64-encoded content. For replies, use reply_to_email.",
       {
         to: z.array(z.string()).describe("Recipient email addresses"),
         cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
@@ -383,10 +462,14 @@ export function registerAllTools(
           .optional()
           .describe("Advanced: Message-ID chain for threading. For true replies, prefer `reply_to_email` — it computes this from the source email automatically."),
       },
+      SEND_TOOL_ANNOTATIONS,
       async ({ to, cc, bcc, from, subject, textBody, htmlBody, markdownBody, attachments, inReplyTo, references }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates even if the outer Hono check is bypassed
         const denied = await ctx.checkToolPermission('send_email');
         if (denied) return denied;
+
+        const resumed = await resumeSendApproval(ctx, extra, "send_email");
+        if (resumed) return resumed;
 
         if (!textBody && !htmlBody && !markdownBody) {
           return {
@@ -394,18 +477,24 @@ export function registerAllTools(
           };
         }
 
-        // Elicitation: ask user to confirm before sending
-        const bodyPreview = textBody || markdownBody || (htmlBody ? htmlBody.replace(/<[^>]*>/g, "") : "");
-        const confirmation = await confirmSend(extra, { to, cc, bcc, subject, bodyPreview }, ctx.env);
-        if (!confirmation.approved) {
-          return {
-            content: [{ text: `Email not sent: ${confirmation.message || "cancelled by user"}`, type: "text" }],
-          };
-        }
-
         try {
           const client = ctx.getJmapClient();
           const finalHtmlBody = markdownBody ? await marked.parse(markdownBody) : htmlBody;
+          if (requiresServerApproval(ctx)) {
+            const draftId = await client.createDraft({
+              to,
+              cc,
+              bcc,
+              from,
+              subject,
+              textBody,
+              htmlBody: finalHtmlBody,
+              attachments,
+              inReplyTo,
+              references,
+            });
+            return await prepareSendApproval(ctx, extra, "send_email", draftId);
+          }
           const submissionId = await client.sendEmail({
             to,
             cc,
@@ -437,7 +526,7 @@ export function registerAllTools(
   if (shouldRegister("send_copy")) {
     server.tool(
       "send_copy",
-      "Send a copy of an existing email to a new recipient (equivalent to Fastmail's 'Send a copy...' menu item). Preserves the original email's subject, headers, MIME body, and embedded images byte-for-byte — only the SMTP envelope is changed. Useful for forwarding to read-later services like Instapaper without the 'Fwd:' subject prefix or formatting loss that 'send_email' produces. Internally uses JMAP EmailSubmission/set with the existing emailId and a custom envelope.",
+      "Prepare and send a copy of an existing email to a new recipient (equivalent to Fastmail's 'Send a copy...' menu item). In required-approval mode, returns an authenticated review URL and submits only after approval. Preserves the original subject, body, and embedded images while changing the recipients.",
       {
         emailId: z.string().describe("ID of the existing email to send a copy of"),
         to: z.array(z.string()).describe("Recipient email addresses for the copy"),
@@ -445,31 +534,20 @@ export function registerAllTools(
         bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
         from: z.string().optional().describe("Sender identity to use (optional, defaults to account primary). Must be a verified identity."),
       },
+      SEND_TOOL_ANNOTATIONS,
       async ({ emailId, to, cc, bcc, from }, extra) => {
         const denied = await ctx.checkToolPermission('send_copy');
         if (denied) return denied;
 
-        // Confirmation: load the source email so the user knows what they're sending
-        let bodyPreview = "(original email content preserved as-is)";
-        let subject = "(original subject)";
-        try {
-          const client = ctx.getJmapClient();
-          const source = await client.getEmailById(emailId);
-          subject = source?.subject || subject;
-          bodyPreview = `Send a copy of: "${subject}" (original email ID ${emailId})`;
-        } catch {
-          // If we can't fetch a preview, still allow the user to confirm
-        }
-
-        const confirmation = await confirmSend(extra, { to, cc, bcc, subject, bodyPreview }, ctx.env);
-        if (!confirmation.approved) {
-          return {
-            content: [{ text: `Copy not sent: ${confirmation.message || "cancelled by user"}`, type: "text" }],
-          };
-        }
+        const resumed = await resumeSendApproval(ctx, extra, "send_copy");
+        if (resumed) return resumed;
 
         try {
           const client = ctx.getJmapClient();
+          if (requiresServerApproval(ctx)) {
+            const draftId = await client.createCopyDraft({ emailId, to, cc, bcc, from });
+            return await prepareSendApproval(ctx, extra, "send_copy", draftId);
+          }
           const submissionId = await client.sendCopy({ emailId, to, cc, bcc, from });
           return {
             content: [{ text: `Copy sent successfully. Submission ID: ${submissionId}\nOriginal email: ${emailId}\nRecipients: ${[...to, ...(cc || []), ...(bcc || [])].join(", ")}`, type: "text" }],
@@ -561,7 +639,7 @@ export function registerAllTools(
   if (shouldRegister("reply_to_email")) {
     server.tool(
       "reply_to_email",
-      "Reply to an email with proper threading and quoting, just like Fastmail's reply button. Automatically handles recipients, subject, threading headers, and quotes the original message. This is the ONLY correct way to draft or send a reply — use it with sendImmediately=false (default) to create a reply draft the user can review. Do NOT use `create_draft` for replies; it loses threading and the quoted source.",
+      "Reply to an email with proper threading and quoting, just like Fastmail's reply button. Automatically handles recipients, subject, threading headers, and quotes the original message. This is the ONLY correct way to draft or send a reply. With sendImmediately=false (default), it creates a reply draft. With sendImmediately=true in required-approval mode, it returns an authenticated review URL and submits only after approval. Do NOT use create_draft for replies.",
       {
         emailId: z.string().describe("ID of the email to reply to"),
         body: z.string().describe("Your reply message (plain text)"),
@@ -580,11 +658,14 @@ export function registerAllTools(
         sendImmediately: z.boolean().default(false).describe("If true, send the reply immediately. If false (default), create a draft."),
         excludeQuote: z.boolean().default(false).describe("If true, don't include quoted original message. Default includes quote."),
       },
+      SEND_TOOL_ANNOTATIONS,
       async ({ emailId, body, htmlBody, markdownBody, from, replyAll, sendImmediately, excludeQuote }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates from sending replies immediately
         if (sendImmediately) {
           const denied = await ctx.checkToolPermission('reply_to_email', { sendImmediately: true });
           if (denied) return denied;
+          const resumed = await resumeSendApproval(ctx, extra, "reply_to_email");
+          if (resumed) return resumed;
         }
 
         try {
@@ -639,20 +720,19 @@ export function registerAllTools(
             : `<div style="white-space: pre-wrap;">${body.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>${quotedHtml}`;
 
           if (sendImmediately) {
-            // Elicitation: ask user to confirm before sending reply
-            const replyConfirmation = await confirmSend(extra, {
-              to: toRecipients,
-              cc: ccRecipients.length > 0 ? ccRecipients : undefined,
-              subject,
-              bodyPreview: body,
-              isReply: true,
-            }, ctx.env);
-            if (!replyConfirmation.approved) {
-              return {
-                content: [{ text: `Reply not sent: ${replyConfirmation.message || "cancelled by user"}`, type: "text" }],
-              };
+            if (requiresServerApproval(ctx)) {
+              const draftId = await client.createDraft({
+                to: toRecipients,
+                cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+                from,
+                subject,
+                textBody: finalTextBody,
+                htmlBody: finalHtmlBody,
+                inReplyTo,
+                references,
+              });
+              return await prepareSendApproval(ctx, extra, "reply_to_email", draftId);
             }
-
             const submissionId = await client.sendEmail({
               to: toRecipients,
               cc: ccRecipients.length > 0 ? ccRecipients : undefined,

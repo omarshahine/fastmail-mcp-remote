@@ -52,7 +52,9 @@ vi.mock('../src/permissions', async (importOriginal) => {
 
 import app from '../src/index';
 
-const env = {} as Env;
+const env = {
+	ACTION_SIGNING_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+} as Env;
 const executionCtx = {
 	waitUntil: vi.fn(),
 	passThroughOnException: vi.fn(),
@@ -106,5 +108,41 @@ describe('/mcp transport routing', () => {
 		expect(durableFetch).toHaveBeenCalledTimes(1);
 		expect(durableFetch.mock.calls[0]?.[0].method).toBe('POST');
 		expect(durableFetch.mock.calls[0]?.[0].headers.get('Mcp-Session-Id')).toBe(sessionId);
+	});
+
+	it('routes MCP 2026-07-28 envelope requests to the stateless v2 handler', async () => {
+		const response = await app.request(
+			new Request('https://worker.example/mcp', {
+				method: 'POST',
+				headers: {
+					Authorization: 'Bearer test-token',
+					'Content-Type': 'application/json',
+					'Mcp-Method': 'tools/list',
+					'Mcp-Protocol-Version': '2026-07-28',
+				},
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 3,
+					method: 'tools/list',
+					params: {
+						_meta: {
+							'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+							'io.modelcontextprotocol/clientInfo': { name: 'test-client', version: '1.0.0' },
+							'io.modelcontextprotocol/clientCapabilities': { elicitation: { url: {} } },
+						},
+					},
+				}),
+			}),
+			undefined,
+			env,
+			executionCtx,
+		);
+
+		const responseText = await response.text();
+		expect(response.status, responseText).toBe(200);
+		expect(response.headers.get('content-type')).toContain('application/json');
+		const body = JSON.parse(responseText) as any;
+		expect(body.result.tools.map((tool: any) => tool.name)).toEqual(['list_mailboxes']);
+		expect(durableFetch).not.toHaveBeenCalled();
 	});
 });

@@ -1,4 +1,5 @@
 import { FastmailAuth } from './fastmail-auth';
+import type { SendApprovalSnapshot } from './send-approval';
 
 export interface JmapSession {
   apiUrl: string;
@@ -627,6 +628,108 @@ export class JmapClient {
     return emailResult.created?.draft?.id || 'unknown';
   }
 
+  /** Load the exact send-relevant contents of a Fastmail draft for approval binding. */
+  async getDraftApprovalSnapshot(draftId: string): Promise<SendApprovalSnapshot> {
+    const session = await this.getSession();
+    const response = await this.makeRequest({
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls: [
+        ['Email/get', {
+          accountId: session.accountId,
+          ids: [draftId],
+          properties: [
+            'id', 'keywords', 'from', 'to', 'cc', 'bcc', 'subject',
+            'textBody', 'htmlBody', 'bodyValues', 'attachments',
+            'inReplyTo', 'references',
+          ],
+          bodyProperties: ['partId', 'blobId', 'size', 'name', 'type', 'cid'],
+          fetchAllBodyValues: true,
+          maxBodyValueBytes: 10_000_000,
+        }, 'getApprovalDraft'],
+      ],
+    });
+    const draft = response.methodResponses[0][1].list?.[0];
+    if (!draft) throw new Error(`Draft not found: ${draftId}`);
+    if (draft.keywords?.$draft !== true) throw new Error('Email is no longer a draft');
+
+    const bodyText = (parts: any[] | undefined) => (parts || [])
+      .map((part) => draft.bodyValues?.[part.partId]?.value || '')
+      .join('\n');
+
+    return {
+      from: draft.from?.[0]?.email || '',
+      to: (draft.to || []).map((address: any) => address.email),
+      cc: (draft.cc || []).map((address: any) => address.email),
+      bcc: (draft.bcc || []).map((address: any) => address.email),
+      subject: draft.subject || '',
+      textBody: bodyText(draft.textBody),
+      htmlBody: bodyText(draft.htmlBody),
+      attachments: (draft.attachments || []).map((attachment: any) => ({
+        blobId: attachment.blobId || '',
+        name: attachment.name || '',
+        type: attachment.type || 'application/octet-stream',
+        size: attachment.size || 0,
+        ...(attachment.cid ? { cid: attachment.cid } : {}),
+      })),
+      inReplyTo: draft.inReplyTo || [],
+      references: draft.references || [],
+      truncated: [...(draft.textBody || []), ...(draft.htmlBody || [])]
+        .some((part: any) => draft.bodyValues?.[part.partId]?.isTruncated === true),
+    };
+  }
+
+  /** Submit an existing, already-reviewed draft and move it to Sent. */
+  async submitDraft(draftId: string): Promise<string> {
+    const session = await this.getSession();
+    const snapshot = await this.getDraftApprovalSnapshot(draftId);
+    if (!snapshot.from) throw new Error('Draft has no sender identity');
+
+    const identities = await this.getIdentities();
+    const selectedIdentity = identities.find((identity) =>
+      identity.email.toLowerCase() === snapshot.from.toLowerCase()
+    );
+    if (!selectedIdentity) throw new Error('Draft sender is not a verified identity');
+
+    const recipients = [...snapshot.to, ...snapshot.cc, ...snapshot.bcc];
+    if (recipients.length === 0) throw new Error('Draft has no recipients');
+
+    const mailboxes = await this.getMailboxes();
+    const sentMailbox = mailboxes.find((mailbox) => mailbox.role === 'sent')
+      || mailboxes.find((mailbox) => mailbox.name.toLowerCase().includes('sent'));
+    if (!sentMailbox) throw new Error('Could not find Sent mailbox');
+
+    const response = await this.makeRequest({
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission'],
+      methodCalls: [
+        ['EmailSubmission/set', {
+          accountId: session.accountId,
+          create: {
+            submission: {
+              emailId: draftId,
+              identityId: selectedIdentity.id,
+              envelope: {
+                mailFrom: { email: snapshot.from },
+                rcptTo: recipients.map((email) => ({ email })),
+              },
+            },
+          },
+          onSuccessUpdateEmail: {
+            '#submission': {
+              mailboxIds: { [sentMailbox.id]: true },
+              keywords: { $seen: true },
+            },
+          },
+        }, 'submitDraft'],
+      ],
+    });
+    const result = response.methodResponses[0][1];
+    if (result.notCreated?.submission) {
+      const error = result.notCreated.submission;
+      throw new Error(`Failed to submit draft: ${error.type || 'unknown'}. ${error.description || ''}`);
+    }
+    return result.created?.submission?.id || 'unknown';
+  }
+
   /**
    * Find an email by its RFC5322 Message-ID header value (the bare id, no angle
    * brackets — same form as the `messageId`/`inReplyTo` fields JMAP returns).
@@ -869,7 +972,8 @@ export class JmapClient {
               identityId: selectedIdentity.id,
               envelope: {
                 mailFrom: { email: fromEmail },
-                rcptTo: email.to.map(addr => ({ email: addr }))
+                rcptTo: [...email.to, ...(email.cc || []), ...(email.bcc || [])]
+                  .map(addr => ({ email: addr }))
               }
             }
           },
@@ -901,7 +1005,7 @@ export class JmapClient {
   }
 
   /**
-   * Send a copy of an existing email to a new recipient. Equivalent to Fastmail's
+   * Prepare a copy of an existing email as a draft. Equivalent to Fastmail's
    * "Send a copy..." menu item — preserves the original email's subject, body,
    * MIME parts, and embedded images. The SMTP envelope is changed to route to the
    * new recipient(s), and the From header is rewritten to a verified identity (Fastmail
@@ -911,15 +1015,13 @@ export class JmapClient {
    *   1. Email/get the source email with its full bodyStructure + bodyValues.
    *   2. Email/set/create a clone in Drafts that re-uses the source's body parts
    *      (HTML and text) and inline-image attachments by blobId — no new uploads.
-   *   3. EmailSubmission/set the clone with a custom envelope.
-   *   4. onSuccessUpdateEmail moves the clone to Sent (and the destroyOnSent flag
-   *      removes it from Drafts).
+   *   3. Leave the clone in Drafts so the approval flow can review and submit it.
    *
    * Result: the recipient sees an email with the original Subject and body content,
    * From the user's verified address. Any cid: image references inside the HTML body
    * resolve correctly because the underlying attachment blobs are re-referenced.
    */
-  async sendCopy(params: {
+  async createCopyDraft(params: {
     emailId: string;
     to: string[];
     cc?: string[];
@@ -973,24 +1075,14 @@ export class JmapClient {
       throw new Error(`Source email not found: ${params.emailId}`);
     }
 
-    // Find Drafts and Sent mailboxes
+    // Find the Drafts mailbox
     const mailboxes = await this.getMailboxes();
     const draftsMailbox = mailboxes.find(mb => mb.role === 'drafts')
       || mailboxes.find(mb => mb.name.toLowerCase().includes('draft'));
-    const sentMailbox = mailboxes.find(mb => mb.role === 'sent')
-      || mailboxes.find(mb => mb.name.toLowerCase().includes('sent'));
     if (!draftsMailbox) throw new Error('Could not find Drafts mailbox');
-    if (!sentMailbox) throw new Error('Could not find Sent mailbox');
 
     // 2. Build the clone: re-use source's body parts and attachments by reference
     const draftMailboxIds: Record<string, boolean> = { [draftsMailbox.id]: true };
-    const sentMailboxIds: Record<string, boolean> = { [sentMailbox.id]: true };
-
-    const allRcpt = [
-      ...params.to,
-      ...(params.cc || []),
-      ...(params.bcc || []),
-    ].map(addr => ({ email: addr }));
 
     // textBody must NOT contain text/html parts on Email/set, even though Fastmail's
     // Email/get returns the HTML blob in both textBody and htmlBody for HTML-only
@@ -1025,50 +1117,36 @@ export class JmapClient {
       }));
     }
 
-    // 3. Create the clone, then submit it, then move to Sent on success
-    const submitRequest: JmapRequest = {
-      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail', 'urn:ietf:params:jmap:submission'],
+    // 3. Create the clone as a draft. Submission happens only after approval.
+    const createRequest: JmapRequest = {
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
       methodCalls: [
         ['Email/set', {
           accountId: session.accountId,
           create: { clone: cloneEmail },
         }, 'createClone'],
-        ['EmailSubmission/set', {
-          accountId: session.accountId,
-          create: {
-            submission: {
-              emailId: '#clone',
-              identityId: selectedIdentity.id,
-              envelope: {
-                mailFrom: { email: fromEmail },
-                rcptTo: allRcpt,
-              },
-            },
-          },
-          onSuccessUpdateEmail: {
-            '#submission': {
-              mailboxIds: sentMailboxIds,
-              keywords: { $seen: true },
-            },
-          },
-        }, 'submitClone'],
       ],
     };
 
-    const submitResponse = await this.makeRequest(submitRequest);
-    const cloneResult = submitResponse.methodResponses[0][1];
+    const createResponse = await this.makeRequest(createRequest);
+    const cloneResult = createResponse.methodResponses[0][1];
     if (cloneResult.notCreated?.clone) {
       const err = cloneResult.notCreated.clone;
       throw new Error(`Failed to clone email: ${err.type || 'unknown'}. ${err.description || ''}`);
     }
+    return cloneResult.created?.clone?.id || 'unknown';
+  }
 
-    const submissionResult = submitResponse.methodResponses[1][1];
-    if (submissionResult.notCreated?.submission) {
-      const err = submissionResult.notCreated.submission;
-      throw new Error(`Failed to submit copy: ${err.type || 'unknown'}. ${err.description || ''}`);
-    }
-
-    return submissionResult.created?.submission?.id || 'unknown';
+  /** Backward-compatible direct send built from the draft preparation primitives. */
+  async sendCopy(params: {
+    emailId: string;
+    to: string[];
+    cc?: string[];
+    bcc?: string[];
+    from?: string;
+  }): Promise<string> {
+    const draftId = await this.createCopyDraft(params);
+    return this.submitDraft(draftId);
   }
 
   async searchEmails(query: string, limit: number = 20): Promise<any[]> {
