@@ -32,9 +32,9 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^25.0.8",
+    "@types/node": "^26.4.0",
     "openclaw": ">=2026.6.5",
-    "typescript": "^5.9.0",
+    "typescript": "^7.0.2",
     "tsup": "^8.5.0"
   },
   "openclaw": {
