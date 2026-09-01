@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  worker:
+    name: worker (tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          # Matches deploy-site.yml. The Worker itself runs on workerd, not
+          # Node -- Node only runs vitest here.
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+      # ⚠️ `npm run type-check` is deliberately NOT run here yet.
+      #
+      # It reports 10 pre-existing errors (see #85), so adding it now would
+      # red-light main rather than protect it. The root cause: current wrangler
+      # emits both `Cloudflare.Env` and a global `Env`, while src/env.d.ts
+      # augments only the former, so the secrets it declares are invisible on
+      # the `Env` the code actually uses.
+      #
+      # Worth knowing why this went unnoticed for so long: type-check silently
+      # returned three different answers depending on the state of the
+      # gitignored, generated worker-configuration.d.ts --
+      #   absent (fresh clone or a git worktree) -> ~50 `Cannot find name 'Env'`
+      #   stale (built by an older workerd)       -> 0, falsely clean
+      #   freshly generated                       -> 10, the real number
+      # Two people measured it in good faith and got contradictory results.
+      # `type-check` now runs `wrangler types` first so the number is stable.
+      #
+      # Add the step here once #85 takes it to 0.

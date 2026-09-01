@@ -12,7 +12,7 @@
 		"start": "wrangler dev",
 		"cli": "tsx cli/main.ts",
 		"cf-typegen": "wrangler types",
-		"type-check": "tsc --noEmit",
+		"type-check": "wrangler types && tsc --noEmit",
 		"test": "vitest run",
 		"test:watch": "vitest"
 	},
