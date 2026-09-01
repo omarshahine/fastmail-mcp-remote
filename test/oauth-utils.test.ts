@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { verifyAccessIdToken, isAllowedRedirectUri } from '../src/oauth-utils';
+import {
+	verifyAccessIdToken,
+	isAllowedRedirectUri,
+	slideClientRegistrationTtl,
+	CLIENT_TTL_SECONDS,
+	CLIENT_TTL_REFRESH_INTERVAL_SECONDS,
+} from '../src/oauth-utils';
 
 const TEAM_NAME = 'example-team';
 const CLIENT_ID = 'access-client-id';
@@ -177,5 +183,73 @@ describe('isAllowedRedirectUri', () => {
 	it('rejects malformed redirect URIs', () => {
 		expect(isAllowedRedirectUri('not a url', ORIGIN)).toBe(false);
 		expect(isAllowedRedirectUri('', ORIGIN)).toBe(false);
+	});
+});
+
+describe('slideClientRegistrationTtl', () => {
+	function makeKv(record: unknown) {
+		return {
+			get: vi.fn(async () => record),
+			put: vi.fn(async () => undefined),
+			delete: vi.fn(async () => undefined),
+		} as unknown as KVNamespace & { get: ReturnType<typeof vi.fn>; put: ReturnType<typeof vi.fn> };
+	}
+
+	const CLIENT = {
+		client_id: 'client-abc',
+		client_name: 'Test Client',
+		redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+	};
+
+	it('rewrites the record with a fresh 90-day TTL on first use', async () => {
+		const kv = makeKv({ ...CLIENT });
+		await slideClientRegistrationTtl(kv, 'client-abc');
+
+		expect(kv.get).toHaveBeenCalledWith('client:client-abc', 'json');
+		expect(kv.put).toHaveBeenCalledTimes(1);
+		const [key, value, options] = kv.put.mock.calls[0];
+		expect(key).toBe('client:client-abc');
+		expect(options).toEqual({ expirationTtl: CLIENT_TTL_SECONDS });
+		const written = JSON.parse(value as string);
+		// Registered redirect_uris must survive the rewrite — they are what the
+		// exact-match check at /authorize depends on.
+		expect(written.redirect_uris).toEqual(CLIENT.redirect_uris);
+		expect(Date.parse(written.ttl_refreshed_at)).toBeGreaterThan(Date.now() - 60_000);
+	});
+
+	it('throttles to one write per client per day', async () => {
+		const kv = makeKv({ ...CLIENT, ttl_refreshed_at: new Date(Date.now() - 60_000).toISOString() });
+		await slideClientRegistrationTtl(kv, 'client-abc');
+		expect(kv.put).not.toHaveBeenCalled();
+	});
+
+	it('slides again once the throttle interval has passed', async () => {
+		const stale = new Date(Date.now() - (CLIENT_TTL_REFRESH_INTERVAL_SECONDS + 60) * 1000).toISOString();
+		const kv = makeKv({ ...CLIENT, ttl_refreshed_at: stale });
+		await slideClientRegistrationTtl(kv, 'client-abc');
+		expect(kv.put).toHaveBeenCalledTimes(1);
+	});
+
+	it('never resurrects a lapsed or unregistered client record', async () => {
+		const kv = makeKv(null);
+		await slideClientRegistrationTtl(kv, 'client-abc');
+		expect(kv.put).not.toHaveBeenCalled();
+	});
+
+	it('is a no-op without a client_id', async () => {
+		const kv = makeKv({ ...CLIENT });
+		await slideClientRegistrationTtl(kv, undefined);
+		expect(kv.get).not.toHaveBeenCalled();
+		expect(kv.put).not.toHaveBeenCalled();
+	});
+
+	it('swallows KV failures so token issuance is never blocked', async () => {
+		const kv = {
+			get: vi.fn(async () => {
+				throw new Error('KV unavailable');
+			}),
+			put: vi.fn(async () => undefined),
+		} as unknown as KVNamespace;
+		await expect(slideClientRegistrationTtl(kv, 'client-abc')).resolves.toBeUndefined();
 	});
 });

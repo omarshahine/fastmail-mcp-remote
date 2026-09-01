@@ -19,6 +19,10 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Outbound tools now advertise write/destructive, non-idempotent, open-world
   annotations so supporting clients can apply native approval policies.
 - Cc and Bcc addresses are now included in direct-send SMTP envelopes.
+- Client registration TTL now slides on both token grants, so a client living on
+  refresh tokens keeps its registered `redirect_uris` enforced instead of
+  silently falling back to host-allowlist matching after 90 days. Unused
+  registrations still expire on the original bound.
 
 ## [1.12.0] - 2026-04-18
 
