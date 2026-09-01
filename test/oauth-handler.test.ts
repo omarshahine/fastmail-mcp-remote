@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { handleGetTokenCallback, handleAuthorize } from '../src/oauth-handler';
+import { handleGetTokenCallback, handleAuthorize, handleToken } from '../src/oauth-handler';
+import { CLIENT_TTL_SECONDS, hashToken } from '../src/oauth-utils';
 
 const TEAM_NAME = 'example-team';
 const CLIENT_ID = 'access-client-id';
@@ -214,5 +215,135 @@ describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => 
 
 			expect(response.status).toBe(400);
 		});
+	});
+});
+
+describe('handleToken — client registration TTL slides on use', () => {
+	const CLIENT_RECORD = {
+		client_id: 'registered-client',
+		client_name: 'Test Client',
+		redirect_uris: ['https://claude.ai/api/mcp/auth_callback'],
+	};
+
+	// KV fake that serves whatever the handler asks for by key prefix and
+	// records every write, so a test can assert on the `client:` write alone.
+	function makeKv(overrides: Record<string, unknown> = {}) {
+		const store: Record<string, unknown> = {
+			'client:registered-client': { ...CLIENT_RECORD },
+			...overrides,
+		};
+		const put = vi.fn(async (key: string, value: string) => {
+			store[key] = JSON.parse(value);
+		});
+		const kv = {
+			// `type` is 'json' for the typed reads and undefined for raw string reads.
+			get: vi.fn(async (key: string, type?: string) => {
+				const value = store[key];
+				if (value === undefined) return null;
+				return type === 'json' ? value : JSON.stringify(value);
+			}),
+			put,
+			delete: vi.fn(async (key: string) => {
+				delete store[key];
+			}),
+		};
+		return { kv, put, store };
+	}
+
+	function env(kv: unknown): Env {
+		return {
+			OAUTH_KV: kv,
+			ALLOWED_USERS: 'allowed@example.com',
+		} as unknown as Env;
+	}
+
+	function tokenRequest(params: Record<string, string>): Request {
+		return new Request('https://worker.example/mcp/token', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams(params).toString(),
+		});
+	}
+
+	function clientWrites(put: ReturnType<typeof vi.fn>) {
+		return put.mock.calls.filter((call: any[]) => String(call[0]).startsWith('client:'));
+	}
+
+	it('slides the registration on the authorization_code grant', async () => {
+		const { kv, put } = makeKv({
+			'code:auth-code-1': {
+				client_id: 'registered-client',
+				user_id: 'user-1',
+				user_login: 'allowed@example.com',
+				user_email: 'allowed@example.com',
+				scope: 'mcp:read mcp:write',
+				redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+				code_challenge: null,
+				code_challenge_method: null,
+				expires_at: new Date(Date.now() + 60_000).toISOString(),
+				used: false,
+			},
+		});
+
+		const response = await handleToken(
+			tokenRequest({ grant_type: 'authorization_code', code: 'auth-code-1' }),
+			env(kv)
+		);
+
+		expect(response.status).toBe(200);
+		const writes = clientWrites(put);
+		expect(writes).toHaveLength(1);
+		expect(writes[0][2]).toEqual({ expirationTtl: CLIENT_TTL_SECONDS });
+	});
+
+	it('slides the registration on the refresh_token grant — the only hot path a refresh-only client touches', async () => {
+		const refreshToken = 'refresh-token-value';
+		const refreshKey = `refresh_token:${await hashToken(refreshToken)}`;
+		const { kv, put } = makeKv({
+			[refreshKey]: {
+				client_id: 'registered-client',
+				user_id: 'user-1',
+				user_login: 'allowed@example.com',
+				scope: 'mcp:read mcp:write',
+				access_token_hash: 'old-hash',
+				created_at: new Date(Date.now() - 86_400_000).toISOString(),
+			},
+		});
+
+		const response = await handleToken(
+			tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken }),
+			env(kv)
+		);
+
+		expect(response.status).toBe(200);
+		const writes = clientWrites(put);
+		expect(writes).toHaveLength(1);
+		expect(writes[0][2]).toEqual({ expirationTtl: CLIENT_TTL_SECONDS });
+	});
+
+	it('still issues a token when the client record has already lapsed', async () => {
+		const refreshToken = 'refresh-token-value';
+		const refreshKey = `refresh_token:${await hashToken(refreshToken)}`;
+		const { kv, put, store } = makeKv({
+			[refreshKey]: {
+				client_id: 'lapsed-client',
+				user_id: 'user-1',
+				user_login: 'allowed@example.com',
+				scope: null,
+				access_token_hash: 'old-hash',
+				created_at: new Date(Date.now() - 86_400_000).toISOString(),
+			},
+		});
+		delete store['client:registered-client'];
+
+		const response = await handleToken(
+			tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken }),
+			env(kv)
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ token_type: 'Bearer' });
+		// A lapsed record is never recreated — re-registration is the recovery path.
+		expect(clientWrites(put)).toHaveLength(0);
 	});
 });

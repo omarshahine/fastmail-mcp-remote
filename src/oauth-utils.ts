@@ -11,6 +11,7 @@ export const STATE_TTL_SECONDS = 600; // 10 minutes
 export const CODE_TTL_SECONDS = 60; // 1 minute
 export const TOKEN_TTL_SECONDS = 86400 * 30; // 30 days
 export const CLIENT_TTL_SECONDS = 86400 * 90; // 90 days — bounds unauthenticated /register growth
+export const CLIENT_TTL_REFRESH_INTERVAL_SECONDS = 86400; // slide a client record at most once a day
 export const DEFAULT_SCOPE = 'mcp:read mcp:write';
 
 // Redirect URIs are constrained to a host allowlist at authorize, token, and
@@ -384,6 +385,56 @@ export interface OAuthClientData {
 	client_id: string;
 	client_name: string;
 	redirect_uris: string[];
+	/** Last time the record's TTL was slid, so the write can be throttled. */
+	ttl_refreshed_at?: string;
+}
+
+/**
+ * Slide a client registration's TTL when the client proves it is still in use.
+ *
+ * CLIENT_TTL_SECONDS is a hard KV expiry that bounds growth from the open,
+ * unauthenticated /register endpoint. That bound is about *unused* records:
+ * a client that keeps exchanging tokens is continuously active, yet nothing on
+ * its hot path touched `client:{id}`, so it lapsed at 90 days and silently lost
+ * the exact registered-redirect_uri check at /authorize (validation then falls
+ * back to host-allowlist matching alone).
+ *
+ * The slide is deliberately bound to the token endpoint. /authorize is reachable
+ * by any unauthenticated caller, so refreshing there would let anyone keep a
+ * spam registration alive forever and defeat the growth bound. A token exchange
+ * requires a valid authorization code or refresh token, which means a real user
+ * has authenticated for this client — exactly the signal the TTL should track.
+ *
+ * Best-effort by construction: never throws, and never blocks token issuance.
+ */
+export async function slideClientRegistrationTtl(
+	kv: KVNamespace,
+	clientId: string | undefined | null
+): Promise<void> {
+	if (!clientId) return;
+	try {
+		const key = `client:${clientId}`;
+		const data = await kv.get<OAuthClientData>(key, 'json');
+		// No record: the client is unregistered or already lapsed. Re-registration
+		// is the recovery path — recreating it here would resurrect a record that
+		// the growth bound intentionally dropped.
+		if (!data) return;
+
+		// One write per client per day at most. Access tokens are long-lived, but
+		// a client that re-exchanges aggressively should not write on every call.
+		// A negative age means the stamp is in the future (clock skew or a corrupt
+		// record); slide in that case rather than skipping the write forever.
+		const lastRefreshed = data.ttl_refreshed_at ? Date.parse(data.ttl_refreshed_at) : NaN;
+		const age = Date.now() - lastRefreshed;
+		if (Number.isFinite(age) && age >= 0 && age < CLIENT_TTL_REFRESH_INTERVAL_SECONDS * 1000) {
+			return;
+		}
+
+		data.ttl_refreshed_at = new Date().toISOString();
+		await kv.put(key, JSON.stringify(data), { expirationTtl: CLIENT_TTL_SECONDS });
+	} catch (e) {
+		console.warn(`[oauth] Failed to slide client registration TTL (non-fatal): ${e}`);
+	}
 }
 
 // Validate access token (KV-based) with sliding window renewal.

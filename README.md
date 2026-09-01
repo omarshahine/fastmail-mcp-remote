@@ -486,6 +486,13 @@ GitHub Copilot CLI doesn't support automatic OAuth client registration, so you n
 - All traffic over HTTPS
 - Email-based allowlist for access control
 - Email action URLs use HMAC-SHA256 signatures with 24-hour expiry and single-use nonces
+- Dynamic client registrations (`/register`) carry a 90-day KV expiry that bounds
+  growth from that open endpoint. The TTL slides on every token exchange
+  (`authorization_code` and `refresh_token`), so a client that stays in use never
+  lapses, while a registration that never obtains a token still expires on time.
+  The slide is deliberately not applied at `/authorize`, which any unauthenticated
+  caller can reach. A lapsed record is never recreated implicitly — the client
+  re-registers, which is how MCP clients recover today.
 
 ## Delegate Access (Role-Based Permissions)
 

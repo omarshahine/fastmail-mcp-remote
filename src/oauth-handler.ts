@@ -16,6 +16,7 @@ import {
 	verifyCodeChallenge,
 	validateRefreshToken,
 	verifyAccessIdToken,
+	slideClientRegistrationTtl,
 	STATE_TTL_SECONDS,
 	CODE_TTL_SECONDS,
 	TOKEN_TTL_SECONDS,
@@ -440,6 +441,9 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
 		scope: authCode.scope,
 	});
 
+	// The client is demonstrably in use — keep its registration from lapsing.
+	await slideClientRegistrationTtl(env.OAUTH_KV, authCode.client_id);
+
 	return new Response(
 		JSON.stringify({
 			access_token: pair.access_token,
@@ -523,6 +527,10 @@ async function handleRefreshTokenGrant(
 	} catch (e) {
 		console.warn(`[oauth] Failed to update refresh token metadata (non-fatal): ${e}`);
 	}
+
+	// A refresh-token-only client never reaches /authorize, so this is the only
+	// place its registration record can be kept alive while it stays in use.
+	await slideClientRegistrationTtl(env.OAUTH_KV, refreshData.client_id);
 
 	return new Response(
 		JSON.stringify({
