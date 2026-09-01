@@ -230,6 +230,19 @@ describe('slideClientRegistrationTtl', () => {
 		expect(kv.put).toHaveBeenCalledTimes(1);
 	});
 
+	it('slides despite a future-dated stamp instead of skipping the write forever', async () => {
+		const future = new Date(Date.now() + 10 * 86_400_000).toISOString();
+		const kv = makeKv({ ...CLIENT, ttl_refreshed_at: future });
+		await slideClientRegistrationTtl(kv, 'client-abc');
+		expect(kv.put).toHaveBeenCalledTimes(1);
+	});
+
+	it('slides when the stamp is unparseable', async () => {
+		const kv = makeKv({ ...CLIENT, ttl_refreshed_at: 'not-a-date' });
+		await slideClientRegistrationTtl(kv, 'client-abc');
+		expect(kv.put).toHaveBeenCalledTimes(1);
+	});
+
 	it('never resurrects a lapsed or unregistered client record', async () => {
 		const kv = makeKv(null);
 		await slideClientRegistrationTtl(kv, 'client-abc');

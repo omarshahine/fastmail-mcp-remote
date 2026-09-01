@@ -422,11 +422,11 @@ export async function slideClientRegistrationTtl(
 
 		// One write per client per day at most. Access tokens are long-lived, but
 		// a client that re-exchanges aggressively should not write on every call.
+		// A negative age means the stamp is in the future (clock skew or a corrupt
+		// record); slide in that case rather than skipping the write forever.
 		const lastRefreshed = data.ttl_refreshed_at ? Date.parse(data.ttl_refreshed_at) : NaN;
-		if (
-			Number.isFinite(lastRefreshed) &&
-			Date.now() - lastRefreshed < CLIENT_TTL_REFRESH_INTERVAL_SECONDS * 1000
-		) {
+		const age = Date.now() - lastRefreshed;
+		if (Number.isFinite(age) && age >= 0 && age < CLIENT_TTL_REFRESH_INTERVAL_SECONDS * 1000) {
 			return;
 		}
 
