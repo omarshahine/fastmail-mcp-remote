@@ -151,6 +151,32 @@ describe("SendApprovalStore", () => {
     expect(status.record).toMatchObject({ status: "sent", submissionId: "submission-1" });
   });
 
+  it("expires a pending approval on read and refuses to approve or claim it", async () => {
+    const store = new SendApprovalStore(new MemoryState() as unknown as DurableObjectState, {} as Env);
+    await store.fetch(new Request("https://approval.internal/create", {
+      method: "POST",
+      body: JSON.stringify(record({ expiresAt: new Date(Date.now() - 1_000).toISOString() })),
+    }));
+
+    const status = await json(await store.fetch(new Request("https://approval.internal/status")));
+    expect(status.record.status).toBe("expired");
+
+    const approve = await json(await store.fetch(new Request("https://approval.internal/decide", {
+      method: "POST",
+      body: JSON.stringify({ userLogin: "sender@example.com", decision: "approve" }),
+    })));
+    expect(approve.ok).toBe(false);
+    expect(approve.error).toContain("expired");
+
+    // Even a correct user and matching digest cannot claim an expired approval.
+    const claim = await json(await store.fetch(new Request("https://approval.internal/claim", {
+      method: "POST",
+      body: JSON.stringify({ userLogin: "sender@example.com", payloadDigest: "digest-1" }),
+    })));
+    expect(claim.ok).toBe(false);
+    expect(claim.record.status).toBe("expired");
+  });
+
   it("rejects the wrong user, changed payload, and declined approvals", async () => {
     const store = new SendApprovalStore(new MemoryState() as unknown as DurableObjectState, {} as Env);
     await store.fetch(new Request("https://approval.internal/create", {

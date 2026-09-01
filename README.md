@@ -334,6 +334,37 @@ With `SEND_APPROVAL_MODE=required`, `send_email`, `send_copy`, and immediate rep
 
 The review URL works with regular MCP, Code Mode, the CLI, and OpenClaw. MCP 2026-07-28 clients use the stateless multi-round-trip elicitation flow. Older and headless clients receive the authenticated URL in the normal tool result. Tool annotations also mark outbound tools as write operations for clients with native approval policies. Code Mode cannot expose annotations for its inner tools, so it always applies the server gate unless approval mode is explicitly `off`.
 
+#### Client-side approval (defense in depth)
+
+The server gate stands on its own — it does not trust the client. These settings
+just add a native prompt in front of it, so a send is visible before the tool
+call even happens.
+
+`send_email`, `send_copy`, and `reply_to_email` are annotated
+`readOnlyHint: false`, `destructiveHint: true`, `idempotentHint: false`,
+`openWorldHint: true`. Clients with native per-tool approval policies read those
+annotations. In Codex, opt in explicitly (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.fastmail]
+default_tools_approval_mode = "writes"
+
+[mcp_servers.fastmail.tools.send_email]
+approval_mode = "prompt"
+
+[mcp_servers.fastmail.tools.send_copy]
+approval_mode = "prompt"
+
+[mcp_servers.fastmail.tools.reply_to_email]
+approval_mode = "prompt"
+```
+
+Claude Code and Claude Desktop prompt for tool approval natively and need no
+extra configuration.
+
+`reply_to_email` is intentionally annotated conservatively: it prompts even when
+it only creates a draft, because the same tool can send.
+
 ### 4. Get Fastmail API Token
 
 1. Go to https://www.fastmail.com/settings/security/tokens
