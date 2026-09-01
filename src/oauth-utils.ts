@@ -359,12 +359,25 @@ export interface OAuthCodeData {
 	used: boolean;
 }
 
+/**
+ * Schedules best-effort follow-up work. Pass a Worker's `ctx.waitUntil` so a
+ * KV write does not sit in the request's critical path; callers without an
+ * ExecutionContext can omit it and the work is awaited inline.
+ */
+export type DeferWork = (work: Promise<unknown>) => void;
+
 export interface OAuthTokenData {
 	client_id: string;
 	user_id: string;
 	user_login: string;
 	scope: string | null;
 	expires_at: string;
+	/**
+	 * Last time this token's use slid the client registration TTL. Stamped on
+	 * the token record — which is rewritten on every validation anyway — so the
+	 * common path costs no extra KV read.
+	 */
+	client_ttl_slid_at?: string;
 }
 
 // Refresh tokens never expire (no expires_at). `revoked` is the kill switch.
@@ -387,6 +400,20 @@ export interface OAuthClientData {
 	redirect_uris: string[];
 	/** Last time the record's TTL was slid, so the write can be throttled. */
 	ttl_refreshed_at?: string;
+}
+
+/**
+ * Whether the once-a-day throttle for sliding a client registration has
+ * elapsed. A missing or unparseable stamp counts as elapsed. So does a stamp
+ * in the future (clock skew, a migrated or backfilled record): without that
+ * guard a negative age always reads as "just slid", which would silently
+ * disable sliding for that record forever and let it lapse at 90 days despite
+ * continuous use.
+ */
+function isThrottleElapsed(stamp: string | undefined): boolean {
+	const age = Date.now() - (stamp ? Date.parse(stamp) : NaN);
+	if (!Number.isFinite(age)) return true;
+	return age < 0 || age >= CLIENT_TTL_REFRESH_INTERVAL_SECONDS * 1000;
 }
 
 /**
@@ -422,13 +449,7 @@ export async function slideClientRegistrationTtl(
 
 		// One write per client per day at most. Access tokens are long-lived, but
 		// a client that re-exchanges aggressively should not write on every call.
-		// A negative age means the stamp is in the future (clock skew or a corrupt
-		// record); slide in that case rather than skipping the write forever.
-		const lastRefreshed = data.ttl_refreshed_at ? Date.parse(data.ttl_refreshed_at) : NaN;
-		const age = Date.now() - lastRefreshed;
-		if (Number.isFinite(age) && age >= 0 && age < CLIENT_TTL_REFRESH_INTERVAL_SECONDS * 1000) {
-			return;
-		}
+		if (!isThrottleElapsed(data.ttl_refreshed_at)) return;
 
 		data.ttl_refreshed_at = new Date().toISOString();
 		await kv.put(key, JSON.stringify(data), { expirationTtl: CLIENT_TTL_SECONDS });
@@ -443,9 +464,19 @@ export async function slideClientRegistrationTtl(
 // Callers should surface `expiresAt` back to clients (e.g. via an
 // X-Token-Expires-At response header) so the client cache can track the
 // renewed expiry instead of staying frozen at mint time.
+//
+// This is also where most clients prove they are still in use. The first-party
+// CLI keeps only the access token (`cli/auth.ts` never stores `refresh_token`),
+// so after the initial `fastmail auth` it never calls /mcp/token again — the
+// token endpoint alone is not a sufficient liveness signal for the client
+// registration TTL. A valid bearer token is the same "a real user authenticated
+// for this client" proof the token grants carry, so slide the registration here
+// too, throttled by a stamp on the token record so the common request pays no
+// extra KV read.
 export async function validateAccessToken(
 	kv: KVNamespace,
-	token: string
+	token: string,
+	defer?: DeferWork
 ): Promise<{ user_id: string; user_login: string; scope: string | null; expiresAt: string } | null> {
 	const tokenHash = await hashToken(token);
 	const data = await kv.get<OAuthTokenData>(`token:${tokenHash}`, 'json');
@@ -454,14 +485,23 @@ export async function validateAccessToken(
 		return null;
 	}
 
+	const slideClient = isThrottleElapsed(data.client_ttl_slid_at);
+
 	// Sliding window: extend expiry on each use (best-effort, never blocks auth)
 	try {
 		data.expires_at = getExpiresAt(TOKEN_TTL_SECONDS);
+		if (slideClient) data.client_ttl_slid_at = new Date().toISOString();
 		await kv.put(`token:${tokenHash}`, JSON.stringify(data), {
 			expirationTtl: TOKEN_TTL_SECONDS,
 		});
 	} catch (e) {
 		console.warn(`[oauth] Failed to renew token TTL (non-fatal): ${e}`);
+	}
+
+	if (slideClient) {
+		const work = slideClientRegistrationTtl(kv, data.client_id);
+		if (defer) defer(work);
+		else await work;
 	}
 
 	return {

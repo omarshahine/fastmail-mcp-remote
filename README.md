@@ -487,12 +487,51 @@ GitHub Copilot CLI doesn't support automatic OAuth client registration, so you n
 - Email-based allowlist for access control
 - Email action URLs use HMAC-SHA256 signatures with 24-hour expiry and single-use nonces
 - Dynamic client registrations (`/register`) carry a 90-day KV expiry that bounds
-  growth from that open endpoint. The TTL slides on every token exchange
-  (`authorization_code` and `refresh_token`), so a client that stays in use never
-  lapses, while a registration that never obtains a token still expires on time.
-  The slide is deliberately not applied at `/authorize`, which any unauthenticated
-  caller can reach. A lapsed record is never recreated implicitly — the client
-  re-registers, which is how MCP clients recover today.
+  growth from that open endpoint. See **Client registration lifetime** below.
+
+### Client registration lifetime
+
+`client:{id}` records from `/register` carry a 90-day KV expiry. The TTL **slides
+whenever the client proves it is still in use**:
+
+- on both token grants at `/mcp/token` (`authorization_code`, `refresh_token`), and
+- on any request that validates a bearer token.
+
+Both need a credential that only a real authenticated session produces. The second
+is what covers this repo's own CLI, which keeps only the access token and never
+calls `/mcp/token` again after `fastmail auth`. The slide is throttled to one write
+per client per day and is deliberately **not** applied at `/authorize`, which any
+unauthenticated caller can reach — sliding there would let anyone keep a spam
+registration alive forever and remove the growth bound entirely.
+
+A registration that never obtains a token still expires on schedule, and a lapsed
+record is never recreated implicitly: the client re-registers, which is what MCP
+clients already do.
+
+**The tradeoff, accepted deliberately:** a client that stays in use now keeps its
+registration indefinitely. There is no absolute ceiling on the lifetime of an
+*actively used* registration — expiry no longer reaps a client you have forgotten
+about but that is still running somewhere. The bound that remains is on unused
+registrations, which is what the 90-day expiry was introduced to control.
+
+Because that automatic reaping is gone, list what is registered and when it was
+last used. Each record carries a `ttl_refreshed_at` stamp, accurate to a day:
+
+```bash
+npx wrangler kv key list --binding=OAUTH_KV --prefix="client:" --remote
+npx wrangler kv key get --binding=OAUTH_KV "client:<id>" --remote
+```
+
+Delete anything you no longer recognise — that client re-registers if it is still
+legitimate:
+
+```bash
+npx wrangler kv key delete --binding=OAUTH_KV "client:<id>" --remote
+```
+
+Deleting a registration does not revoke access. Tokens are validated with no client
+lookup, so revoking a *session* still means removing the user from `ALLOWED_USERS`
+or setting `revoked: true` on the refresh-token record.
 
 ## Delegate Access (Role-Based Permissions)
 

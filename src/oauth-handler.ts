@@ -17,6 +17,7 @@ import {
 	validateRefreshToken,
 	verifyAccessIdToken,
 	slideClientRegistrationTtl,
+	type DeferWork,
 	STATE_TTL_SECONDS,
 	CODE_TTL_SECONDS,
 	TOKEN_TTL_SECONDS,
@@ -68,6 +69,26 @@ async function issueTokenPair(
 		refresh_token: refreshToken,
 		expires_in: TOKEN_TTL_SECONDS,
 	};
+}
+
+// Keep a client's registration alive after it proves it is in use. Handed to
+// `ctx.waitUntil` when the caller has an ExecutionContext, so the KV read (and
+// at most one write a day) never sits in the response path; otherwise awaited.
+// Failures are swallowed inside slideClientRegistrationTtl.
+async function slideClientRegistration(
+	env: Env,
+	clientId: string | undefined,
+	defer?: DeferWork
+): Promise<void> {
+	const work = slideClientRegistrationTtl(env.OAUTH_KV, clientId);
+	// With a deferral hook this returns immediately and the runtime keeps the
+	// write alive past the response. Without one (tests, or a caller with no
+	// ExecutionContext) it is awaited so the work still completes.
+	if (defer) {
+		defer(work);
+		return;
+	}
+	await work;
 }
 
 // OAuth Discovery Endpoint
@@ -340,7 +361,7 @@ export async function handleCallback(request: Request, env: Env, url: URL): Prom
 }
 
 // Token Endpoint
-export async function handleToken(request: Request, env: Env): Promise<Response> {
+export async function handleToken(request: Request, env: Env, defer?: DeferWork): Promise<Response> {
 	if (!env.OAUTH_KV) {
 		return jsonError('server_error', 'KV namespace not available', 500);
 	}
@@ -373,7 +394,7 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
 	}
 
 	if (body.grant_type === 'refresh_token') {
-		return handleRefreshTokenGrant(body, env);
+		return handleRefreshTokenGrant(body, env, defer);
 	}
 
 	if (body.grant_type !== 'authorization_code') {
@@ -442,7 +463,9 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
 	});
 
 	// The client is demonstrably in use — keep its registration from lapsing.
-	await slideClientRegistrationTtl(env.OAUTH_KV, authCode.client_id);
+	// Deferred where the runtime allows it: the token is already durably stored,
+	// so this must not add KV latency to the response.
+	await slideClientRegistration(env, authCode.client_id, defer);
 
 	return new Response(
 		JSON.stringify({
@@ -473,7 +496,8 @@ export async function handleToken(request: Request, env: Env): Promise<Response>
 // setting `revoked: true` on the KV entry.
 async function handleRefreshTokenGrant(
 	body: { refresh_token?: string; client_id?: string },
-	env: Env
+	env: Env,
+	defer?: DeferWork
 ): Promise<Response> {
 	if (!env.OAUTH_KV) {
 		return jsonError('server_error', 'KV namespace not available', 500);
@@ -528,9 +552,9 @@ async function handleRefreshTokenGrant(
 		console.warn(`[oauth] Failed to update refresh token metadata (non-fatal): ${e}`);
 	}
 
-	// A refresh-token-only client never reaches /authorize, so this is the only
-	// place its registration record can be kept alive while it stays in use.
-	await slideClientRegistrationTtl(env.OAUTH_KV, refreshData.client_id);
+	// A refresh-token-only client never reaches /authorize, so this and token
+	// validation are the only places its registration can be kept alive.
+	await slideClientRegistration(env, refreshData.client_id, defer);
 
 	return new Response(
 		JSON.stringify({

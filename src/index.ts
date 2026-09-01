@@ -131,7 +131,9 @@ app.get("/mcp/callback", async (c) => {
 });
 
 app.post("/mcp/token", async (c) => {
-  return handleToken(c.req.raw, c.env);
+  // waitUntil keeps the best-effort client-registration TTL slide off the
+  // response path — the tokens themselves are already durably stored.
+  return handleToken(c.req.raw, c.env, (work) => c.executionCtx.waitUntil(work));
 });
 
 app.post("/mcp/register", async (c) => {
@@ -217,7 +219,9 @@ app.post("/mcp/code", async (c) => {
     return unauthorizedResponse(c, "unauthorized", "Missing or invalid Authorization header");
   }
   const token = authHeader.substring(7);
-  const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token);
+  const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token, (work) =>
+    c.executionCtx.waitUntil(work),
+  );
   if (!tokenInfo) {
     return unauthorizedResponse(c, "invalid_token", "Invalid or expired access token");
   }
@@ -275,7 +279,9 @@ async function handleMcp(c: {
   }
 
   const token = authHeader.substring(7);
-  const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token);
+  const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token, (work) =>
+    c.executionCtx.waitUntil(work),
+  );
   if (!tokenInfo) {
     return unauthorizedResponse(c, "invalid_token", "Invalid or expired access token");
   }
