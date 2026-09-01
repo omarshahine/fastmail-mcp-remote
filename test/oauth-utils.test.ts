@@ -3,6 +3,8 @@ import {
 	verifyAccessIdToken,
 	isAllowedRedirectUri,
 	slideClientRegistrationTtl,
+	validateAccessToken,
+	hashToken,
 	CLIENT_TTL_SECONDS,
 	CLIENT_TTL_REFRESH_INTERVAL_SECONDS,
 } from '../src/oauth-utils';
@@ -264,5 +266,123 @@ describe('slideClientRegistrationTtl', () => {
 			put: vi.fn(async () => undefined),
 		} as unknown as KVNamespace;
 		await expect(slideClientRegistrationTtl(kv, 'client-abc')).resolves.toBeUndefined();
+	});
+});
+
+describe('validateAccessToken — keeps the client registration alive', () => {
+	const CLIENT = {
+		client_id: 'cli-client',
+		client_name: 'fastmail-cli',
+		redirect_uris: ['http://127.0.0.1/callback'],
+	};
+
+	function makeKv(overrides: Record<string, unknown> = {}) {
+		const store: Record<string, unknown> = { 'client:cli-client': { ...CLIENT }, ...overrides };
+		const put = vi.fn(async (key: string, value: string) => {
+			store[key] = JSON.parse(value);
+		});
+		const kv = {
+			get: vi.fn(async (key: string) => (store[key] === undefined ? null : store[key])),
+			put,
+			delete: vi.fn(async () => undefined),
+		} as unknown as KVNamespace;
+		return { kv, put, store };
+	}
+
+	function clientWrites(put: ReturnType<typeof vi.fn>) {
+		return put.mock.calls.filter((call: any[]) => String(call[0]).startsWith('client:'));
+	}
+
+	async function tokenStore(overrides: Record<string, unknown> = {}) {
+		const token = 'access-token-value';
+		const key = `token:${await hashToken(token)}`;
+		return {
+			token,
+			key,
+			record: {
+				client_id: 'cli-client',
+				user_id: 'user-1',
+				user_login: 'allowed@example.com',
+				scope: 'mcp:read mcp:write',
+				expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+				...overrides,
+			},
+		};
+	}
+
+	// The first-party CLI stores only the access token (cli/auth.ts never keeps
+	// refresh_token), so after `fastmail auth` it never calls /mcp/token again.
+	// Token validation is the only place its registration can be kept alive.
+	it('slides the registration on a validated request from an access-token-only client', async () => {
+		const { token, key, record } = await tokenStore();
+		const { kv, put } = makeKv({ [key]: record });
+
+		const result = await validateAccessToken(kv, token);
+
+		expect(result).toMatchObject({ user_login: 'allowed@example.com' });
+		const writes = clientWrites(put);
+		expect(writes).toHaveLength(1);
+		expect(writes[0][2]).toEqual({ expirationTtl: CLIENT_TTL_SECONDS });
+	});
+
+	it('stamps the token record so the next request pays no extra KV read', async () => {
+		const { token, key, record } = await tokenStore();
+		const { kv, put, store } = makeKv({ [key]: record });
+
+		await validateAccessToken(kv, token);
+		expect((store[key] as any).client_ttl_slid_at).toBeTruthy();
+
+		put.mockClear();
+		(kv.get as ReturnType<typeof vi.fn>).mockClear();
+		await validateAccessToken(kv, token);
+
+		expect(clientWrites(put)).toHaveLength(0);
+		// Only the token record is read on the throttled path.
+		const readKeys = (kv.get as ReturnType<typeof vi.fn>).mock.calls.map((call: any[]) => call[0]);
+		expect(readKeys).toEqual([key]);
+	});
+
+	it('slides again once the daily throttle has elapsed', async () => {
+		const stale = new Date(Date.now() - (CLIENT_TTL_REFRESH_INTERVAL_SECONDS + 60) * 1000).toISOString();
+		const { token, key, record } = await tokenStore({ client_ttl_slid_at: stale });
+		const { kv, put } = makeKv({ [key]: record });
+
+		await validateAccessToken(kv, token);
+		expect(clientWrites(put)).toHaveLength(1);
+	});
+
+	it('defers the slide when the caller supplies waitUntil', async () => {
+		const { token, key, record } = await tokenStore();
+		const { kv, put } = makeKv({ [key]: record });
+		const deferred: Promise<unknown>[] = [];
+
+		await validateAccessToken(kv, token, (work) => {
+			deferred.push(work);
+		});
+
+		expect(deferred).toHaveLength(1);
+		await Promise.all(deferred);
+		expect(clientWrites(put)).toHaveLength(1);
+	});
+
+	it('still authenticates when the client record has lapsed', async () => {
+		const { token, key, record } = await tokenStore();
+		const { kv, put, store } = makeKv({ [key]: record });
+		delete store['client:cli-client'];
+
+		const result = await validateAccessToken(kv, token);
+
+		expect(result).toMatchObject({ user_login: 'allowed@example.com' });
+		expect(clientWrites(put)).toHaveLength(0);
+	});
+
+	it('returns null for an expired token without touching the registration', async () => {
+		const { token, key, record } = await tokenStore({
+			expires_at: new Date(Date.now() - 1000).toISOString(),
+		});
+		const { kv, put } = makeKv({ [key]: record });
+
+		expect(await validateAccessToken(kv, token)).toBeNull();
+		expect(put).not.toHaveBeenCalled();
 	});
 });
