@@ -4,7 +4,7 @@ import { parseHTML } from 'linkedom';
 /**
  * Converts HTML email bodies to clean markdown optimized for LLM consumption.
  *
- * Aggressively strips noise: images (LLMs can't see them), tracking URLs,
+ * Aggressively strips noise: images (LLMs can't see them), tracking parameters,
  * layout tables, invisible characters, and excessive formatting. The goal
  * is minimum tokens for maximum semantic content.
  */
@@ -56,6 +56,26 @@ function isLayoutTable(table: DomNode): boolean {
   return true; // No headers = likely layout
 }
 
+/** Preserve actionable destinations while removing known analytics parameters. */
+function cleanLinkDestination(href: string): string | null {
+  if (/^tel:/i.test(href)) return href;
+
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+
+  for (const key of Array.from(url.searchParams.keys())) {
+    if (/^utm_/i.test(key) || /^(fbclid|gclid|mc_cid|mc_eid)$/i.test(key)) {
+      url.searchParams.delete(key);
+    }
+  }
+  return url.toString();
+}
+
 function createTurndownService(): TurndownService {
   const service = new TurndownService({
     headingStyle: 'atx',
@@ -80,19 +100,21 @@ function createTurndownService(): TurndownService {
     },
   });
 
-  // Strip ALL link URLs — LLMs can't click links, so URLs are wasted tokens.
-  // Keep only the display text. For mailto: links, keep the email address.
-  service.addRule('stripLinkUrls', {
+  // Preserve actionable web and telephone destinations. Known analytics query
+  // parameters are removed, while functional and signed parameters remain.
+  service.addRule('cleanLinkUrls', {
     filter: 'a' as any,
     replacement: (content: string, node: any) => {
       const href = (node.getAttribute('href') || '').trim();
       const trimmed = content.trim();
       // For mailto: links, show the email address if it differs from display text
-      if (href.startsWith('mailto:')) {
+      if (/^mailto:/i.test(href)) {
         const email = href.slice(7).split('?')[0];
         if (trimmed && trimmed !== email) return `${trimmed} (${email})`;
         return email || trimmed;
       }
+      const destination = cleanLinkDestination(href);
+      if (destination && trimmed) return `[${trimmed}](${destination})`;
       return trimmed;
     },
   });
