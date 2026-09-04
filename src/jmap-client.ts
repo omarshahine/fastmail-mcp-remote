@@ -225,7 +225,33 @@ export class JmapClient {
       throw new Error(`JMAP request failed: ${response.statusText}`);
     }
 
-    return await response.json() as JmapResponse;
+    const payload = await response.json() as JmapResponse;
+    if (!Array.isArray(payload.methodResponses)) {
+      throw new Error('JMAP response is missing methodResponses');
+    }
+
+    for (const [expectedName, , callId] of request.methodCalls) {
+      const methodResponse = payload.methodResponses.find((entry) => entry[2] === callId);
+      if (!methodResponse) {
+        throw new Error(`JMAP response is missing result for call "${callId}"`);
+      }
+
+      const [actualName, result] = methodResponse;
+      if (actualName === 'error') {
+        const type = typeof result?.type === 'string' ? result.type : 'unknown';
+        const description = typeof result?.description === 'string'
+          ? `: ${result.description}`
+          : '';
+        throw new Error(`JMAP ${expectedName} failed (${type})${description}`);
+      }
+      if (actualName !== expectedName) {
+        throw new Error(
+          `JMAP response for call "${callId}" returned ${actualName}, expected ${expectedName}`
+        );
+      }
+    }
+
+    return payload;
   }
 
   async uploadBlob(content: string, mimeType: string): Promise<UploadedBlob> {
