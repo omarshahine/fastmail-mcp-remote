@@ -58,10 +58,17 @@ describe('handleGetTokenCallback', () => {
 });
 
 describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => {
-	// KV with no registered client (the unregistered-client_id attack path).
-	function makeEnv() {
+	function makeEnv(registration?: { clientId: string; redirectUris: string[] }) {
 		const kv = {
-			get: vi.fn(async () => null),
+			get: vi.fn(async (key: string) =>
+				registration && key === `client:${registration.clientId}`
+					? JSON.stringify({
+						client_id: registration.clientId,
+						client_name: 'test client',
+						redirect_uris: registration.redirectUris,
+					})
+					: null
+			),
 			put: vi.fn(async () => undefined),
 			delete: vi.fn(async () => undefined),
 		};
@@ -98,7 +105,10 @@ describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => 
 	});
 
 	it('rejects a non-OOB authorize request with no PKCE challenge', async () => {
-		const { env, kv } = makeEnv();
+		const { env, kv } = makeEnv({
+			clientId: 'some-client',
+			redirectUris: ['https://claude.ai/api/mcp/auth_callback'],
+		});
 		const { request, url } = authorizeRequest({
 			client_id: 'some-client',
 			redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
@@ -113,7 +123,10 @@ describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => 
 	});
 
 	it('rejects a plain PKCE method (downgrade attempt)', async () => {
-		const { env } = makeEnv();
+		const { env } = makeEnv({
+			clientId: 'some-client',
+			redirectUris: ['https://claude.ai/cb'],
+		});
 		const { request, url } = authorizeRequest({
 			client_id: 'some-client',
 			redirect_uri: 'https://claude.ai/cb',
@@ -129,7 +142,10 @@ describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => 
 	});
 
 	it('accepts an allowlisted https redirect with S256 PKCE and 302s to CF Access', async () => {
-		const { env, kv } = makeEnv();
+		const { env, kv } = makeEnv({
+			clientId: 'some-client',
+			redirectUris: ['https://claude.ai/api/mcp/auth_callback'],
+		});
 		const { request, url } = authorizeRequest({
 			client_id: 'some-client',
 			redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
@@ -146,7 +162,10 @@ describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => 
 	});
 
 	it('accepts a loopback redirect on an ephemeral port with S256 PKCE', async () => {
-		const { env } = makeEnv();
+		const { env } = makeEnv({
+			clientId: 'cli-client',
+			redirectUris: ['http://127.0.0.1/callback'],
+		});
 		const { request, url } = authorizeRequest({
 			client_id: 'cli-client',
 			redirect_uri: 'http://127.0.0.1:53187/callback',
@@ -158,6 +177,26 @@ describe('handleAuthorize — redirect_uri allowlist + PKCE enforcement', () => 
 		const response = await handleAuthorize(request, env, url);
 
 		expect(response.status).toBe(302);
+	});
+
+	it.each([
+		['allowlisted HTTPS', 'https://claude.ai/api/mcp/auth_callback'],
+		['loopback', 'http://127.0.0.1:53187/callback'],
+	])('rejects an unregistered client using an otherwise valid %s redirect', async (_kind, redirectUri) => {
+		const { env, kv } = makeEnv();
+		const { request, url } = authorizeRequest({
+			client_id: 'unknown-client',
+			redirect_uri: redirectUri,
+			response_type: 'code',
+			code_challenge: 'a'.repeat(43),
+			code_challenge_method: 'S256',
+		});
+
+		const response = await handleAuthorize(request, env, url);
+
+		expect(response.status).toBe(400);
+		expect(await response.text()).toContain('Invalid client_id');
+		expect(kv.put).not.toHaveBeenCalled();
 	});
 
 	// RFC 8252 §7.3: a REGISTERED client's loopback callback must still match

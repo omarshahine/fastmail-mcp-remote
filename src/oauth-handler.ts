@@ -161,16 +161,18 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 		return new Response('Invalid redirect_uri', { status: 400 });
 	}
 	if (!isOOBUri) {
-		// For a pre-registered client, additionally require membership in its
-		// registered redirect_uris. Loopback URIs match on scheme+host+path but
-		// ignore the port, because native/CLI clients bind an ephemeral port at
-		// runtime that differs from the one registered (RFC 8252 §7.3).
+		// Every redirecting client must be registered. The host allowlist is a
+		// deployment boundary, not a substitute for binding a client_id to its
+		// declared callbacks. OOB remains available for explicit manual flows.
 		const clientJson = await env.OAUTH_KV.get(`client:${clientId}`);
-		if (clientJson) {
-			const clientData = JSON.parse(clientJson) as OAuthClientData;
-			if (!redirectUriMatchesRegistered(redirectUri, clientData.redirect_uris)) {
-				return new Response('Invalid redirect_uri', { status: 400 });
-			}
+		if (!clientJson) {
+			return new Response('Invalid client_id', { status: 400 });
+		}
+		const clientData = JSON.parse(clientJson) as OAuthClientData;
+		// Loopback URIs match on scheme+host+path but ignore the port because
+		// native/CLI clients bind an ephemeral port at runtime (RFC 8252 §7.3).
+		if (!redirectUriMatchesRegistered(redirectUri, clientData.redirect_uris)) {
+			return new Response('Invalid redirect_uri', { status: 400 });
 		}
 	}
 
