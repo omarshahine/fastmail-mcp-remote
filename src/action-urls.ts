@@ -29,6 +29,9 @@ function bufferToHex(buffer: ArrayBuffer): string {
 // ─── Signing ─────────────────────────────────────────────────────────────────
 
 async function importKey(signingKey: string): Promise<CryptoKey> {
+	if (!/^[0-9a-f]{64}$/i.test(signingKey)) {
+		throw new Error('ACTION_SIGNING_KEY must be exactly 64 hexadecimal characters (256 bits)');
+	}
 	return crypto.subtle.importKey(
 		'raw',
 		hexToBuffer(signingKey),
