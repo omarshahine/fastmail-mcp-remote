@@ -9,6 +9,13 @@
 
 // ── Helpers ──────────────────────────────────────────────────
 
+function compactScalar(value: unknown): string {
+  return String(value ?? "")
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
   const month = String(d.getMonth() + 1).padStart(2, "0");
@@ -19,8 +26,10 @@ function formatDate(dateStr: string): string {
 }
 
 function formatAddr(addr: { name?: string; email: string }): string {
-  if (addr.name) return `${addr.name} <${addr.email}>`;
-  return addr.email;
+  const name = compactScalar(addr.name);
+  const email = compactScalar(addr.email);
+  if (name) return `${name} <${email}>`;
+  return email;
 }
 
 function truncate(text: string, max: number): string {
@@ -45,16 +54,16 @@ export function formatEmailList(
   const lines: string[] = [];
 
   if (title) {
-    lines.push(`# ${title} (${emails.length})`);
+    lines.push(`# ${compactScalar(title)} (${emails.length})`);
     lines.push("");
   }
 
   for (const e of emails) {
-    const id = e.id || "?";
+    const id = compactScalar(e.id) || "?";
     const date = e.receivedAt ? formatDate(e.receivedAt) : "           ";
-    const from = typeof e.from === "string" ? e.from : e.from?.[0] ? formatAddr(e.from[0]) : "Unknown";
-    const subject = e.subject || "(no subject)";
-    const preview = e.preview ? truncate(e.preview, 80) : "";
+    const from = typeof e.from === "string" ? compactScalar(e.from) : e.from?.[0] ? formatAddr(e.from[0]) : "Unknown";
+    const subject = compactScalar(e.subject) || "(no subject)";
+    const preview = e.preview ? truncate(compactScalar(e.preview), 80) : "";
 
     // Status indicators from keywords
     const keywords = e.keywords || {};
@@ -86,11 +95,11 @@ export function formatMailboxes(mailboxes: any[]): string {
   });
 
   for (const mb of sorted) {
-    const role = mb.role ? ` (${mb.role})` : "";
+    const role = mb.role ? ` (${compactScalar(mb.role)})` : "";
     const total = mb.totalEmails ?? 0;
     const unread = mb.unreadEmails ?? 0;
     const unreadStr = unread > 0 ? `  unread: ${unread}` : "";
-    lines.push(`${mb.id}  ${mb.name}${role}  ${total} emails${unreadStr}`);
+    lines.push(`${compactScalar(mb.id)}  ${compactScalar(mb.name)}${role}  ${total} emails${unreadStr}`);
   }
 
   return lines.join("\n");
@@ -103,12 +112,12 @@ export function formatMailboxStats(stats: any): string {
     const lines: string[] = ["# Mailbox Statistics", ""];
     for (const mb of stats) {
       const unread = mb.unreadEmails > 0 ? `  unread: ${mb.unreadEmails}` : "";
-      lines.push(`${mb.name} (${mb.role || "custom"})  ${mb.totalEmails} emails${unread}`);
+      lines.push(`${compactScalar(mb.name)} (${compactScalar(mb.role) || "custom"})  ${mb.totalEmails} emails${unread}`);
     }
     return lines.join("\n");
   }
   return [
-    `# ${stats.name}${stats.role ? ` (${stats.role})` : ""}`,
+    `# ${compactScalar(stats.name)}${stats.role ? ` (${compactScalar(stats.role)})` : ""}`,
     "",
     `Total emails: ${stats.totalEmails ?? 0}`,
     `Unread: ${stats.unreadEmails ?? 0}`,
@@ -134,7 +143,7 @@ export function formatAccountSummary(summary: any): string {
   if (summary.mailboxes) {
     for (const mb of summary.mailboxes) {
       const unread = mb.unreadEmails > 0 ? `  unread: ${mb.unreadEmails}` : "";
-      lines.push(`  ${mb.name}${mb.role ? ` (${mb.role})` : ""}  ${mb.totalEmails}${unread}`);
+      lines.push(`  ${compactScalar(mb.name)}${mb.role ? ` (${compactScalar(mb.role)})` : ""}  ${mb.totalEmails}${unread}`);
     }
   }
 
@@ -152,13 +161,13 @@ export function formatContacts(contacts: any[]): string {
     const name = c.name
       || [c.prefix, c.firstName, c.lastName].filter(Boolean).join(" ")
       || "Unnamed";
-    lines.push(`${c.id}  ${name}`);
+    lines.push(`${compactScalar(c.id)}  ${compactScalar(name)}`);
 
     const emails =
       c.emails?.map((e: any) => e.value || e.email).filter(Boolean) || [];
     const phones =
       c.phones?.map((p: any) => p.value || p.phone).filter(Boolean) || [];
-    const details = [...emails, ...phones].join(" | ");
+    const details = [...emails, ...phones].map(compactScalar).join(" | ");
     if (details) lines.push(`  ${details}`);
     lines.push("");
   }
@@ -171,20 +180,20 @@ export function formatContact(contact: any): string {
 
   const lines: string[] = [];
   const name = contact.name || [contact.prefix, contact.firstName, contact.lastName].filter(Boolean).join(" ") || "Unnamed";
-  lines.push(`# ${name}`);
-  if (contact.id) lines.push(`ID: ${contact.id}`);
+  lines.push(`# ${compactScalar(name)}`);
+  if (contact.id) lines.push(`ID: ${compactScalar(contact.id)}`);
   lines.push("");
 
-  if (contact.company) lines.push(`Company: ${contact.company}`);
-  if (contact.department) lines.push(`Department: ${contact.department}`);
-  if (contact.jobTitle) lines.push(`Title: ${contact.jobTitle}`);
+  if (contact.company) lines.push(`Company: ${compactScalar(contact.company)}`);
+  if (contact.department) lines.push(`Department: ${compactScalar(contact.department)}`);
+  if (contact.jobTitle) lines.push(`Title: ${compactScalar(contact.jobTitle)}`);
 
   if (contact.emails?.length) {
     lines.push("");
     lines.push("Emails:");
     for (const e of contact.emails) {
       const label = e.label || e.type || "";
-      lines.push(`  ${label ? label + ": " : ""}${e.value || e.email}`);
+      lines.push(`  ${label ? compactScalar(label) + ": " : ""}${compactScalar(e.value || e.email)}`);
     }
   }
 
@@ -193,7 +202,7 @@ export function formatContact(contact: any): string {
     lines.push("Phones:");
     for (const p of contact.phones) {
       const label = p.label || p.type || "";
-      lines.push(`  ${label ? label + ": " : ""}${p.value || p.phone}`);
+      lines.push(`  ${label ? compactScalar(label) + ": " : ""}${compactScalar(p.value || p.phone)}`);
     }
   }
 
@@ -203,13 +212,13 @@ export function formatContact(contact: any): string {
     for (const a of contact.addresses) {
       const parts = [a.street, a.city, a.state, a.postcode, a.country].filter(Boolean);
       const label = a.label || a.type || "";
-      lines.push(`  ${label ? label + ": " : ""}${parts.join(", ")}`);
+      lines.push(`  ${label ? compactScalar(label) + ": " : ""}${parts.map(compactScalar).join(", ")}`);
     }
   }
 
   if (contact.notes) {
     lines.push("");
-    lines.push(`Notes: ${contact.notes}`);
+    lines.push(`Notes: ${compactScalar(contact.notes)}`);
   }
 
   return lines.join("\n");
@@ -222,7 +231,7 @@ export function formatCalendars(calendars: any[]): string {
 
   const lines: string[] = ["# Calendars", ""];
   for (const cal of calendars) {
-    lines.push(`${cal.id}  ${cal.name}${cal.isDefault ? " (default)" : ""}`);
+    lines.push(`${compactScalar(cal.id)}  ${compactScalar(cal.name)}${cal.isDefault ? " (default)" : ""}`);
   }
   return lines.join("\n");
 }
@@ -236,7 +245,7 @@ export function formatEvents(events: any[]): string {
     const start = e.start ? formatDate(e.start) : "?";
     let timeRange = start;
     if (e.start && e.duration) {
-      timeRange = `${start}  (${e.duration})`;
+      timeRange = `${start}  (${compactScalar(e.duration)})`;
     } else if (e.end) {
       const endTime = formatDate(e.end);
       if (endTime.slice(0, 10) === start.slice(0, 10)) {
@@ -246,12 +255,12 @@ export function formatEvents(events: any[]): string {
       }
     }
 
-    const title = e.title || "(no title)";
-    lines.push(`${e.id}  ${timeRange}  ${title}`);
+    const title = compactScalar(e.title) || "(no title)";
+    lines.push(`${compactScalar(e.id)}  ${timeRange}  ${title}`);
 
     const details: string[] = [];
-    if (e.location) details.push(e.location);
-    if (e.calendarName || e.calendarId) details.push(`Calendar: ${e.calendarName || e.calendarId}`);
+    if (e.location) details.push(compactScalar(e.location));
+    if (e.calendarName || e.calendarId) details.push(`Calendar: ${compactScalar(e.calendarName || e.calendarId)}`);
     if (details.length) lines.push(`  ${details.join(" | ")}`);
     lines.push("");
   }
@@ -266,8 +275,8 @@ export function formatIdentities(identities: any[]): string {
 
   const lines: string[] = ["# Identities", ""];
   for (const id of identities) {
-    const name = id.name || "";
-    const email = id.email || "";
+    const name = compactScalar(id.name);
+    const email = compactScalar(id.email);
     const isDefault = id.mayDelete === false ? " (primary)" : "";
     lines.push(`${name ? name + " " : ""}<${email}>${isDefault}`);
   }
@@ -281,8 +290,8 @@ export function formatMemo(memo: any): string {
   if (typeof memo === "string") return memo;
 
   const lines: string[] = [];
-  if (memo.subject) lines.push(`# Memo: ${memo.subject}`);
-  if (memo.memoId) lines.push(`Memo ID: ${memo.memoId}`);
+  if (memo.subject) lines.push(`# Memo: ${compactScalar(memo.subject)}`);
+  if (memo.memoId) lines.push(`Memo ID: ${compactScalar(memo.memoId)}`);
   if (memo.receivedAt) lines.push(`Created: ${formatDate(memo.receivedAt)}`);
   lines.push("");
 
@@ -308,8 +317,8 @@ export function formatAttachments(attachments: any[]): string {
   const lines: string[] = [`# Attachments (${attachments.length})`, ""];
   for (const att of attachments) {
     const size = att.size ? ` (${formatFileSize(att.size)})` : "";
-    const type = att.type || att.mimeType || "";
-    lines.push(`${att.blobId || att.id || "?"}  ${att.name || "unnamed"}  ${type}${size}`);
+    const type = compactScalar(att.type || att.mimeType);
+    lines.push(`${compactScalar(att.blobId || att.id) || "?"}  ${compactScalar(att.name) || "unnamed"}  ${type}${size}`);
   }
   return lines.join("\n");
 }
@@ -320,7 +329,7 @@ export function formatInboxUpdates(updates: any): string {
   const lines: string[] = [];
 
   if (updates.queryState) {
-    lines.push(`State: ${updates.queryState}`);
+    lines.push(`State: ${compactScalar(updates.queryState)}`);
   }
 
   if (updates.added?.length) {
@@ -331,7 +340,7 @@ export function formatInboxUpdates(updates: any): string {
 
   if (updates.removed?.length) {
     lines.push("");
-    lines.push(`Removed: ${updates.removed.join(", ")}`);
+    lines.push(`Removed: ${updates.removed.map(compactScalar).join(", ")}`);
   }
 
   if (!updates.added?.length && !updates.removed?.length) {
