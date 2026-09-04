@@ -1107,7 +1107,7 @@ export class JmapClient {
           ],
           bodyProperties: ['partId', 'blobId', 'size', 'name', 'type', 'charset', 'disposition', 'cid'],
           fetchAllBodyValues: true,
-          maxBodyValueBytes: 1_000_000,
+          maxBodyValueBytes: 0,
         }, 'getSource'],
       ],
     };
@@ -1115,6 +1115,9 @@ export class JmapClient {
     const source = sourceResponse.methodResponses[0][1].list?.[0];
     if (!source) {
       throw new Error(`Source email not found: ${params.emailId}`);
+    }
+    if (Object.values(source.bodyValues || {}).some((value: any) => value?.isTruncated === true)) {
+      throw new Error('Source email body is too large to copy safely; no draft was created');
     }
 
     // Find the Drafts mailbox
