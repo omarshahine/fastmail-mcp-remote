@@ -8,8 +8,7 @@
     "properties": {
       "cliCommand": {
         "type": "string",
-        "default": "fastmail",
-        "description": "Path or alias for the fastmail CLI (default: 'fastmail')"
+        "description": "Optional path or alias for a different fastmail CLI. When omitted, the plugin uses its bundled CLI."
       },
       "autoDiscover": {
         "type": "boolean",
