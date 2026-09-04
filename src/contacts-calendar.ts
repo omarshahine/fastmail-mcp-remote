@@ -39,21 +39,7 @@ export class ContactsCalendarClient extends JmapClient {
       const response = await this.makeRequest(request);
       return response.methodResponses[1][1].list;
     } catch (error) {
-      const fallbackRequest: JmapRequest = {
-        using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:contacts'],
-        methodCalls: [
-          ['AddressBook/get', {
-            accountId: session.accountId
-          }, 'addressbooks']
-        ]
-      };
-
-      try {
-        const fallbackResponse = await this.makeRequest(fallbackRequest);
-        return fallbackResponse.methodResponses[0][1].list || [];
-      } catch (fallbackError) {
-        throw new Error(`Contacts not supported or accessible: ${error instanceof Error ? error.message : String(error)}. Try checking account permissions or enabling contacts API access in Fastmail settings.`);
-      }
+      throw new Error(`Contacts not supported or accessible: ${error instanceof Error ? error.message : String(error)}. Try checking account permissions or enabling contacts API access in Fastmail settings.`);
     }
   }
 
