@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_route_00028c07b9",
   "title": "MCP Code Mode endpoint",
-  "summary": "Exposes 'search' for progressive OpenAPI discovery and 'execute' for TypeScript execution using Cloudflare Dynamic Workers (worker_loaders binding). The LLM can chain Fastmail operations in a sandboxed V8 isolate.",
+  "summary": "Exposes 'search' for progressive OpenAPI discovery and 'execute' for JavaScript execution using Cloudflare Dynamic Workers (worker_loaders binding). The LLM can chain Fastmail operations through codemode.request in a sandboxed V8 isolate.",
   "kind": "route",
   "source": "hand-authored",
   "confidence": "high",

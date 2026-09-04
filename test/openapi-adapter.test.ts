@@ -23,6 +23,10 @@ describe("Code Mode public contract", () => {
     const { tools } = await client.listTools();
 
     expect(tools.map((tool) => tool.name).sort()).toEqual(["execute", "search"]);
+    const execute = tools.find((tool) => tool.name === "execute");
+    expect(execute?.description).toContain("JavaScript");
+    expect(execute?.description).toContain("codemode.request");
+    expect(execute?.description).not.toContain("fastmail.search_emails");
     await client.close();
     await codeMode.close();
     await upstream.close();

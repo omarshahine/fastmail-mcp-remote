@@ -32,7 +32,7 @@ A token-efficient CLI that calls the remote MCP server and formats responses as 
 
 ```bash
 # Add alias to ~/.zshrc
-alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
+alias fastmail="/path/to/fastmail-mcp-remote/cli/bin.sh"
 
 # Authenticate (one-time, tokens last 30 days)
 fastmail auth --url https://your-worker.example.com --team yourteam
@@ -424,7 +424,7 @@ npx wrangler secret put ACTION_SIGNING_KEY
 
 ```bash
 # Add alias to ~/.zshrc
-alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
+alias fastmail="/path/to/fastmail-mcp-remote/cli/bin.sh"
 
 # Authenticate (opens browser for CF Access login)
 fastmail auth --url https://your-worker.example.com --team yourteam

@@ -161,8 +161,8 @@ npm version patch   # or minor/major
 npm publish --access public
 ```
 
-- **No build step** — OpenClaw loads `.ts` directly via `jiti`
-- **Verify before publish**: `npx tsc --noEmit` and `npm pack --dry-run`
+- **Prepack builds both entry points**: the OpenClaw plugin and the bundled `fastmail` CLI
+- **Verify before publish**: `npm run build`, `node test/pack-smoke.mjs`, and `npm pack --dry-run`
 - **Package name**: `fastmail-cli` (unscoped — `@openclaw/` is reserved for official plugins)
 - **Community listing**: PR to [openclaw/openclaw](https://github.com/openclaw/openclaw) docs/plugins/community.md
 
@@ -280,14 +280,14 @@ Complete OAuth via `/mcp` in Claude Code when prompted.
 
 ## Code Mode
 
-The `/mcp/code` endpoint uses Cloudflare's [Code Mode SDK](https://developers.cloudflare.com/dynamic-workers/code-mode/) and Dynamic Workers. It exposes two tools: `search` progressively discovers the OpenAPI operations, and `execute` runs TypeScript that can chain multiple operations in one sandbox execution.
+The `/mcp/code` endpoint uses Cloudflare's [Code Mode SDK](https://developers.cloudflare.com/dynamic-workers/code-mode/) and Dynamic Workers. It exposes two tools: `search` progressively discovers the OpenAPI operations, and `execute` runs JavaScript that can chain multiple operations in one sandbox execution.
 
 ### How it works
 
 1. The LLM calls `search` to discover relevant Fastmail operations and their schemas
-2. The LLM calls `execute` with TypeScript such as: `async () => { const emails = await fastmail.search_emails({query: "invoice"}); return emails.filter(e => e.subject.includes("2024")); }`
+2. The LLM calls `execute` with JavaScript such as: `async () => await codemode.request({ method: "POST", path: "/email/search", body: { query: "invoice" } })`
 3. Code runs in an isolated V8 sandbox (Dynamic Worker) with no network access
-4. `fastmail.*` calls route back to the host, which executes the real JMAP operations
+4. `codemode.request(...)` calls route back to the host, which executes the real JMAP operations
 5. Only the final result enters the context window
 
 ### Benefits
@@ -317,7 +317,7 @@ The CLI (`cli/`) is a token-efficient alternative to MCP tools. It calls the sam
 
 ```bash
 # Setup
-alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
+alias fastmail="/path/to/fastmail-mcp-remote/cli/bin.sh"
 fastmail auth --url https://your-worker.example.com --team yourteam
 fastmail auth --headless --url https://your-worker.example.com  # SSH / no-browser
 fastmail auth status                    # Shows user, server, token expiry

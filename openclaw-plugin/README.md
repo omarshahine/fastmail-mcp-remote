@@ -16,12 +16,12 @@ openclaw plugins install fastmail-cli
 
    ```bash
    # Authenticate (opens browser for Cloudflare Access login)
-   fastmail auth --url https://your-worker.example.com --team myteam
+   npx --yes fastmail-cli@latest auth --url https://your-worker.example.com --team myteam
    ```
 
    Credentials are stored at `~/.config/fastmail-cli/config.json` (Bearer token, 30-day TTL).
 
-3. **Verify**: `fastmail auth status` should show your user and token expiry.
+3. **Verify**: `npx --yes fastmail-cli@latest auth status` should show your user and token expiry.
 
 ## Configuration
 
@@ -29,7 +29,7 @@ All fields are **optional**:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `cliCommand` | `"fastmail"` | Path or alias for the fastmail CLI binary |
+| `cliCommand` | bundled CLI | Optional path or alias for a different fastmail CLI binary |
 | `requireApprovals` | `true` | Require user approval before sending emails, reading email content, or bulk operations |
 
 The CLI handles all authentication. No credentials are needed in the plugin config.
@@ -132,12 +132,12 @@ v2.0 replaces the in-process MCP SDK with CLI shelling. The `workerUrl` and `bea
 
 1. **Install and authenticate the CLI** (if not already):
    ```bash
-   fastmail auth --url https://your-worker.example.com --team myteam
+   npx --yes fastmail-cli@latest auth --url https://your-worker.example.com --team myteam
    ```
 
 2. **Remove old config**: Delete `workerUrl` and `bearerToken` from your OpenClaw workspace plugin settings.
 
-3. **Verify**: `fastmail auth status` should show your user and token expiry.
+3. **Verify**: `npx --yes fastmail-cli@latest auth status` should show your user and token expiry.
 
 That's it — all 36 tools work identically, just backed by the CLI now.
 
