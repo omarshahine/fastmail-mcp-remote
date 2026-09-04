@@ -7,6 +7,7 @@ import {
 	isToolAllowed,
 	getVisibleTools,
 	checkMcpPermissions,
+	filterToolsListResponse,
 	TOOL_CATEGORIES,
 	_resetCache,
 } from '../src/permissions';
@@ -159,8 +160,10 @@ describe('isToolAllowed — delegate', () => {
 		expect(isToolAllowed(delegateConfig(), 'check_function_availability').allowed).toBe(true);
 	});
 
-	it('allows unknown tools (not in category map)', () => {
-		expect(isToolAllowed(delegateConfig(), 'future_new_tool').allowed).toBe(true);
+	it('denies unknown tools (not in category map)', () => {
+		const result = isToolAllowed(delegateConfig(), 'future_new_tool');
+		expect(result.allowed).toBe(false);
+		expect(result.error).toContain('no configured permission category');
 	});
 });
 
@@ -266,6 +269,19 @@ describe('checkMcpPermissions — fail-closed', () => {
 		expect(result).toBeNull();
 	});
 
+	it('denies an uncategorized tool call', async () => {
+		const body = JSON.stringify({
+			jsonrpc: '2.0',
+			id: 9,
+			method: 'tools/call',
+			params: { name: 'future_new_tool', arguments: {} },
+		});
+		const result = await checkMcpPermissions(body, 'delegate@example.com', mockKv);
+		expect(result).not.toBeNull();
+		const json = await result!.json() as { error: { message: string } };
+		expect(json.error.message).toContain('no configured permission category');
+	});
+
 	it('denies reply_to_email with sendImmediately:true for delegate', async () => {
 		const body = JSON.stringify({
 			jsonrpc: '2.0',
@@ -286,6 +302,33 @@ describe('checkMcpPermissions — fail-closed', () => {
 		});
 		const result = await checkMcpPermissions(body, 'delegate@example.com', mockKv);
 		expect(result).toBeNull();
+	});
+});
+
+describe('tools/list filtering — fail-closed categories', () => {
+	const kv = { get: vi.fn(async () => TEST_CONFIG) } as unknown as KVNamespace;
+
+	beforeEach(() => {
+		_resetCache();
+		vi.mocked(kv.get).mockClear();
+	});
+
+	it.each([
+		['application/json', JSON.stringify({ jsonrpc: '2.0', id: 1, result: { tools: [
+			{ name: 'list_emails' }, { name: 'future_new_tool' },
+		] } })],
+		['text/event-stream', `event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { tools: [
+			{ name: 'list_emails' }, { name: 'future_new_tool' },
+		] } })}\n\n`],
+	])('hides uncategorized tools from %s responses', async (contentType, body) => {
+		const filtered = await filterToolsListResponse(
+			new Response(body, { headers: { 'Content-Type': contentType } }),
+			'admin@example.com',
+			kv,
+		);
+		const text = await filtered.text();
+		expect(text).toContain('list_emails');
+		expect(text).not.toContain('future_new_tool');
 	});
 });
 

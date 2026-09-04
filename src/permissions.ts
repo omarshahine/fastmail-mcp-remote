@@ -208,8 +208,10 @@ export function isToolAllowed(
 ): PermissionResult {
 	const category = TOOL_CATEGORIES[toolName];
 	if (!category) {
-		// Unknown tool — allow (could be a new tool not yet categorized)
-		return { allowed: true };
+		return {
+			allowed: false,
+			error: `Permission denied: '${toolName}' has no configured permission category.`,
+		};
 	}
 
 	// Check disabled categories first (applies to ALL roles)
@@ -397,11 +399,7 @@ export async function filterToolsListResponse(
 
 	// Filter tools
 	const filteredTools = (result.tools as Array<Record<string, unknown>>).filter(
-		(tool) => {
-			const name = tool.name as string;
-			// Allow tools not in our category map (future tools)
-			return !TOOL_CATEGORIES[name] || visible.has(name);
-		},
+		(tool) => visible.has(tool.name as string),
 	);
 
 	// Reconstruct response with filtered tools
@@ -478,8 +476,7 @@ async function filterSseToolsListResponse(
 				// Filter tools
 				const filteredTools = (result.tools as Array<Record<string, unknown>>).filter(
 					(tool) => {
-						const name = tool.name as string;
-						return !TOOL_CATEGORIES[name] || visible.has(name);
+					return visible.has(tool.name as string);
 					},
 				);
 	
