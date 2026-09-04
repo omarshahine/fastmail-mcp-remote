@@ -58,7 +58,15 @@ function isLayoutTable(table: DomNode): boolean {
 
 /** Preserve actionable destinations while removing known analytics parameters. */
 function cleanLinkDestination(href: string): string | null {
-  if (/^tel:/i.test(href)) return href;
+  // Telephone links do not get URL-normalized below, so accept only the
+  // characters needed by ordinary RFC 3966-style numbers and parameters.
+  // In particular, reject whitespace and Markdown delimiters that could turn
+  // one HTML anchor into multiple rendered links.
+  if (/^tel:/i.test(href)) {
+    return /^tel:\+?[0-9A-D*#().-]+(?:;[a-z0-9-]+=[a-z0-9.+-]+)*$/i.test(href)
+      ? href
+      : null;
+  }
 
   let url: URL;
   try {
@@ -74,6 +82,14 @@ function cleanLinkDestination(href: string): string | null {
     }
   }
   return url.toString();
+}
+
+/** Serialize a validated URL as one self-contained Markdown destination. */
+function markdownDestination(destination: string): string {
+  // Angle-bracket destinations safely contain parentheses. Percent-encode the
+  // two delimiters as defense in depth even though URL normalization already
+  // encodes them for HTTP(S) destinations.
+  return `<${destination.replace(/</g, '%3C').replace(/>/g, '%3E')}>`;
 }
 
 function createTurndownService(): TurndownService {
@@ -123,7 +139,7 @@ function createTurndownService(): TurndownService {
         return email || trimmed;
       }
       const destination = cleanLinkDestination(href);
-      if (destination && trimmed) return `[${trimmed}](${destination})`;
+      if (destination && trimmed) return `[${trimmed}](${markdownDestination(destination)})`;
       return trimmed;
     },
   });

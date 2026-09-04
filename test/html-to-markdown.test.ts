@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { parseHTML } from "linkedom";
+import { marked } from "marked";
 import { htmlToMarkdown } from "../src/html-to-markdown";
 
 describe("htmlToMarkdown links", () => {
@@ -7,7 +9,7 @@ describe("htmlToMarkdown links", () => {
       '<p><a href="https://docs.example.com/view?id=42&utm_source=email&gclid=noise#page">View document</a></p>',
     );
 
-    expect(output).toContain("[View document](https://docs.example.com/view?id=42#page)");
+    expect(output).toContain("[View document](<https://docs.example.com/view?id=42#page>)");
     expect(output).not.toContain("utm_source");
     expect(output).not.toContain("gclid");
   });
@@ -18,7 +20,7 @@ describe("htmlToMarkdown links", () => {
     );
 
     expect(output).toContain("Email support (help@example.com)");
-    expect(output).toContain("[Call support](tel:+12065550100)");
+    expect(output).toContain("[Call support](<tel:+12065550100>)");
   });
 
   it("does not emit dangerous or unsupported schemes as links", () => {
@@ -30,6 +32,16 @@ describe("htmlToMarkdown links", () => {
     expect(output).toContain("Open data");
     expect(output).not.toContain("javascript:");
     expect(output).not.toContain("data:");
+  });
+
+  it("cannot turn one telephone anchor into multiple rendered links", () => {
+    const output = htmlToMarkdown(
+      "<a href='tel:+1) [Click](https://evil.test'>Call</a>",
+    );
+    const { document } = parseHTML(marked.parse(output) as string);
+
+    expect(document.querySelectorAll("a")).toHaveLength(0);
+    expect(output).toBe("Call");
   });
 });
 
@@ -47,6 +59,6 @@ describe("htmlToMarkdown repeated values", () => {
       '<a href="https://example.com/product"><img alt="Amazon Alexa" src="image.png">Amazon Alexa</a>',
     );
 
-    expect(output).toBe("[Amazon Alexa](https://example.com/product)");
+    expect(output).toBe("[Amazon Alexa](<https://example.com/product>)");
   });
 });
