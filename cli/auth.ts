@@ -8,7 +8,7 @@
 
 import { createServer, type Server } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { chmod, readFile, writeFile, mkdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -35,8 +35,15 @@ export async function loadConfig(): Promise<Config | null> {
 }
 
 export async function saveConfig(config: Config): Promise<void> {
-  await mkdir(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  await writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
+  await saveConfigAt(config, CONFIG_DIR, CONFIG_FILE);
+}
+
+/** Write a credential cache and repair unsafe modes on pre-existing paths. */
+export async function saveConfigAt(config: Config, configDir: string, configFile: string): Promise<void> {
+  await mkdir(configDir, { recursive: true, mode: 0o700 });
+  await chmod(configDir, 0o700);
+  await writeFile(configFile, JSON.stringify(config, null, 2), { mode: 0o600 });
+  await chmod(configFile, 0o600);
 }
 
 /**
