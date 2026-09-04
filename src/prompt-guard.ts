@@ -148,6 +148,8 @@ const UNTRUSTED_FIELDS: Record<string, string[]> = {
   contact: ["notes", "organization", "jobTitle", "prefix", "suffix", "nickname"],
   // Mail fields - highest risk since email is externally authored
   mail: ["subject", "from", "sender", "body", "content", "snippet", "preview", "textBody", "htmlBody"],
+  // Memos can contain quoted or copied third-party content.
+  memo: ["text"],
 };
 
 /**
@@ -279,6 +281,10 @@ function markToolResult(result: unknown, toolName: string): unknown {
     if (marked.subject !== undefined || marked.body !== undefined || marked.textBody !== undefined) {
       return markItem(marked, "mail");
     }
+  }
+
+  if (toolName === "get_memo") {
+    return markItem(marked, "memo");
   }
 
   return marked;
