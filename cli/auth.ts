@@ -216,9 +216,32 @@ async function saveAndReport(
   );
 }
 
+/** Register a fresh public client for each interactive authorization flow. */
+export async function registerOAuthClient(
+  baseUrl: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string> {
+  const response = await fetchImpl(`${baseUrl}/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_name: "fastmail-cli",
+      redirect_uris: ["http://127.0.0.1/callback"],
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Registration failed: ${await response.text()}`);
+  }
+  const data = (await response.json()) as { client_id?: unknown };
+  if (typeof data.client_id !== "string" || !data.client_id) {
+    throw new Error("Registration failed: server did not return a client_id");
+  }
+  return data.client_id;
+}
+
 /**
  * Run the full PKCE OAuth flow (requires a local browser):
- * 1. Register a client (if first time)
+ * 1. Register a fresh client
  * 2. Start localhost callback server
  * 3. Open browser → CF Access auth
  * 4. Receive callback with auth code
@@ -229,26 +252,13 @@ export async function authenticate(
   url?: string,
   teamName?: string,
 ): Promise<void> {
-  const { baseUrl, teamName: resolvedTeamName, config } = await resolveAuthParams(url, teamName);
+  const { baseUrl, teamName: resolvedTeamName } = await resolveAuthParams(url, teamName);
 
-  // Register client if needed
-  let clientId = config?.clientId;
-  if (!clientId || (url && url !== config?.url)) {
-    console.log("Registering client...");
-    const regResponse = await fetch(`${baseUrl}/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_name: "fastmail-cli",
-        redirect_uris: ["http://127.0.0.1/callback"],
-      }),
-    });
-    if (!regResponse.ok) {
-      throw new Error(`Registration failed: ${await regResponse.text()}`);
-    }
-    const regData = (await regResponse.json()) as { client_id: string };
-    clientId = regData.client_id;
-  }
+  // Client registrations expire independently from the local token cache.
+  // Register on every explicit auth run so a stale cached ID cannot strand the
+  // localhost callback while the user is looking at an authorization error.
+  console.log("Registering client...");
+  const clientId = await registerOAuthClient(baseUrl);
 
   // Generate PKCE pair
   const codeVerifier = generateCodeVerifier();

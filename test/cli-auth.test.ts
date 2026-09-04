@@ -2,8 +2,8 @@ import { mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { describe, expect, it } from "vitest";
-import { promptSecret, saveConfigAt, startCallbackServer, type Config } from "../cli/auth";
+import { describe, expect, it, vi } from "vitest";
+import { promptSecret, registerOAuthClient, saveConfigAt, startCallbackServer, type Config } from "../cli/auth";
 
 const CONFIG: Config = {
   url: "https://worker.example",
@@ -50,6 +50,23 @@ describe("CLI OAuth callback state", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe("CLI OAuth client registration", () => {
+  it("registers a fresh loopback client for an auth flow", async () => {
+    const fetchImpl = vi.fn(async () => Response.json({ client_id: "fresh-client" }));
+
+    await expect(registerOAuthClient("https://worker.example", fetchImpl as typeof fetch))
+      .resolves.toBe("fresh-client");
+    expect(fetchImpl).toHaveBeenCalledWith("https://worker.example/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_name: "fastmail-cli",
+        redirect_uris: ["http://127.0.0.1/callback"],
+      }),
+    });
   });
 });
 
