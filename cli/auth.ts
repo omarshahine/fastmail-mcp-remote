@@ -76,7 +76,7 @@ function generateCodeChallenge(verifier: string): string {
  * Returns the port, a promise that resolves with the auth code, and the server
  * handle for cleanup.
  */
-function startCallbackServer(): Promise<{
+export function startCallbackServer(expectedState: string): Promise<{
   port: number;
   codePromise: Promise<string>;
   server: Server;
@@ -92,6 +92,11 @@ function startCallbackServer(): Promise<{
     const server = createServer((req, res) => {
       const url = new URL(req.url!, `http://localhost`);
       if (url.pathname === "/callback") {
+        if (url.searchParams.get("state") !== expectedState) {
+          res.writeHead(400, { "Content-Type": "text/plain" });
+          res.end("Invalid OAuth state");
+          return;
+        }
         const code = url.searchParams.get("code");
         const error = url.searchParams.get("error");
         const errorDesc = url.searchParams.get("error_description");
@@ -225,9 +230,10 @@ export async function authenticate(
   // Generate PKCE pair
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = generateCodeChallenge(codeVerifier);
+  const oauthState = randomBytes(32).toString("base64url");
 
   // Start localhost server
-  const { port, codePromise, server } = await startCallbackServer();
+  const { port, codePromise, server } = await startCallbackServer(oauthState);
   const redirectUri = `http://127.0.0.1:${port}/callback`;
 
   // Build authorization URL (pass team_name so Worker can construct CF Access URL)
@@ -237,6 +243,7 @@ export async function authenticate(
     response_type: "code",
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
+    state: oauthState,
     team_name: resolvedTeamName,
   });
   const authUrl = `${baseUrl}/mcp/authorize?${authParams}`;
