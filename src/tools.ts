@@ -144,7 +144,8 @@ export function guardResponse(
     const text = options.compactFormatter(data);
     if (isExternalDataTool(toolName)) {
       const preamble = getDatamarkingPreamble();
-      return { content: [{ text: `${preamble}\n\n${text}`, type: "text" }] };
+      const marked = markUntrustedText(text, `${toolName}.compact`);
+      return { content: [{ text: `${preamble}\n\n${marked}`, type: "text" }] };
     }
     return { content: [{ text, type: "text" }] };
   }
@@ -910,9 +911,7 @@ export function registerAllTools(
         try {
           const client = ctx.getJmapClient();
           const result = await client.getInboxUpdates({ sinceQueryState, mailboxId, limit });
-          return {
-            content: [{ text: JSON.stringify(result), type: "text" }],
-          };
+          return ctx.guardResponse("get_inbox_updates", result);
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           return {
