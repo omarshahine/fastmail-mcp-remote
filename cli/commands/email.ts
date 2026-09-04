@@ -26,6 +26,16 @@ import {
   validatePositiveInt,
 } from "../validate.js";
 import { output, filterFields, dryRunOutput } from "../helpers.js";
+import { EXIT, fatal } from "../exit-codes.js";
+
+export function validateMessageBody(opts: { body?: unknown; html?: unknown; markdown?: unknown }): void {
+  const hasBody = [opts.body, opts.html, opts.markdown].some(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
+  if (!hasBody) {
+    fatal("Provide at least one message body with --body, --html, or --markdown.", EXIT.INPUT);
+  }
+}
 
 export function registerEmailCommands(
   program: Command,
@@ -166,6 +176,7 @@ export function registerEmailCommands(
     .action(async (opts) => {
       validateEmails(opts.to, "recipient");
       validateTextArg(opts.subject, "subject");
+      validateMessageBody(opts);
       if (opts.body) validateTextArg(opts.body, "body");
       if (opts.html) validateTextArg(opts.html, "HTML body");
       if (opts.markdown) validateTextArg(opts.markdown, "markdown body");
@@ -207,6 +218,7 @@ export function registerEmailCommands(
     .action(async (opts) => {
       validateEmails(opts.to, "recipient");
       validateTextArg(opts.subject, "subject");
+      validateMessageBody(opts);
       if (opts.body) validateTextArg(opts.body, "body");
       if (opts.html) validateTextArg(opts.html, "HTML body");
       if (opts.markdown) validateTextArg(opts.markdown, "markdown body");
