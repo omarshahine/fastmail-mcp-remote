@@ -230,7 +230,8 @@ export class JmapClient {
       throw new Error('JMAP response is missing methodResponses');
     }
 
-    for (const [expectedName, , callId] of request.methodCalls) {
+    const methodErrors: Array<{ expectedName: string; result: any; callIndex: number }> = [];
+    for (const [callIndex, [expectedName, , callId]] of request.methodCalls.entries()) {
       const methodResponse = payload.methodResponses.find((entry) => entry[2] === callId);
       if (!methodResponse) {
         throw new Error(`JMAP response is missing result for call "${callId}"`);
@@ -238,17 +239,36 @@ export class JmapClient {
 
       const [actualName, result] = methodResponse;
       if (actualName === 'error') {
-        const type = typeof result?.type === 'string' ? result.type : 'unknown';
-        const description = typeof result?.description === 'string'
-          ? `: ${result.description}`
-          : '';
-        throw new Error(`JMAP ${expectedName} failed (${type})${description}`);
+        methodErrors.push({ expectedName, result, callIndex });
+        continue;
       }
       if (actualName !== expectedName) {
         throw new Error(
           `JMAP response for call "${callId}" returned ${actualName}, expected ${expectedName}`
         );
       }
+    }
+
+    // Prefer the originating method error over a dependent call's secondary
+    // invalidResultReference response. If the origin is a normal Set response
+    // with notCreated/notUpdated/notDestroyed details, return the batch so the
+    // caller can surface that more specific application error.
+    const primaryError = methodErrors.find(({ result }) => result?.type !== 'invalidResultReference');
+    const unresolvedReference = methodErrors.find(({ result, callIndex }) => {
+      if (result?.type !== 'invalidResultReference') return false;
+      return !payload.methodResponses.slice(0, callIndex).some(([, prior]) =>
+        ['notCreated', 'notUpdated', 'notDestroyed'].some((key) =>
+          prior?.[key] && Object.keys(prior[key]).length > 0
+        )
+      );
+    });
+    const error = primaryError || unresolvedReference;
+    if (error) {
+      const type = typeof error.result?.type === 'string' ? error.result.type : 'unknown';
+      const description = typeof error.result?.description === 'string'
+        ? `: ${error.result.description}`
+        : '';
+      throw new Error(`JMAP ${error.expectedName} failed (${type})${description}`);
     }
 
     return payload;

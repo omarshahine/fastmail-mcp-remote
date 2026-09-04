@@ -42,4 +42,32 @@ describe("JMAP method response validation", () => {
       'JMAP response is missing result for call "mailboxes"',
     );
   });
+
+  it("surfaces the originating Set failure before a dependent reference error", async () => {
+    const client = makeClient();
+    vi.spyOn(client, "getIdentities").mockResolvedValue([
+      { id: "identity-1", email: "sender@example.com", mayDelete: false },
+    ]);
+    vi.spyOn(client, "getMailboxes").mockResolvedValue([
+      { id: "drafts", name: "Drafts", role: "drafts" },
+      { id: "sent", name: "Sent", role: "sent" },
+    ]);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      methodResponses: [
+        ["Email/set", {
+          notCreated: {
+            draft: { type: "invalidProperties", description: "Original failure" },
+          },
+        }, "createEmail"],
+        ["error", { type: "invalidResultReference", description: "Dependent failure" }, "submitEmail"],
+      ],
+      sessionState: "state",
+    }), { status: 200 })));
+
+    await expect(client.sendEmail({
+      to: ["recipient@example.com"],
+      subject: "Subject",
+      textBody: "Body",
+    })).rejects.toThrow("Failed to create email: invalidProperties. Original failure");
+  });
 });

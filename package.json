@@ -7,6 +7,7 @@
 		"fastmail": "./cli/bin.sh"
 	},
 	"scripts": {
+		"predeploy": "tsx tools/validate-wrangler-config.ts",
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
