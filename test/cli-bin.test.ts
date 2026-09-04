@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 
 const execFileAsync = promisify(execFile);
-const binPath = fileURLToPath(new URL("../cli/bin.sh", import.meta.url));
+const binPath = resolve(dirname(fileURLToPath(import.meta.url)), "../cli/bin.sh");
 
 describe("fastmail CLI bin", () => {
   it("uses the package-local runtime and starts outside the repository", async () => {
