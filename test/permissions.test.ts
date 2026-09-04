@@ -330,6 +330,37 @@ describe('tools/list filtering — fail-closed categories', () => {
 		expect(text).toContain('list_emails');
 		expect(text).not.toContain('future_new_tool');
 	});
+
+	it('filters every tools/list item in a JSON-RPC batch', async () => {
+		const body = [
+			{ jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'list_emails' }, { name: 'send_email' }] } },
+			{ jsonrpc: '2.0', id: 2, result: { value: 'unchanged' } },
+		];
+		const filtered = await filterToolsListResponse(
+			Response.json(body),
+			'delegate@example.com',
+			kv,
+		);
+		const parsed = await filtered.json() as typeof body;
+		expect(parsed[0].result).toEqual({ tools: [{ name: 'list_emails' }] });
+		expect(parsed[1]).toEqual(body[1]);
+	});
+
+	it.each([
+		`event: message\ndata:${JSON.stringify({ jsonrpc: '2.0', id: 1, result: { tools: [{ name: 'list_emails' }, { name: 'send_email' }] } })}\n\n`,
+		`event: message\nid: 7\ndata: {"jsonrpc":"2.0","id":1,\ndata: "result":{"tools":[{"name":"list_emails"},{"name":"send_email"}]}}\n\n`,
+	])('filters complete SSE events and preserves non-data fields', async (body) => {
+		const filtered = await filterToolsListResponse(
+			new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }),
+			'delegate@example.com',
+			kv,
+		);
+		const text = await filtered.text();
+		expect(text).toContain('event: message');
+		expect(text).toContain('list_emails');
+		expect(text).not.toContain('send_email');
+		if (body.includes('id: 7')) expect(text).toContain('id: 7');
+	});
 });
 
 describe('getPermissionsConfig — fail-closed defaults', () => {
