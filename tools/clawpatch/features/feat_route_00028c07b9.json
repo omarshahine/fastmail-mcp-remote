@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_route_00028c07b9",
   "title": "MCP Code Mode endpoint",
-  "summary": "Wraps all Fastmail tools in a single 'code' tool using Cloudflare Dynamic Workers (worker_loaders binding). LLM writes TypeScript that chains tool calls in a sandboxed V8 isolate.",
+  "summary": "Exposes 'search' for progressive OpenAPI discovery and 'execute' for TypeScript execution using Cloudflare Dynamic Workers (worker_loaders binding). The LLM can chain Fastmail operations in a sandboxed V8 isolate.",
   "kind": "route",
   "source": "hand-authored",
   "confidence": "high",
@@ -26,7 +26,9 @@
       "reason": "tools bridged via codemode"
     }
   ],
-  "tests": [],
+  "tests": [
+    "test/openapi-adapter.test.ts"
+  ],
   "tags": [
     "mcp",
     "code-mode",

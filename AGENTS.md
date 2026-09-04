@@ -1,6 +1,6 @@
 # Fastmail Remote
 
-A remote MCP server and token-efficient CLI for Fastmail email, contacts, and calendar. The MCP server runs on Cloudflare Workers with Cloudflare Access OAuth. The CLI calls the remote server and formats responses as compact text, saving 5-7x tokens. A Code Mode endpoint (`/mcp/code`) wraps all tools into a single `code` tool using Cloudflare Dynamic Workers for additional token savings.
+A remote MCP server and token-efficient CLI for Fastmail email, contacts, and calendar. The MCP server runs on Cloudflare Workers with Cloudflare Access OAuth. The CLI calls the remote server and formats responses as compact text, saving 5-7x tokens. A Code Mode endpoint (`/mcp/code`) exposes `search` and `execute` tools backed by Cloudflare Dynamic Workers for additional token savings.
 
 ## Quick Reference
 
@@ -278,14 +278,14 @@ Complete OAuth via `/mcp` in Claude Code when prompted.
 
 ## Code Mode
 
-The `/mcp/code` endpoint wraps all Fastmail tools into a single `code` tool using Cloudflare's [Code Mode SDK](https://developers.cloudflare.com/dynamic-workers/code-mode/) and Dynamic Workers. Instead of 29+ individual tool calls, the LLM writes a TypeScript function that chains multiple API calls in one sandbox execution.
+The `/mcp/code` endpoint uses Cloudflare's [Code Mode SDK](https://developers.cloudflare.com/dynamic-workers/code-mode/) and Dynamic Workers. It exposes two tools: `search` progressively discovers the OpenAPI operations, and `execute` runs TypeScript that can chain multiple operations in one sandbox execution.
 
 ### How it works
 
-1. LLM receives a single `code` tool with TypeScript type definitions for all Fastmail operations
-2. LLM writes code like: `async () => { const emails = await codemode.search_emails({query: "invoice"}); return emails.filter(e => e.subject.includes("2024")); }`
+1. The LLM calls `search` to discover relevant Fastmail operations and their schemas
+2. The LLM calls `execute` with TypeScript such as: `async () => { const emails = await fastmail.search_emails({query: "invoice"}); return emails.filter(e => e.subject.includes("2024")); }`
 3. Code runs in an isolated V8 sandbox (Dynamic Worker) with no network access
-4. `codemode.*` calls route back to the host via Workers RPC, executing the real JMAP operations
+4. `fastmail.*` calls route back to the host, which executes the real JMAP operations
 5. Only the final result enters the context window
 
 ### Benefits

@@ -195,9 +195,8 @@ function unauthorizedResponse(c: { req: { url: string } }, error: string, descri
 }
 
 // ─── Code Mode endpoint ────────────────────────────────────────────────────
-// Wraps all Fastmail tools into a single `code` tool. The LLM writes TypeScript
-// that chains calls like `await codemode.list_emails({limit: 5})` and runs in
-// an isolated Dynamic Worker sandbox. Only the final result enters the context.
+// Exposes `search` for progressive OpenAPI discovery and `execute` for running
+// TypeScript that chains Fastmail operations in an isolated Dynamic Worker.
 app.get("/mcp/code", (c) => {
   return c.json({
     jsonrpc: "2.0",
@@ -524,7 +523,7 @@ app.get("/", (c) => {
     protected_resource_metadata: "/.well-known/oauth-protected-resource",
     endpoints: {
       mcp: "/mcp",
-      mcp_code: "/mcp/code (Code Mode: single code tool, 81% fewer tokens)",
+      mcp_code: "/mcp/code (Code Mode: search and execute tools, 81% fewer tokens)",
       download: "/download/:token (temporary, single-use)",
     },
   });
