@@ -1226,8 +1226,6 @@ export class JmapClient {
   async markEmailRead(emailId: string, read: boolean = true): Promise<void> {
     const session = await this.getSession();
 
-    const keywords = read ? { $seen: true } : {};
-
     const request: JmapRequest = {
       using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
       methodCalls: [
@@ -1235,7 +1233,7 @@ export class JmapClient {
           accountId: session.accountId,
           update: {
             [emailId]: {
-              keywords
+              'keywords/$seen': read ? true : null
             }
           }
         }, 'updateEmail']
@@ -1766,11 +1764,10 @@ export class JmapClient {
   async bulkMarkRead(emailIds: string[], read: boolean = true): Promise<void> {
     const session = await this.getSession();
 
-    const keywords = read ? { $seen: true } : {};
     const updates: Record<string, any> = {};
 
     emailIds.forEach(id => {
-      updates[id] = { keywords };
+      updates[id] = { 'keywords/$seen': read ? true : null };
     });
 
     const request: JmapRequest = {
