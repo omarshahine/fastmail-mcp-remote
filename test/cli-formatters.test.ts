@@ -68,4 +68,13 @@ describe('formatEmailList — address rendering', () => {
 
 		expect(out).not.toContain('com>  ');
 	});
+
+	it.each(['not-a-date', { malformed: true }])(
+		'renders malformed receivedAt value %j as a safe fallback',
+		(receivedAt) => {
+			const out = formatEmailList([{ ...base, receivedAt, from: 'sender@example.com' } as never]);
+			expect(out).toContain('?');
+			expect(out).not.toContain('NaN');
+		},
+	);
 });

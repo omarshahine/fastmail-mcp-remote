@@ -39,4 +39,10 @@ describe("server compact formatter scalar hardening", () => {
       expect(output).not.toMatch(/\n(?:# Fake|State: fake|Admin)/);
     }
   });
+
+  it("renders invalid event dates without NaN-filled timestamps", () => {
+    const output = formatEvents([{ id: "ev", start: "invalid", end: { bad: true }, title: "Meeting" }]);
+    expect(output).toContain("?");
+    expect(output).not.toContain("NaN");
+  });
 });
