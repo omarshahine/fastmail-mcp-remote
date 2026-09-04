@@ -34,6 +34,7 @@ describe("external-data response guarding", () => {
     const context = {
       getJmapClient: () => ({ getInboxUpdates }),
       guardResponse,
+      checkToolPermission: async () => null,
     } as unknown as ToolContext;
 
     registerAllTools(server as never, context, new Set(["get_inbox_updates"]));
