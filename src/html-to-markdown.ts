@@ -106,7 +106,16 @@ function createTurndownService(): TurndownService {
     filter: 'a' as any,
     replacement: (content: string, node: any) => {
       const href = (node.getAttribute('href') || '').trim();
-      const trimmed = content.trim();
+      let trimmed = content.trim();
+      // Turndown can concatenate an image's alt text with identical visible
+      // link text. Collapse only that structurally proven duplication.
+      const images = node.querySelectorAll('img');
+      if (images.length === 1) {
+        const alt = (images[0].getAttribute('alt') || '').trim();
+        if (alt && (trimmed === `${alt}${alt}` || trimmed === `${alt} ${alt}`)) {
+          trimmed = alt;
+        }
+      }
       // For mailto: links, show the email address if it differs from display text
       if (/^mailto:/i.test(href)) {
         const email = href.slice(7).split('?')[0];
@@ -194,10 +203,6 @@ function cleanMarkdown(md: string): string {
     .replace(/\[\s+\]\([^)]*\)/g, '')
     // Remove image-in-link leftovers: [![](url)](url) patterns
     .replace(/\[\s*!\[\s*\]\([^)]*\)\s*\]\([^)]*\)/g, '')
-    // Deduplicate adjacent repeated phrases (e.g., "Amazon Alexa Amazon Alexa" → "Amazon Alexa")
-    // This occurs when <a> wraps <img> with alt text — image rule emits alt, link rule emits text
-    // Restricted to word chars + spaces to avoid collapsing legitimate repeated data like "100 100"
-    .replace(/\b(\w[\w ]{1,78}\w)\s+\1\b/g, '$1')
     // Strip generic legal boilerplate lines (but preserve unsubscribe/preferences content)
     .replace(/^.*(?:©|all rights reserved|view in browser|view as a web page|view online version).*$/gim, '')
     // Collapse 3+ newlines to 2 (preserve paragraph breaks)

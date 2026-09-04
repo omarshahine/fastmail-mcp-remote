@@ -32,3 +32,21 @@ describe("htmlToMarkdown links", () => {
     expect(output).not.toContain("data:");
   });
 });
+
+describe("htmlToMarkdown repeated values", () => {
+  it.each([
+    ["<p>100 100</p>", "100 100"],
+    ["<p>Use AB12 AB12 exactly</p>", "Use AB12 AB12 exactly"],
+    ["<p>very very important</p>", "very very important"],
+  ])("preserves intentional repetition in %s", (html, expected) => {
+    expect(htmlToMarkdown(html)).toContain(expected);
+  });
+
+  it("collapses duplicated linked-image alt text only within that link", () => {
+    const output = htmlToMarkdown(
+      '<a href="https://example.com/product"><img alt="Amazon Alexa" src="image.png">Amazon Alexa</a>',
+    );
+
+    expect(output).toBe("[Amazon Alexa](https://example.com/product)");
+  });
+});
