@@ -406,6 +406,12 @@ export async function handleToken(request: Request, env: Env, defer?: DeferWork)
 	if (!body.code) {
 		return jsonError('invalid_request', 'Missing code parameter', 400);
 	}
+	if (!body.client_id) {
+		return jsonError('invalid_request', 'Missing client_id parameter', 400);
+	}
+	if (!body.redirect_uri) {
+		return jsonError('invalid_request', 'Missing redirect_uri parameter', 400);
+	}
 
 	// Retrieve and validate authorization code from KV
 	const codeJson = await env.OAUTH_KV.get(`code:${body.code}`);
@@ -419,16 +425,13 @@ export async function handleToken(request: Request, env: Env, defer?: DeferWork)
 		return jsonError('invalid_grant', 'Invalid or expired authorization code', 400);
 	}
 
-	// Mark code as used by deleting it (KV doesn't support updates)
-	await env.OAUTH_KV.delete(`code:${body.code}`);
-
 	// Validate client_id matches
-	if (body.client_id && body.client_id !== authCode.client_id) {
+	if (body.client_id !== authCode.client_id) {
 		return jsonError('invalid_grant', 'client_id mismatch', 400);
 	}
 
 	// Validate redirect_uri matches
-	if (body.redirect_uri && body.redirect_uri !== authCode.redirect_uri) {
+	if (body.redirect_uri !== authCode.redirect_uri) {
 		return jsonError('invalid_grant', 'redirect_uri mismatch', 400);
 	}
 
@@ -455,6 +458,10 @@ export async function handleToken(request: Request, env: Env, defer?: DeferWork)
 			return jsonError('invalid_grant', 'Invalid code_verifier', 400);
 		}
 	}
+
+	// Consume only after every binding and PKCE check succeeds. Invalid attempts
+	// must not burn a valid code that the registered client can still redeem.
+	await env.OAUTH_KV.delete(`code:${body.code}`);
 
 	// Issue paired access + refresh tokens
 	const pair = await issueTokenPair(env.OAUTH_KV, {

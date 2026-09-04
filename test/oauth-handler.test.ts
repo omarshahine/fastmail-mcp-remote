@@ -325,7 +325,12 @@ describe('handleToken — client registration TTL slides on use', () => {
 		});
 
 		const response = await handleToken(
-			tokenRequest({ grant_type: 'authorization_code', code: 'auth-code-1' }),
+			tokenRequest({
+				grant_type: 'authorization_code',
+				code: 'auth-code-1',
+				client_id: 'registered-client',
+				redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+			}),
 			env(kv)
 		);
 
@@ -333,6 +338,54 @@ describe('handleToken — client registration TTL slides on use', () => {
 		const writes = clientWrites(put);
 		expect(writes).toHaveLength(1);
 		expect(writes[0][2]).toEqual({ expirationTtl: CLIENT_TTL_SECONDS });
+	});
+
+	it.each([
+		[
+			'missing client_id',
+			{ redirect_uri: 'https://claude.ai/api/mcp/auth_callback' },
+			'Missing client_id parameter',
+		],
+		[
+			'missing redirect_uri',
+			{ client_id: 'registered-client' },
+			'Missing redirect_uri parameter',
+		],
+		[
+			'mismatched client_id',
+			{ client_id: 'other-client', redirect_uri: 'https://claude.ai/api/mcp/auth_callback' },
+			'client_id mismatch',
+		],
+		[
+			'mismatched redirect_uri',
+			{ client_id: 'registered-client', redirect_uri: 'https://claude.ai/other' },
+			'redirect_uri mismatch',
+		],
+	])('rejects %s without consuming the authorization code', async (_name, params, message) => {
+		const codeKey = 'code:auth-code-1';
+		const { kv, store } = makeKv({
+			[codeKey]: {
+				client_id: 'registered-client',
+				user_id: 'user-1',
+				user_login: 'allowed@example.com',
+				user_email: 'allowed@example.com',
+				scope: 'mcp:read mcp:write',
+				redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+				code_challenge: null,
+				code_challenge_method: null,
+				expires_at: new Date(Date.now() + 60_000).toISOString(),
+				used: false,
+			},
+		});
+
+		const response = await handleToken(
+			tokenRequest({ grant_type: 'authorization_code', code: 'auth-code-1', ...params }),
+			env(kv),
+		);
+
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({ error_description: message });
+		expect(store[codeKey]).toBeDefined();
 	});
 
 	it('slides the registration on the refresh_token grant — the only hot path a refresh-only client touches', async () => {
