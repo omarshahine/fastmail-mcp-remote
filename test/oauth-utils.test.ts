@@ -270,6 +270,7 @@ describe('slideClientRegistrationTtl', () => {
 });
 
 describe('validateAccessToken — keeps the client registration alive', () => {
+	const ALLOWED_USERS = 'allowed@example.com';
 	const CLIENT = {
 		client_id: 'cli-client',
 		client_name: 'fastmail-cli',
@@ -317,7 +318,7 @@ describe('validateAccessToken — keeps the client registration alive', () => {
 		const { token, key, record } = await tokenStore();
 		const { kv, put } = makeKv({ [key]: record });
 
-		const result = await validateAccessToken(kv, token);
+		const result = await validateAccessToken(kv, token, ALLOWED_USERS);
 
 		expect(result).toMatchObject({ user_login: 'allowed@example.com' });
 		const writes = clientWrites(put);
@@ -329,12 +330,12 @@ describe('validateAccessToken — keeps the client registration alive', () => {
 		const { token, key, record } = await tokenStore();
 		const { kv, put, store } = makeKv({ [key]: record });
 
-		await validateAccessToken(kv, token);
+		await validateAccessToken(kv, token, ALLOWED_USERS);
 		expect((store[key] as any).client_ttl_slid_at).toBeTruthy();
 
 		put.mockClear();
 		(kv.get as ReturnType<typeof vi.fn>).mockClear();
-		await validateAccessToken(kv, token);
+		await validateAccessToken(kv, token, ALLOWED_USERS);
 
 		expect(clientWrites(put)).toHaveLength(0);
 		// Only the token record is read on the throttled path.
@@ -347,7 +348,7 @@ describe('validateAccessToken — keeps the client registration alive', () => {
 		const { token, key, record } = await tokenStore({ client_ttl_slid_at: stale });
 		const { kv, put } = makeKv({ [key]: record });
 
-		await validateAccessToken(kv, token);
+		await validateAccessToken(kv, token, ALLOWED_USERS);
 		expect(clientWrites(put)).toHaveLength(1);
 	});
 
@@ -356,7 +357,7 @@ describe('validateAccessToken — keeps the client registration alive', () => {
 		const { kv, put } = makeKv({ [key]: record });
 		const deferred: Promise<unknown>[] = [];
 
-		await validateAccessToken(kv, token, (work) => {
+		await validateAccessToken(kv, token, ALLOWED_USERS, (work) => {
 			deferred.push(work);
 		});
 
@@ -370,7 +371,7 @@ describe('validateAccessToken — keeps the client registration alive', () => {
 		const { kv, put, store } = makeKv({ [key]: record });
 		delete store['client:cli-client'];
 
-		const result = await validateAccessToken(kv, token);
+		const result = await validateAccessToken(kv, token, ALLOWED_USERS);
 
 		expect(result).toMatchObject({ user_login: 'allowed@example.com' });
 		expect(clientWrites(put)).toHaveLength(0);
@@ -382,7 +383,20 @@ describe('validateAccessToken — keeps the client registration alive', () => {
 		});
 		const { kv, put } = makeKv({ [key]: record });
 
-		expect(await validateAccessToken(kv, token)).toBeNull();
+		expect(await validateAccessToken(kv, token, ALLOWED_USERS)).toBeNull();
 		expect(put).not.toHaveBeenCalled();
 	});
+
+	it.each(['', 'someone-else@example.com'])(
+		'rejects and revokes a valid token when the allowlist is %j',
+		async (allowedUsers) => {
+			const { token, key, record } = await tokenStore();
+			const { kv, put } = makeKv({ [key]: record });
+
+			expect(await validateAccessToken(kv, token, allowedUsers)).toBeNull();
+			expect(kv.delete).toHaveBeenCalledWith(key);
+			expect(put).not.toHaveBeenCalled();
+			expect(clientWrites(put)).toHaveLength(0);
+		},
+	);
 });

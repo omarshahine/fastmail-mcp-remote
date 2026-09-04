@@ -219,7 +219,7 @@ app.post("/mcp/code", async (c) => {
     return unauthorizedResponse(c, "unauthorized", "Missing or invalid Authorization header");
   }
   const token = authHeader.substring(7);
-  const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token, (work) =>
+  const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token, c.env.ALLOWED_USERS || "", (work) =>
     c.executionCtx.waitUntil(work),
   );
   if (!tokenInfo) {
@@ -279,7 +279,7 @@ async function handleMcp(c: {
   }
 
   const token = authHeader.substring(7);
-  const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token, (work) =>
+  const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token, c.env.ALLOWED_USERS || "", (work) =>
     c.executionCtx.waitUntil(work),
   );
   if (!tokenInfo) {

@@ -476,12 +476,25 @@ export async function slideClientRegistrationTtl(
 export async function validateAccessToken(
 	kv: KVNamespace,
 	token: string,
+	allowedUsers: string,
 	defer?: DeferWork
 ): Promise<{ user_id: string; user_login: string; scope: string | null; expiresAt: string } | null> {
 	const tokenHash = await hashToken(token);
 	const data = await kv.get<OAuthTokenData>(`token:${tokenHash}`, 'json');
 
 	if (!data || isExpired(data.expires_at)) {
+		return null;
+	}
+
+	// ALLOWED_USERS is the deployment's immediate revocation control. Check it
+	// before either sliding TTL so a removed identity cannot keep its bearer
+	// token or client registration alive through continued use.
+	if (!isUserAllowed(data.user_login, allowedUsers)) {
+		try {
+			await kv.delete(`token:${tokenHash}`);
+		} catch (e) {
+			console.warn(`[oauth] Failed to delete token for unauthorized user (non-fatal): ${e}`);
+		}
 		return null;
 	}
 

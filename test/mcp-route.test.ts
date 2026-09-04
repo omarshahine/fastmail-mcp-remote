@@ -51,9 +51,11 @@ vi.mock('../src/permissions', async (importOriginal) => {
 });
 
 import app from '../src/index';
+import { validateAccessToken } from '../src/oauth-utils';
 
 const env = {
 	ACTION_SIGNING_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+	ALLOWED_USERS: 'user@example.com',
 } as Env;
 const executionCtx = {
 	waitUntil: vi.fn(),
@@ -63,6 +65,7 @@ const executionCtx = {
 describe('/mcp transport routing', () => {
 	beforeEach(() => {
 		durableFetch.mockClear();
+		vi.mocked(validateAccessToken).mockClear();
 	});
 
 	it('rejects standalone GET without dispatching it to the session Durable Object', async () => {
@@ -106,6 +109,12 @@ describe('/mcp transport routing', () => {
 		expect(postResponse.status).toBe(200);
 		expect(performance.now() - startedAt).toBeLessThan(5_000);
 		expect(durableFetch).toHaveBeenCalledTimes(1);
+		expect(validateAccessToken).toHaveBeenCalledWith(
+			undefined,
+			'test-token',
+			'user@example.com',
+			expect.any(Function),
+		);
 		expect(durableFetch.mock.calls[0]?.[0].method).toBe('POST');
 		expect(durableFetch.mock.calls[0]?.[0].headers.get('Mcp-Session-Id')).toBe(sessionId);
 	});
