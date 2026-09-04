@@ -9,7 +9,7 @@ import { McpAgent } from "agents/mcp";
 import { createMcpHandler } from "agents/mcp/server";
 import { DynamicWorkerExecutor } from "@cloudflare/codemode";
 import { buildCodeModeServer } from "./openapi-adapter";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   handleOAuthDiscovery,
   handleAuthorize,
@@ -197,7 +197,7 @@ function unauthorizedResponse(c: { req: { url: string } }, error: string, descri
 
 // ─── Code Mode endpoint ────────────────────────────────────────────────────
 // Exposes `search` for progressive OpenAPI discovery and `execute` for running
-// TypeScript that chains Fastmail operations in an isolated Dynamic Worker.
+// JavaScript that chains Fastmail operations in an isolated Dynamic Worker.
 app.get("/mcp/code", (c) => {
   return c.json({
     jsonrpc: "2.0",
@@ -235,7 +235,7 @@ app.post("/mcp/code", async (c) => {
   const ctx = buildToolContext(c.env, tokenInfo.user_login, undefined, true);
   registerAllTools(upstreamServer, ctx, visibleTools);
 
-  // Wrap with search+execute Code Mode: ~1,000 tokens instead of full TypeScript blob
+  // Wrap with search+execute Code Mode: ~1,000 tokens instead of every operation schema
   const executor = new DynamicWorkerExecutor({ loader: c.env.LOADER, globalOutbound: null });
   const codeServer = await buildCodeModeServer(upstreamServer, executor);
 
@@ -268,11 +268,7 @@ const mcpDurableObjectHandler = FastmailMCP.serve("/mcp", { binding: "MCP_OBJECT
  * Validate the Bearer token, attach per-session props to the ExecutionContext,
  * and delegate to the Durable Object handler. Shared by GET/POST/DELETE /mcp.
  */
-async function handleMcp(c: {
-  req: { url: string; raw: Request; header: (name: string) => string | undefined };
-  env: Env;
-  executionCtx: ExecutionContext;
-}): Promise<Response> {
+async function handleMcp(c: Context<{ Bindings: Env }>): Promise<Response> {
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return unauthorizedResponse(c, "unauthorized", "Missing or invalid Authorization header");

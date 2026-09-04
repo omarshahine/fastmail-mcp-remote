@@ -56,7 +56,7 @@ import { validateAccessToken } from '../src/oauth-utils';
 const env = {
 	ACTION_SIGNING_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
 	ALLOWED_USERS: 'user@example.com',
-} as Env;
+} as unknown as Env;
 const executionCtx = {
 	waitUntil: vi.fn(),
 	passThroughOnException: vi.fn(),
