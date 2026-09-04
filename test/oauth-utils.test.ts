@@ -98,7 +98,9 @@ describe('verifyAccessIdToken', () => {
 	it('rejects JWTs with an invalid signature', async () => {
 		const { token, publicJwk } = await createSignedJwt(validClaims());
 		mockJwks(publicJwk);
-		const forgedToken = `${token.slice(0, -2)}xx`;
+		const [header, payload, signature] = token.split('.');
+		const forgedSignature = `${signature[0] === 'A' ? 'B' : 'A'}${signature.slice(1)}`;
+		const forgedToken = `${header}.${payload}.${forgedSignature}`;
 
 		await expect(
 			verifyAccessIdToken(forgedToken, { teamName: TEAM_NAME, clientId: CLIENT_ID, now: NOW })
