@@ -389,13 +389,13 @@ Note: `ACCESS_TEAM_NAME` and `ALLOWED_USERS` are configured in `wrangler.jsonc` 
 npm start
 ```
 
-Server runs at `http://localhost:8788/sse`
+The streamable HTTP endpoint runs at `http://localhost:8788/mcp`.
 
 Test with MCP Inspector:
 ```bash
 npx @modelcontextprotocol/inspector@latest
 # Open http://localhost:5173
-# Enter http://localhost:8788/sse
+# Enter http://localhost:8788/mcp
 # Click "Open OAuth Settings" → "Quick OAuth Flow"
 # Authenticate via Cloudflare Access
 # Click "Connect" → "List Tools"
@@ -442,7 +442,7 @@ fastmail inbox
 2. Click **Add custom connector**
 3. Enter your MCP server URL:
    ```
-   https://your-worker.example.com/sse
+   https://your-worker.example.com/mcp
    ```
 4. Click **Add**
 5. Click **Connect** and authenticate via Cloudflare Access

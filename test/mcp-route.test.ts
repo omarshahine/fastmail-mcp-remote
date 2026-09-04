@@ -119,6 +119,16 @@ describe('/mcp transport routing', () => {
 		expect(durableFetch.mock.calls[0]?.[0].headers.get('Mcp-Session-Id')).toBe(sessionId);
 	});
 
+	it('does not advertise or serve the removed legacy /sse transport', async () => {
+		const root = await app.request('https://worker.example/', undefined, env, executionCtx);
+		const metadata = await root.json() as any;
+		expect(metadata.endpoints.mcp).toBe('/mcp');
+		expect(JSON.stringify(metadata.endpoints)).not.toContain('/sse');
+
+		const response = await app.request('https://worker.example/sse', undefined, env, executionCtx);
+		expect(response.status).toBe(404);
+	});
+
 	it('routes MCP 2026-07-28 envelope requests to the stateless v2 handler', async () => {
 		const response = await app.request(
 			new Request('https://worker.example/mcp', {

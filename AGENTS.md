@@ -77,7 +77,7 @@ openclaw-plugin/                     # OpenClaw plugin: "fastmail-cli" on npm
 4. Server exchanges code for ID token, validates user email against allowlist
 5. Server issues authorization code to client
 6. Client exchanges code for access token via `/mcp/token`
-7. Client uses Bearer token to access `/mcp` or `/sse` endpoints
+7. Client uses the Bearer token to access the streamable HTTP `/mcp` endpoint
 
 ## Deployment
 
@@ -180,12 +180,12 @@ Optional `cliCommand` (default: `"fastmail"`) in OpenClaw workspace config. The 
 
 1. Copy `.dev.vars.example` to `.dev.vars` and fill in credentials
 2. Run `npm start`
-3. Test at `http://localhost:8788/sse`
+3. Test at `http://localhost:8788/mcp`
 
 Use MCP Inspector for testing:
 ```bash
 npx @modelcontextprotocol/inspector@latest
-# Enter http://localhost:8788/sse and authenticate
+# Enter http://localhost:8788/mcp and authenticate
 ```
 
 ## Adding New Tools
@@ -432,7 +432,7 @@ clawpatch next               # surface the next actionable finding
 ### ⚠ Heuristic mapping limitation (v0.1.0)
 
 `clawpatch map` only discovers `package.json` bins/scripts and top-level config files. It does **not** walk `src/` to find:
-- Hono routes (`/mcp`, `/mcp/authorize`, `/mcp/callback`, `/mcp/token`, `/mcp/code`, `/sse`, `/.well-known/*`)
+- Hono routes (`/mcp`, `/mcp/authorize`, `/mcp/callback`, `/mcp/token`, `/mcp/code`, `/.well-known/*`)
 - MCP tool registrations in `src/tools.ts`
 - Library modules (`jmap-client`, `permissions`, `prompt-guard`, `html-to-markdown`, `action-urls`)
 - CLI subcommands in `cli/commands/`
