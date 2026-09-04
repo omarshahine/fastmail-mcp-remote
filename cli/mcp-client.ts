@@ -138,6 +138,12 @@ export class FastmailMcpClient {
     // Strip datamarking
     const cleaned = stripDatamarking(text);
 
+    // MCP reports tool-level failures in a successful protocol response. Do not
+    // let callers mistake an error payload for ordinary command output.
+    if (result.isError === true) {
+      throw new Error(cleaned || `MCP tool '${name}' failed`);
+    }
+
     // Try parsing as JSON (most tool responses are JSON)
     try {
       return JSON.parse(cleaned);
