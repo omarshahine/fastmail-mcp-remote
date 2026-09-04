@@ -38,7 +38,7 @@ describe("JmapClient sendCopy body handling", () => {
     expect(submitDraft).not.toHaveBeenCalled();
   });
 
-  it("requests complete body values and preserves them in the clone", async () => {
+  it("requests bounded body values and preserves complete values in the clone", async () => {
     const client = makeClient();
     vi.spyOn(client, "getMailboxes").mockResolvedValue([{ id: "drafts", role: "drafts", name: "Drafts" }]);
     const makeRequest = vi.spyOn(client, "makeRequest")
@@ -63,7 +63,7 @@ describe("JmapClient sendCopy body handling", () => {
       .resolves.toBe("draft-1");
 
     const sourceRequest = makeRequest.mock.calls[0][0] as JmapRequest;
-    expect(sourceRequest.methodCalls[0][1].maxBodyValueBytes).toBe(0);
+    expect(sourceRequest.methodCalls[0][1].maxBodyValueBytes).toBe(10 * 1024 * 1024);
     const createRequest = makeRequest.mock.calls[1][0] as JmapRequest;
     expect(createRequest.methodCalls[0][1].create.clone.bodyValues).toEqual({
       text: { value: "complete body", isTruncated: false },

@@ -1107,7 +1107,9 @@ export class JmapClient {
           ],
           bodyProperties: ['partId', 'blobId', 'size', 'name', 'type', 'charset', 'disposition', 'cid'],
           fetchAllBodyValues: true,
-          maxBodyValueBytes: 0,
+          // Bound Worker memory use. JMAP marks larger values as truncated,
+          // and the check below then fails before any draft is created.
+          maxBodyValueBytes: 10 * 1024 * 1024,
         }, 'getSource'],
       ],
     };
