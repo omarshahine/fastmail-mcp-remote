@@ -41,6 +41,7 @@ function stripDatamarking(text: string): string {
 
 export class FastmailMcpClient {
   private client: Client | null = null;
+  private connectionPromise: Promise<Client> | null = null;
   private url: string;
   private token: string;
 
@@ -51,8 +52,9 @@ export class FastmailMcpClient {
 
   private async ensureConnected(): Promise<Client> {
     if (this.client) return this.client;
+    if (this.connectionPromise) return this.connectionPromise;
 
-    this.client = new Client({
+    const connectingClient = new Client({
       name: "fastmail-cli",
       version: "1.0.0",
     });
@@ -101,18 +103,24 @@ export class FastmailMcpClient {
       { fetch: authFetch },
     );
 
-    try {
-      await this.client.connect(transport);
-    } catch (err: any) {
-      this.client = null;
-      if (err?.message?.includes("401") || err?.message?.includes("Unauthorized")) {
-        console.error("Authentication failed. Run: fastmail auth");
-        process.exit(2); // EXIT.AUTH — avoid circular import from exit-codes
+    const pending = (async () => {
+      try {
+        await connectingClient.connect(transport);
+        this.client = connectingClient;
+        return connectingClient;
+      } catch (err: any) {
+        if (err?.message?.includes("401") || err?.message?.includes("Unauthorized")) {
+          console.error("Authentication failed. Run: fastmail auth");
+          process.exit(2); // EXIT.AUTH — avoid circular import from exit-codes
+        }
+        throw err;
+      } finally {
+        this.connectionPromise = null;
       }
-      throw err;
-    }
+    })();
 
-    return this.client;
+    this.connectionPromise = pending;
+    return pending;
   }
 
   /**
@@ -183,6 +191,9 @@ export class FastmailMcpClient {
   }
 
   async close(): Promise<void> {
+    if (this.connectionPromise) {
+      await this.connectionPromise.catch(() => undefined);
+    }
     if (this.client) {
       await this.client.close();
       this.client = null;
