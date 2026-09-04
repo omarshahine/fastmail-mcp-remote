@@ -10,6 +10,8 @@ declare namespace Cloudflare {
     SEND_APPROVAL_MODE?: "off" | "client" | "required";
     /** One Durable Object per short-lived outbound approval. */
     SEND_APPROVALS: DurableObjectNamespace;
+    /** One Durable Object per short-lived OAuth authorization code. */
+    AUTHORIZATION_CODES: DurableObjectNamespace;
     /**
      * Comma-separated extra hostnames permitted as OAuth redirect_uri targets,
      * beyond loopback and the worker's own origin. Defaults to the Anthropic/
@@ -23,4 +25,11 @@ declare namespace Cloudflare {
      */
     ACTION_ALLOWED_ORIGINS?: string;
   }
+}
+
+// The generated worker-configuration.d.ts comes from the local, gitignored
+// wrangler config and may lag a newly added binding until the operator copies
+// the updated template. Keep source and tests typed during that transition.
+interface Env {
+  AUTHORIZATION_CODES: DurableObjectNamespace;
 }

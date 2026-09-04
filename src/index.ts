@@ -31,8 +31,9 @@ import {
   handleSendApprovalStart,
 } from "./send-approval-auth";
 import { SendApprovalStore, type SendApprovalRequestState } from "./send-approval";
+import { OAuthCodeStore } from "./oauth-code-store";
 
-export { SendApprovalStore };
+export { OAuthCodeStore, SendApprovalStore };
 
 /**
  * Props passed into the Durable Object per session, set from the validated

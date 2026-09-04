@@ -67,7 +67,7 @@ openclaw-plugin/                     # OpenClaw plugin: "fastmail-cli" on npm
 - **OAuth**: Cloudflare Access OAuth (supports GitHub + OTP via Zero Trust)
 - **API Communication**: JMAP protocol to Fastmail API (`src/jmap-client.ts`)
 - **State**: Cloudflare Durable Objects with SQLite for session management
-- **Storage**: KV namespace (`OAUTH_KV`) for OAuth state/code/token storage
+- **Storage**: KV namespace (`OAUTH_KV`) for OAuth state and tokens; a per-code Durable Object atomically consumes authorization codes
 
 ## OAuth Flow
 
@@ -251,9 +251,11 @@ ALLOWED_USERS=user1@example.com,user2@example.com
 | Key Pattern | Data | TTL |
 |-------------|------|-----|
 | `state:{id}` | OAuth state (client_id, redirect_uri, PKCE, etc.) | 10 min |
-| `code:{id}` | Auth code (user info, PKCE challenge) | 1 min |
 | `token:{hash}` | Access token info (user_id, scope) | 30 days |
 | `client:{id}` | Registered client info | 90 days |
+
+OAuth authorization codes live for one minute in the `AUTHORIZATION_CODES`
+Durable Object namespace. Each code has its own object so redemption is atomic.
 
 ## Debugging
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleGetTokenCallback, handleAuthorize, handleToken } from '../src/oauth-handler';
 import { CLIENT_TTL_SECONDS, hashToken } from '../src/oauth-utils';
+import { OAuthCodeStore } from '../src/oauth-code-store';
 
 const TEAM_NAME = 'example-team';
 const CLIENT_ID = 'access-client-id';
@@ -289,9 +290,67 @@ describe('handleToken — client registration TTL slides on use', () => {
 		return { kv, put, store };
 	}
 
-	function env(kv: unknown): Env {
+	class MemoryStorage {
+		private values = new Map<string, unknown>();
+
+		constructor(code?: unknown) {
+			if (code) this.values.set('code', structuredClone(code));
+		}
+
+		async get<T>(key: string): Promise<T | undefined> {
+			return this.values.get(key) as T | undefined;
+		}
+
+		async put(key: string, value: unknown): Promise<void> {
+			this.values.set(key, structuredClone(value));
+		}
+
+		async setAlarm(): Promise<void> {}
+
+		async deleteAll(): Promise<void> {
+			this.values.clear();
+		}
+	}
+
+	class MemoryState {
+		readonly storage: MemoryStorage;
+		private queue: Promise<unknown> = Promise.resolve();
+
+		constructor(code?: unknown) {
+			this.storage = new MemoryStorage(code);
+		}
+
+		blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T> {
+			const result = this.queue.then(callback);
+			this.queue = result.then(() => undefined, () => undefined);
+			return result;
+		}
+	}
+
+	function codeNamespace(records: Record<string, unknown>) {
+		const stores = new Map<string, OAuthCodeStore>();
+		return {
+			getByName(code: string) {
+				let codeStore = stores.get(code);
+				if (!codeStore) {
+					codeStore = new OAuthCodeStore(
+						new MemoryState(records[`code:${code}`]) as unknown as DurableObjectState,
+						{} as Env,
+					);
+					stores.set(code, codeStore);
+				}
+				return {
+					fetch: (request: Request | string, init?: RequestInit) =>
+						codeStore!.fetch(new Request(request, init)),
+				};
+			},
+		};
+	}
+
+	function env(kv: unknown, records: Record<string, unknown> = {}): Env {
 		return {
 			OAUTH_KV: kv,
+			AUTHORIZATION_CODES: codeNamespace(records),
 			ALLOWED_USERS: 'allowed@example.com',
 		} as unknown as Env;
 	}
@@ -309,7 +368,7 @@ describe('handleToken — client registration TTL slides on use', () => {
 	}
 
 	it('slides the registration on the authorization_code grant', async () => {
-		const { kv, put } = makeKv({
+		const { kv, put, store } = makeKv({
 			'code:auth-code-1': {
 				client_id: 'registered-client',
 				user_id: 'user-1',
@@ -331,7 +390,7 @@ describe('handleToken — client registration TTL slides on use', () => {
 				client_id: 'registered-client',
 				redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
 			}),
-			env(kv)
+			env(kv, store)
 		);
 
 		expect(response.status).toBe(200);
@@ -378,14 +437,48 @@ describe('handleToken — client registration TTL slides on use', () => {
 			},
 		});
 
+		const testEnv = env(kv, store);
 		const response = await handleToken(
 			tokenRequest({ grant_type: 'authorization_code', code: 'auth-code-1', ...params }),
-			env(kv),
+			testEnv,
 		);
 
 		expect(response.status).toBe(400);
 		expect(await response.json()).toMatchObject({ error_description: message });
-		expect(store[codeKey]).toBeDefined();
+		const inspection = await testEnv.AUTHORIZATION_CODES.getByName('auth-code-1')
+			.fetch('https://oauth-code.internal/inspect');
+		expect(inspection.status).toBe(200);
+	});
+
+	it('allows only one concurrent redemption of an authorization code', async () => {
+		const { kv, store } = makeKv({
+			'code:auth-code-1': {
+				client_id: 'registered-client',
+				user_id: 'user-1',
+				user_login: 'allowed@example.com',
+				user_email: 'allowed@example.com',
+				scope: 'mcp:read mcp:write',
+				redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+				code_challenge: null,
+				code_challenge_method: null,
+				expires_at: new Date(Date.now() + 60_000).toISOString(),
+				used: false,
+			},
+		});
+		const testEnv = env(kv, store);
+		const params = {
+			grant_type: 'authorization_code',
+			code: 'auth-code-1',
+			client_id: 'registered-client',
+			redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+		};
+
+		const responses = await Promise.all([
+			handleToken(tokenRequest(params), testEnv),
+			handleToken(tokenRequest(params), testEnv),
+		]);
+
+		expect(responses.map((response) => response.status).sort()).toEqual([200, 400]);
 	});
 
 	it('slides the registration on the refresh_token grant — the only hot path a refresh-only client touches', async () => {

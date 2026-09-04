@@ -35,6 +35,12 @@
 				"SendApprovalStore"
 			],
 			"tag": "v2"
+		},
+		{
+			"new_sqlite_classes": [
+				"OAuthCodeStore"
+			],
+			"tag": "v3"
 		}
 	],
 	"durable_objects": {
@@ -46,6 +52,10 @@
 			{
 				"class_name": "SendApprovalStore",
 				"name": "SEND_APPROVALS"
+			},
+			{
+				"class_name": "OAuthCodeStore",
+				"name": "AUTHORIZATION_CODES"
 			}
 		]
 	},
