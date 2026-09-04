@@ -12,6 +12,7 @@ import { chmod, readFile, writeFile, mkdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { Writable, type Readable } from "node:stream";
 
 const CONFIG_DIR = join(homedir(), ".config", "fastmail-cli");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
@@ -138,6 +139,28 @@ function prompt(question: string): Promise<string> {
   return new Promise((resolve) => {
     rl.question(question, (answer) => {
       rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+/** Prompt for a secret without echoing the answer to the terminal. */
+export function promptSecret(
+  question: string,
+  input: Readable = process.stdin,
+  output: Writable = process.stdout,
+): Promise<string> {
+  output.write(question);
+  const mutedOutput = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const rl = createInterface({ input, output: mutedOutput, terminal: true });
+  return new Promise((resolve) => {
+    rl.question("", (answer) => {
+      rl.close();
+      output.write("\n");
       resolve(answer.trim());
     });
   });
@@ -336,7 +359,7 @@ export async function authenticateHeadless(
   console.log("After authenticating, copy the Bearer token shown on the page.");
   console.log("");
 
-  const token = await prompt("Paste your Bearer token here: ");
+  const token = await promptSecret("Paste your Bearer token here: ");
   if (!token) {
     console.error("Error: No token provided.");
     process.exit(1);

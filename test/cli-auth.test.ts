@@ -1,8 +1,9 @@
 import { mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { saveConfigAt, startCallbackServer, type Config } from "../cli/auth";
+import { promptSecret, saveConfigAt, startCallbackServer, type Config } from "../cli/auth";
 
 const CONFIG: Config = {
   url: "https://worker.example",
@@ -49,5 +50,23 @@ describe("CLI OAuth callback state", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe("CLI secret prompt", () => {
+  it("shows the prompt without echoing the entered token", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let displayed = "";
+    output.on("data", (chunk) => {
+      displayed += chunk.toString();
+    });
+
+    const answer = promptSecret("Paste token: ", input, output);
+    input.end("example-bearer-token\n");
+
+    await expect(answer).resolves.toBe("example-bearer-token");
+    expect(displayed).toBe("Paste token: \n");
+    expect(displayed).not.toContain("example-bearer-token");
   });
 });
