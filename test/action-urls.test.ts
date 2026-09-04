@@ -56,6 +56,21 @@ describe('signAction / verifyAction', () => {
 		await expect(verifyAction('archive', 'e', 'm', exp, 'z'.repeat(64), KEY)).resolves.toBe(false);
 	});
 
+	it.each([
+		['empty', ''],
+		['odd length', 'abc'],
+		['non-hex', 'z'.repeat(64)],
+		['too short', 'a'.repeat(62)],
+	])('rejects an %s signing key', async (_description, signingKey) => {
+		const exp = futureExp();
+		await expect(signAction('archive', 'e', 'm', exp, signingKey)).rejects.toThrow(
+			'ACTION_SIGNING_KEY must be exactly 64 hexadecimal characters',
+		);
+		await expect(verifyAction('archive', 'e', 'm', exp, 'a'.repeat(64), signingKey)).rejects.toThrow(
+			'ACTION_SIGNING_KEY must be exactly 64 hexadecimal characters',
+		);
+	});
+
 	it('rejects a signature that is a valid HMAC of a different payload', async () => {
 		const exp = futureExp();
 		// The old implementation compared against a self-verified digest; make

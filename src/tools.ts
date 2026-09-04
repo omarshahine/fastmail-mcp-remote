@@ -144,7 +144,8 @@ export function guardResponse(
     const text = options.compactFormatter(data);
     if (isExternalDataTool(toolName)) {
       const preamble = getDatamarkingPreamble();
-      return { content: [{ text: `${preamble}\n\n${text}`, type: "text" }] };
+      const marked = markUntrustedText(text, `${toolName}.compact`);
+      return { content: [{ text: `${preamble}\n\n${marked}`, type: "text" }] };
     }
     return { content: [{ text, type: "text" }] };
   }
@@ -356,6 +357,26 @@ export function registerAllTools(
   ctx: ToolContext,
   visibleTools?: Set<string>,
 ): void {
+  // Registration-time visibility is only an advertisement optimization. Wrap
+  // every handler so stale visibility or an unfiltered caller can never bypass
+  // the current per-user permission policy at execution time.
+  const rawServer = server;
+  server = {
+    tool(name: string, description: string, schema: any, annotationsOrHandler: any, maybeHandler?: any) {
+      const handler = maybeHandler || annotationsOrHandler;
+      const wrappedHandler = async (...args: any[]) => {
+        const denied = await ctx.checkToolPermission(name, args[0] as Record<string, unknown> | undefined);
+        if (denied) return denied;
+        return handler(...args);
+      };
+      if (maybeHandler) {
+        rawServer.tool(name, description, schema, annotationsOrHandler, wrappedHandler);
+      } else {
+        rawServer.tool(name, description, schema, wrappedHandler);
+      }
+    },
+  } as unknown as McpServer;
+
   /** Helper: skip tool if not in visibleTools set */
   const shouldRegister = (name: string) => !visibleTools || visibleTools.has(name);
 
@@ -910,9 +931,7 @@ export function registerAllTools(
         try {
           const client = ctx.getJmapClient();
           const result = await client.getInboxUpdates({ sinceQueryState, mailboxId, limit });
-          return {
-            content: [{ text: JSON.stringify(result), type: "text" }],
-          };
+          return ctx.guardResponse("get_inbox_updates", result);
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           return {

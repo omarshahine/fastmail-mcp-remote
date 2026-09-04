@@ -32,7 +32,7 @@ A token-efficient CLI that calls the remote MCP server and formats responses as 
 
 ```bash
 # Add alias to ~/.zshrc
-alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
+alias fastmail="/path/to/fastmail-mcp-remote/cli/bin.sh"
 
 # Authenticate (one-time, tokens last 30 days)
 fastmail auth --url https://your-worker.example.com --team yourteam
@@ -389,13 +389,13 @@ Note: `ACCESS_TEAM_NAME` and `ALLOWED_USERS` are configured in `wrangler.jsonc` 
 npm start
 ```
 
-Server runs at `http://localhost:8788/sse`
+The streamable HTTP endpoint runs at `http://localhost:8788/mcp`.
 
 Test with MCP Inspector:
 ```bash
 npx @modelcontextprotocol/inspector@latest
 # Open http://localhost:5173
-# Enter http://localhost:8788/sse
+# Enter http://localhost:8788/mcp
 # Click "Open OAuth Settings" → "Quick OAuth Flow"
 # Authenticate via Cloudflare Access
 # Click "Connect" → "List Tools"
@@ -424,7 +424,7 @@ npx wrangler secret put ACTION_SIGNING_KEY
 
 ```bash
 # Add alias to ~/.zshrc
-alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
+alias fastmail="/path/to/fastmail-mcp-remote/cli/bin.sh"
 
 # Authenticate (opens browser for CF Access login)
 fastmail auth --url https://your-worker.example.com --team yourteam
@@ -442,7 +442,7 @@ fastmail inbox
 2. Click **Add custom connector**
 3. Enter your MCP server URL:
    ```
-   https://your-worker.example.com/sse
+   https://your-worker.example.com/mcp
    ```
 4. Click **Add**
 5. Click **Connect** and authenticate via Cloudflare Access

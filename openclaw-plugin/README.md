@@ -1,6 +1,6 @@
 # fastmail-cli
 
-OpenClaw plugin for Fastmail email, contacts, and calendar. Provides 36 agent tools that shell out to the `fastmail` CLI for token-efficient output (5-7x savings vs raw JSON). Zero runtime dependencies.
+OpenClaw plugin for Fastmail email, contacts, and calendar. Provides 36 agent tools that shell out to its bundled `fastmail` CLI for token-efficient output (5-7x savings vs raw JSON). Zero runtime dependencies.
 
 ## Installation
 
@@ -12,19 +12,16 @@ openclaw plugins install fastmail-cli
 
 1. **Remote MCP Server**: Deploy the [fastmail-mcp-remote](https://github.com/omarshahine/fastmail-mcp-remote) Worker to Cloudflare.
 
-2. **Install and authenticate the CLI**:
+2. **Authenticate the bundled CLI**:
 
    ```bash
-   # Install globally (or use npx tsx path/to/cli/main.ts)
-   npm install -g fastmail-cli
-
    # Authenticate (opens browser for Cloudflare Access login)
-   fastmail auth --url https://your-worker.example.com --team myteam
+   npx --yes fastmail-cli@latest auth --url https://your-worker.example.com --team myteam
    ```
 
    Credentials are stored at `~/.config/fastmail-cli/config.json` (Bearer token, 30-day TTL).
 
-3. **Verify**: `fastmail auth status` should show your user and token expiry.
+3. **Verify**: `npx --yes fastmail-cli@latest auth status` should show your user and token expiry.
 
 ## Configuration
 
@@ -32,7 +29,7 @@ All fields are **optional**:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `cliCommand` | `"fastmail"` | Path or alias for the fastmail CLI binary |
+| `cliCommand` | bundled CLI | Optional path or alias for a different fastmail CLI binary |
 | `requireApprovals` | `true` | Require user approval before sending emails, reading email content, or bulk operations |
 
 The CLI handles all authentication. No credentials are needed in the plugin config.
@@ -127,7 +124,7 @@ The plugin is a thin adapter layer:
 3. Returns the CLI's compact text output directly as the tool response
 4. CLI handles MCP connection, auth, and formatting
 
-Zero runtime dependencies. The CLI must be installed and authenticated separately.
+The published package bundles the CLI and installs the `fastmail` executable. It has no runtime dependencies.
 
 ## Upgrading from v1.x
 
@@ -135,12 +132,12 @@ v2.0 replaces the in-process MCP SDK with CLI shelling. The `workerUrl` and `bea
 
 1. **Install and authenticate the CLI** (if not already):
    ```bash
-   fastmail auth --url https://your-worker.example.com --team myteam
+   npx --yes fastmail-cli@latest auth --url https://your-worker.example.com --team myteam
    ```
 
 2. **Remove old config**: Delete `workerUrl` and `bearerToken` from your OpenClaw workspace plugin settings.
 
-3. **Verify**: `fastmail auth status` should show your user and token expiry.
+3. **Verify**: `npx --yes fastmail-cli@latest auth status` should show your user and token expiry.
 
 That's it — all 36 tools work identically, just backed by the CLI now.
 
@@ -151,8 +148,12 @@ That's it — all 36 tools work identically, just backed by the CLI now.
 git clone https://github.com/omarshahine/fastmail-mcp-remote.git
 cd fastmail-mcp-remote/openclaw-plugin
 
-# Type check (no build step needed)
+# Type check and build the plugin plus bundled CLI
 npx tsc --noEmit
+npm run build
+
+# Verify the packed artifact installs a working fastmail executable
+npm run test:pack
 
 # Local test (symlink into OpenClaw extensions)
 ln -s $(pwd) ~/.openclaw/extensions/fastmail-cli

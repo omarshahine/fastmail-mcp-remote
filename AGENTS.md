@@ -1,6 +1,6 @@
 # Fastmail Remote
 
-A remote MCP server and token-efficient CLI for Fastmail email, contacts, and calendar. The MCP server runs on Cloudflare Workers with Cloudflare Access OAuth. The CLI calls the remote server and formats responses as compact text, saving 5-7x tokens. A Code Mode endpoint (`/mcp/code`) wraps all tools into a single `code` tool using Cloudflare Dynamic Workers for additional token savings.
+A remote MCP server and token-efficient CLI for Fastmail email, contacts, and calendar. The MCP server runs on Cloudflare Workers with Cloudflare Access OAuth. The CLI calls the remote server and formats responses as compact text, saving 5-7x tokens. A Code Mode endpoint (`/mcp/code`) exposes `search` and `execute` tools backed by Cloudflare Dynamic Workers for additional token savings.
 
 ## Quick Reference
 
@@ -67,7 +67,7 @@ openclaw-plugin/                     # OpenClaw plugin: "fastmail-cli" on npm
 - **OAuth**: Cloudflare Access OAuth (supports GitHub + OTP via Zero Trust)
 - **API Communication**: JMAP protocol to Fastmail API (`src/jmap-client.ts`)
 - **State**: Cloudflare Durable Objects with SQLite for session management
-- **Storage**: KV namespace (`OAUTH_KV`) for OAuth state/code/token storage
+- **Storage**: KV namespace (`OAUTH_KV`) for OAuth state and tokens; a per-code Durable Object atomically consumes authorization codes
 
 ## OAuth Flow
 
@@ -77,7 +77,7 @@ openclaw-plugin/                     # OpenClaw plugin: "fastmail-cli" on npm
 4. Server exchanges code for ID token, validates user email against allowlist
 5. Server issues authorization code to client
 6. Client exchanges code for access token via `/mcp/token`
-7. Client uses Bearer token to access `/mcp` or `/sse` endpoints
+7. Client uses the Bearer token to access the streamable HTTP `/mcp` endpoint
 
 ## Deployment
 
@@ -161,8 +161,8 @@ npm version patch   # or minor/major
 npm publish --access public
 ```
 
-- **No build step** — OpenClaw loads `.ts` directly via `jiti`
-- **Verify before publish**: `npx tsc --noEmit` and `npm pack --dry-run`
+- **Prepack builds both entry points**: the OpenClaw plugin and the bundled `fastmail` CLI
+- **Verify before publish**: `npm run build`, `node test/pack-smoke.mjs`, and `npm pack --dry-run`
 - **Package name**: `fastmail-cli` (unscoped — `@openclaw/` is reserved for official plugins)
 - **Community listing**: PR to [openclaw/openclaw](https://github.com/openclaw/openclaw) docs/plugins/community.md
 
@@ -180,12 +180,12 @@ Optional `cliCommand` (default: `"fastmail"`) in OpenClaw workspace config. The 
 
 1. Copy `.dev.vars.example` to `.dev.vars` and fill in credentials
 2. Run `npm start`
-3. Test at `http://localhost:8788/sse`
+3. Test at `http://localhost:8788/mcp`
 
 Use MCP Inspector for testing:
 ```bash
 npx @modelcontextprotocol/inspector@latest
-# Enter http://localhost:8788/sse and authenticate
+# Enter http://localhost:8788/mcp and authenticate
 ```
 
 ## Adding New Tools
@@ -251,9 +251,11 @@ ALLOWED_USERS=user1@example.com,user2@example.com
 | Key Pattern | Data | TTL |
 |-------------|------|-----|
 | `state:{id}` | OAuth state (client_id, redirect_uri, PKCE, etc.) | 10 min |
-| `code:{id}` | Auth code (user info, PKCE challenge) | 1 min |
 | `token:{hash}` | Access token info (user_id, scope) | 30 days |
 | `client:{id}` | Registered client info | 90 days |
+
+OAuth authorization codes live for one minute in the `AUTHORIZATION_CODES`
+Durable Object namespace. Each code has its own object so redemption is atomic.
 
 ## Debugging
 
@@ -278,14 +280,14 @@ Complete OAuth via `/mcp` in Claude Code when prompted.
 
 ## Code Mode
 
-The `/mcp/code` endpoint wraps all Fastmail tools into a single `code` tool using Cloudflare's [Code Mode SDK](https://developers.cloudflare.com/dynamic-workers/code-mode/) and Dynamic Workers. Instead of 29+ individual tool calls, the LLM writes a TypeScript function that chains multiple API calls in one sandbox execution.
+The `/mcp/code` endpoint uses Cloudflare's [Code Mode SDK](https://developers.cloudflare.com/dynamic-workers/code-mode/) and Dynamic Workers. It exposes two tools: `search` progressively discovers the OpenAPI operations, and `execute` runs JavaScript that can chain multiple operations in one sandbox execution.
 
 ### How it works
 
-1. LLM receives a single `code` tool with TypeScript type definitions for all Fastmail operations
-2. LLM writes code like: `async () => { const emails = await codemode.search_emails({query: "invoice"}); return emails.filter(e => e.subject.includes("2024")); }`
+1. The LLM calls `search` to discover relevant Fastmail operations and their schemas
+2. The LLM calls `execute` with JavaScript such as: `async () => await codemode.request({ method: "POST", path: "/email/search", body: { query: "invoice" } })`
 3. Code runs in an isolated V8 sandbox (Dynamic Worker) with no network access
-4. `codemode.*` calls route back to the host via Workers RPC, executing the real JMAP operations
+4. `codemode.request(...)` calls route back to the host, which executes the real JMAP operations
 5. Only the final result enters the context window
 
 ### Benefits
@@ -315,7 +317,7 @@ The CLI (`cli/`) is a token-efficient alternative to MCP tools. It calls the sam
 
 ```bash
 # Setup
-alias fastmail="npx tsx ~/GitHub/fastmail-mcp-remote/cli/main.ts"
+alias fastmail="/path/to/fastmail-mcp-remote/cli/bin.sh"
 fastmail auth --url https://your-worker.example.com --team yourteam
 fastmail auth --headless --url https://your-worker.example.com  # SSH / no-browser
 fastmail auth status                    # Shows user, server, token expiry
@@ -432,7 +434,7 @@ clawpatch next               # surface the next actionable finding
 ### ⚠ Heuristic mapping limitation (v0.1.0)
 
 `clawpatch map` only discovers `package.json` bins/scripts and top-level config files. It does **not** walk `src/` to find:
-- Hono routes (`/mcp`, `/mcp/authorize`, `/mcp/callback`, `/mcp/token`, `/mcp/code`, `/sse`, `/.well-known/*`)
+- Hono routes (`/mcp`, `/mcp/authorize`, `/mcp/callback`, `/mcp/token`, `/mcp/code`, `/.well-known/*`)
 - MCP tool registrations in `src/tools.ts`
 - Library modules (`jmap-client`, `permissions`, `prompt-guard`, `html-to-markdown`, `action-urls`)
 - CLI subcommands in `cli/commands/`

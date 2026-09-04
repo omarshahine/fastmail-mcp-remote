@@ -11,10 +11,18 @@
 
 import { definePluginEntry, type OpenClawPluginDefinition } from "openclaw/plugin-sdk/plugin-entry";
 import { execFileSync } from "node:child_process";
+import { dirname, basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { registerEmailTools } from "./src/tools/email.js";
 import { registerContactTools } from "./src/tools/contacts.js";
 import { registerCalendarTools } from "./src/tools/calendar.js";
 import { registerMemoTools } from "./src/tools/memo.js";
+
+const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+const packageDirectory = basename(moduleDirectory) === "dist"
+  ? dirname(moduleDirectory)
+  : moduleDirectory;
+const bundledCli = join(packageDirectory, "bin", "fastmail.js");
 
 /** Plugin API type re-exported for tool registration files. */
 export type PluginApi = {
@@ -159,7 +167,10 @@ const pluginEntry: OpenClawPluginDefinition = definePluginEntry({
   description: "Email, contacts, and calendar tools via the Fastmail CLI",
   register(api) {
     const cfg = (api as { pluginConfig?: Record<string, unknown> }).pluginConfig ?? {};
-    const cli = (cfg?.cliCommand as string) ?? "fastmail";
+    const configuredCli = cfg?.cliCommand;
+    const cli = typeof configuredCli === "string" && configuredCli.trim()
+      ? configuredCli
+      : bundledCli;
     const staticDisabled = (cfg?.disabledCategories as string[]) ?? [];
     const autoDiscover = (cfg?.autoDiscover as boolean) ?? true;
     const approvals = (cfg?.requireApprovals as boolean) ?? true;

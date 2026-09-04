@@ -148,6 +148,8 @@ const UNTRUSTED_FIELDS: Record<string, string[]> = {
   contact: ["notes", "organization", "jobTitle", "prefix", "suffix", "nickname"],
   // Mail fields - highest risk since email is externally authored
   mail: ["subject", "from", "sender", "body", "content", "snippet", "preview", "textBody", "htmlBody"],
+  // Memos can contain quoted or copied third-party content.
+  memo: ["text"],
 };
 
 /**
@@ -266,15 +268,23 @@ function markToolResult(result: unknown, toolName: string): unknown {
     toolName === "search_emails" ||
     toolName === "get_recent_emails" ||
     toolName === "advanced_search" ||
-    toolName === "get_thread"
+    toolName === "get_thread" ||
+    toolName === "get_inbox_updates"
   ) {
     if (Array.isArray(marked.messages)) {
       marked.messages = (marked.messages as Array<Record<string, unknown>>).map((m) => markItem(m, "mail"));
+    }
+    if (Array.isArray(marked.added)) {
+      marked.added = (marked.added as Array<Record<string, unknown>>).map((m) => markItem(m, "mail"));
     }
     // Single message
     if (marked.subject !== undefined || marked.body !== undefined || marked.textBody !== undefined) {
       return markItem(marked, "mail");
     }
+  }
+
+  if (toolName === "get_memo") {
+    return markItem(marked, "memo");
   }
 
   return marked;
@@ -288,6 +298,7 @@ const EXTERNAL_DATA_TOOLS = new Set([
   "get_recent_emails",
   "advanced_search",
   "get_thread",
+  "get_inbox_updates",
   "get_email_attachments",
   "list_contacts",
   "get_contact",

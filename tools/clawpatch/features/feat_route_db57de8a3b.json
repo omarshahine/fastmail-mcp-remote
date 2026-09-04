@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "featureId": "feat_route_db57de8a3b",
   "title": "MCP transport endpoints",
-  "summary": "Streamable HTTP MCP endpoint (/mcp) and SSE endpoint (/sse). Bearer-token authenticated. Routes tool calls to FastmailMCP Durable Object.",
+  "summary": "Bearer-token authenticated streamable HTTP MCP endpoint (/mcp). Standalone GET streams are intentionally unsupported; clients use POST responses. Routes tool calls to the FastmailMCP Durable Object.",
   "kind": "route",
   "source": "hand-authored",
   "confidence": "high",
@@ -30,11 +30,12 @@
       "reason": "request filtering"
     }
   ],
-  "tests": [],
+  "tests": [
+    "test/mcp-route.test.ts"
+  ],
   "tags": [
     "mcp",
     "hono",
-    "sse",
     "streamable-http"
   ],
   "trustBoundaries": [

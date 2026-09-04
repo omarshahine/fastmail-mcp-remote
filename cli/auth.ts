@@ -8,10 +8,11 @@
 
 import { createServer, type Server } from "node:http";
 import { randomBytes, createHash } from "node:crypto";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { chmod, readFile, writeFile, mkdir } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { Writable, type Readable } from "node:stream";
 
 const CONFIG_DIR = join(homedir(), ".config", "fastmail-cli");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
@@ -35,8 +36,15 @@ export async function loadConfig(): Promise<Config | null> {
 }
 
 export async function saveConfig(config: Config): Promise<void> {
-  await mkdir(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  await writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
+  await saveConfigAt(config, CONFIG_DIR, CONFIG_FILE);
+}
+
+/** Write a credential cache and repair unsafe modes on pre-existing paths. */
+export async function saveConfigAt(config: Config, configDir: string, configFile: string): Promise<void> {
+  await mkdir(configDir, { recursive: true, mode: 0o700 });
+  await chmod(configDir, 0o700);
+  await writeFile(configFile, JSON.stringify(config, null, 2), { mode: 0o600 });
+  await chmod(configFile, 0o600);
 }
 
 /**
@@ -69,7 +77,7 @@ function generateCodeChallenge(verifier: string): string {
  * Returns the port, a promise that resolves with the auth code, and the server
  * handle for cleanup.
  */
-function startCallbackServer(): Promise<{
+export function startCallbackServer(expectedState: string): Promise<{
   port: number;
   codePromise: Promise<string>;
   server: Server;
@@ -85,6 +93,11 @@ function startCallbackServer(): Promise<{
     const server = createServer((req, res) => {
       const url = new URL(req.url!, `http://localhost`);
       if (url.pathname === "/callback") {
+        if (url.searchParams.get("state") !== expectedState) {
+          res.writeHead(400, { "Content-Type": "text/plain" });
+          res.end("Invalid OAuth state");
+          return;
+        }
         const code = url.searchParams.get("code");
         const error = url.searchParams.get("error");
         const errorDesc = url.searchParams.get("error_description");
@@ -126,6 +139,28 @@ function prompt(question: string): Promise<string> {
   return new Promise((resolve) => {
     rl.question(question, (answer) => {
       rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+/** Prompt for a secret without echoing the answer to the terminal. */
+export function promptSecret(
+  question: string,
+  input: Readable = process.stdin,
+  output: Writable = process.stdout,
+): Promise<string> {
+  output.write(question);
+  const mutedOutput = new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const rl = createInterface({ input, output: mutedOutput, terminal: true });
+  return new Promise((resolve) => {
+    rl.question("", (answer) => {
+      rl.close();
+      output.write("\n");
       resolve(answer.trim());
     });
   });
@@ -181,9 +216,32 @@ async function saveAndReport(
   );
 }
 
+/** Register a fresh public client for each interactive authorization flow. */
+export async function registerOAuthClient(
+  baseUrl: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string> {
+  const response = await fetchImpl(`${baseUrl}/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      client_name: "fastmail-cli",
+      redirect_uris: ["http://127.0.0.1/callback"],
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(`Registration failed: ${await response.text()}`);
+  }
+  const data = (await response.json()) as { client_id?: unknown };
+  if (typeof data.client_id !== "string" || !data.client_id) {
+    throw new Error("Registration failed: server did not return a client_id");
+  }
+  return data.client_id;
+}
+
 /**
  * Run the full PKCE OAuth flow (requires a local browser):
- * 1. Register a client (if first time)
+ * 1. Register a fresh client
  * 2. Start localhost callback server
  * 3. Open browser → CF Access auth
  * 4. Receive callback with auth code
@@ -194,33 +252,21 @@ export async function authenticate(
   url?: string,
   teamName?: string,
 ): Promise<void> {
-  const { baseUrl, teamName: resolvedTeamName, config } = await resolveAuthParams(url, teamName);
+  const { baseUrl, teamName: resolvedTeamName } = await resolveAuthParams(url, teamName);
 
-  // Register client if needed
-  let clientId = config?.clientId;
-  if (!clientId || (url && url !== config?.url)) {
-    console.log("Registering client...");
-    const regResponse = await fetch(`${baseUrl}/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_name: "fastmail-cli",
-        redirect_uris: ["http://127.0.0.1/callback"],
-      }),
-    });
-    if (!regResponse.ok) {
-      throw new Error(`Registration failed: ${await regResponse.text()}`);
-    }
-    const regData = (await regResponse.json()) as { client_id: string };
-    clientId = regData.client_id;
-  }
+  // Client registrations expire independently from the local token cache.
+  // Register on every explicit auth run so a stale cached ID cannot strand the
+  // localhost callback while the user is looking at an authorization error.
+  console.log("Registering client...");
+  const clientId = await registerOAuthClient(baseUrl);
 
   // Generate PKCE pair
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = generateCodeChallenge(codeVerifier);
+  const oauthState = randomBytes(32).toString("base64url");
 
   // Start localhost server
-  const { port, codePromise, server } = await startCallbackServer();
+  const { port, codePromise, server } = await startCallbackServer(oauthState);
   const redirectUri = `http://127.0.0.1:${port}/callback`;
 
   // Build authorization URL (pass team_name so Worker can construct CF Access URL)
@@ -230,6 +276,7 @@ export async function authenticate(
     response_type: "code",
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
+    state: oauthState,
     team_name: resolvedTeamName,
   });
   const authUrl = `${baseUrl}/mcp/authorize?${authParams}`;
@@ -322,7 +369,7 @@ export async function authenticateHeadless(
   console.log("After authenticating, copy the Bearer token shown on the page.");
   console.log("");
 
-  const token = await prompt("Paste your Bearer token here: ");
+  const token = await promptSecret("Paste your Bearer token here: ");
   if (!token) {
     console.error("Error: No token provided.");
     process.exit(1);

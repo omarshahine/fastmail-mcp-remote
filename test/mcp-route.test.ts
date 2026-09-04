@@ -51,10 +51,12 @@ vi.mock('../src/permissions', async (importOriginal) => {
 });
 
 import app from '../src/index';
+import { validateAccessToken } from '../src/oauth-utils';
 
 const env = {
 	ACTION_SIGNING_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-} as Env;
+	ALLOWED_USERS: 'user@example.com',
+} as unknown as Env;
 const executionCtx = {
 	waitUntil: vi.fn(),
 	passThroughOnException: vi.fn(),
@@ -63,6 +65,7 @@ const executionCtx = {
 describe('/mcp transport routing', () => {
 	beforeEach(() => {
 		durableFetch.mockClear();
+		vi.mocked(validateAccessToken).mockClear();
 	});
 
 	it('rejects standalone GET without dispatching it to the session Durable Object', async () => {
@@ -106,8 +109,24 @@ describe('/mcp transport routing', () => {
 		expect(postResponse.status).toBe(200);
 		expect(performance.now() - startedAt).toBeLessThan(5_000);
 		expect(durableFetch).toHaveBeenCalledTimes(1);
+		expect(validateAccessToken).toHaveBeenCalledWith(
+			undefined,
+			'test-token',
+			'user@example.com',
+			expect.any(Function),
+		);
 		expect(durableFetch.mock.calls[0]?.[0].method).toBe('POST');
 		expect(durableFetch.mock.calls[0]?.[0].headers.get('Mcp-Session-Id')).toBe(sessionId);
+	});
+
+	it('does not advertise or serve the removed legacy /sse transport', async () => {
+		const root = await app.request('https://worker.example/', undefined, env, executionCtx);
+		const metadata = await root.json() as any;
+		expect(metadata.endpoints.mcp).toBe('/mcp');
+		expect(JSON.stringify(metadata.endpoints)).not.toContain('/sse');
+
+		const response = await app.request('https://worker.example/sse', undefined, env, executionCtx);
+		expect(response.status).toBe(404);
 	});
 
 	it('routes MCP 2026-07-28 envelope requests to the stateless v2 handler', async () => {

@@ -208,8 +208,10 @@ export function isToolAllowed(
 ): PermissionResult {
 	const category = TOOL_CATEGORIES[toolName];
 	if (!category) {
-		// Unknown tool — allow (could be a new tool not yet categorized)
-		return { allowed: true };
+		return {
+			allowed: false,
+			error: `Permission denied: '${toolName}' has no configured permission category.`,
+		};
 	}
 
 	// Check disabled categories first (applies to ALL roles)
@@ -351,10 +353,36 @@ export async function checkMcpPermissions(
 	return null;
 }
 
-/**
- * Filter a tools/list response to hide tools from disabled/denied categories.
- * If the response is not a tools/list result, passes through unchanged.
- */
+function filterToolsInEnvelope(
+	body: unknown,
+	visible: Set<string>,
+): { body: unknown; modified: boolean } {
+	if (Array.isArray(body)) {
+		let modified = false;
+		const filtered = body.map((item) => {
+			const result = filterToolsInEnvelope(item, visible);
+			modified ||= result.modified;
+			return result.body;
+		});
+		return { body: modified ? filtered : body, modified };
+	}
+
+	if (typeof body !== 'object' || body === null) return { body, modified: false };
+	const record = body as Record<string, unknown>;
+	const result = record.result as Record<string, unknown> | undefined;
+	if (!result || !Array.isArray(result.tools)) return { body, modified: false };
+
+	const filteredTools = (result.tools as Array<Record<string, unknown>>).filter(
+		(tool) => visible.has(tool.name as string),
+	);
+	if (filteredTools.length === result.tools.length) return { body, modified: false };
+	return {
+		body: { ...record, result: { ...result, tools: filteredTools } },
+		modified: true,
+	};
+}
+
+/** Filter tools/list responses to hide disabled, denied, or uncategorized tools. */
 export async function filterToolsListResponse(
 	response: Response,
 	userLogin: string,
@@ -379,39 +407,11 @@ export async function filterToolsListResponse(
 		return response;
 	}
 
-	// Check if this is a tools/list result (has result.tools array)
-	if (
-		typeof body !== 'object' ||
-		body === null ||
-		!('result' in (body as Record<string, unknown>))
-	) {
-		return response;
-	}
-
-	const result = (body as Record<string, unknown>).result as Record<string, unknown> | undefined;
-	if (!result || !Array.isArray(result.tools)) return response;
-
 	const config = await getPermissionsConfig(kv);
 	const userConfig = getUserConfig(config, userLogin);
 	const visible = getVisibleTools(userConfig);
-
-	// Filter tools
-	const filteredTools = (result.tools as Array<Record<string, unknown>>).filter(
-		(tool) => {
-			const name = tool.name as string;
-			// Allow tools not in our category map (future tools)
-			return !TOOL_CATEGORIES[name] || visible.has(name);
-		},
-	);
-
-	// Reconstruct response with filtered tools
-	const filteredBody = {
-		...(body as Record<string, unknown>),
-		result: {
-			...result,
-			tools: filteredTools,
-		},
-	};
+	const filtered = filterToolsInEnvelope(body, visible);
+	if (!filtered.modified) return response;
 
 	// Copy headers but remove Content-Length so the runtime recomputes it
 	// for the new (shorter) body. Passing stale Content-Length would cause
@@ -419,7 +419,7 @@ export async function filterToolsListResponse(
 	const headers = new Headers(response.headers);
 	headers.delete('Content-Length');
 
-	return new Response(JSON.stringify(filteredBody), {
+	return new Response(JSON.stringify(filtered.body), {
 		status: response.status,
 		headers,
 	});
@@ -442,64 +442,46 @@ async function filterSseToolsListResponse(
 ): Promise<Response> {
 	const text = await response.text();
 
-	// Parse SSE events — look for "data:" lines containing tools/list result
-	const lines = text.split('\n');
-	let modified = false;
-
 	const config = await getPermissionsConfig(kv);
 	const userConfig = getUserConfig(config, userLogin);
 	const visible = getVisibleTools(userConfig);
 
-	const outputLines: string[] = [];
-	for (const line of lines) {
-		if (!line.startsWith('data: ')) {
-			outputLines.push(line);
-			continue;
+	const events = text.split(/\r?\n\r?\n/);
+	const outputEvents = events.map((event) => {
+		const lines = event.split(/\r?\n/);
+		const data: string[] = [];
+		const dataIndexes = new Set<number>();
+		for (const [index, line] of lines.entries()) {
+			const match = /^data:(?: ?)(.*)$/.exec(line);
+			if (!match) continue;
+			data.push(match[1]);
+			dataIndexes.add(index);
 		}
+		if (data.length === 0) return event;
 
-		const jsonStr = line.substring(6); // strip "data: "
 		let parsed: unknown;
 		try {
-			parsed = JSON.parse(jsonStr);
+			parsed = JSON.parse(data.join('\n'));
 		} catch {
-			outputLines.push(line);
-			continue;
+			return event;
 		}
+		const filtered = filterToolsInEnvelope(parsed, visible);
+		if (!filtered.modified) return event;
 
-		// Check if this is a tools/list result
-		if (
-			typeof parsed === 'object' &&
-			parsed !== null &&
-			'result' in (parsed as Record<string, unknown>)
-		) {
-			const result = (parsed as Record<string, unknown>).result as Record<string, unknown> | undefined;
-			if (result && Array.isArray(result.tools)) {
-				const before = result.tools.length;
-				// Filter tools
-				const filteredTools = (result.tools as Array<Record<string, unknown>>).filter(
-					(tool) => {
-						const name = tool.name as string;
-						return !TOOL_CATEGORIES[name] || visible.has(name);
-					},
-				);
-	
-				const filteredBody = {
-					...(parsed as Record<string, unknown>),
-					result: { ...result, tools: filteredTools },
-				};
-				outputLines.push(`data: ${JSON.stringify(filteredBody)}`);
-				modified = true;
-				continue;
-			}
-		}
-
-		outputLines.push(line);
-	}
+		const replacement = `data: ${JSON.stringify(filtered.body)}`;
+		let emittedData = false;
+		return lines.flatMap((line, index) => {
+			if (!dataIndexes.has(index)) return [line];
+			if (emittedData) return [];
+			emittedData = true;
+			return [replacement];
+		}).join('\n');
+	});
 
 	const headers = new Headers(response.headers);
 	headers.delete('Content-Length');
 
-	return new Response(outputLines.join('\n'), {
+	return new Response(outputEvents.join('\n\n'), {
 		status: response.status,
 		headers,
 	});

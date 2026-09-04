@@ -9,7 +9,7 @@ import { McpAgent } from "agents/mcp";
 import { createMcpHandler } from "agents/mcp/server";
 import { DynamicWorkerExecutor } from "@cloudflare/codemode";
 import { buildCodeModeServer } from "./openapi-adapter";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import {
   handleOAuthDiscovery,
   handleAuthorize,
@@ -31,8 +31,9 @@ import {
   handleSendApprovalStart,
 } from "./send-approval-auth";
 import { SendApprovalStore, type SendApprovalRequestState } from "./send-approval";
+import { OAuthCodeStore } from "./oauth-code-store";
 
-export { SendApprovalStore };
+export { OAuthCodeStore, SendApprovalStore };
 
 /**
  * Props passed into the Durable Object per session, set from the validated
@@ -195,9 +196,8 @@ function unauthorizedResponse(c: { req: { url: string } }, error: string, descri
 }
 
 // ─── Code Mode endpoint ────────────────────────────────────────────────────
-// Wraps all Fastmail tools into a single `code` tool. The LLM writes TypeScript
-// that chains calls like `await codemode.list_emails({limit: 5})` and runs in
-// an isolated Dynamic Worker sandbox. Only the final result enters the context.
+// Exposes `search` for progressive OpenAPI discovery and `execute` for running
+// JavaScript that chains Fastmail operations in an isolated Dynamic Worker.
 app.get("/mcp/code", (c) => {
   return c.json({
     jsonrpc: "2.0",
@@ -219,7 +219,7 @@ app.post("/mcp/code", async (c) => {
     return unauthorizedResponse(c, "unauthorized", "Missing or invalid Authorization header");
   }
   const token = authHeader.substring(7);
-  const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token, (work) =>
+  const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token, c.env.ALLOWED_USERS || "", (work) =>
     c.executionCtx.waitUntil(work),
   );
   if (!tokenInfo) {
@@ -235,7 +235,7 @@ app.post("/mcp/code", async (c) => {
   const ctx = buildToolContext(c.env, tokenInfo.user_login, undefined, true);
   registerAllTools(upstreamServer, ctx, visibleTools);
 
-  // Wrap with search+execute Code Mode: ~1,000 tokens instead of full TypeScript blob
+  // Wrap with search+execute Code Mode: ~1,000 tokens instead of every operation schema
   const executor = new DynamicWorkerExecutor({ loader: c.env.LOADER, globalOutbound: null });
   const codeServer = await buildCodeModeServer(upstreamServer, executor);
 
@@ -268,18 +268,14 @@ const mcpDurableObjectHandler = FastmailMCP.serve("/mcp", { binding: "MCP_OBJECT
  * Validate the Bearer token, attach per-session props to the ExecutionContext,
  * and delegate to the Durable Object handler. Shared by GET/POST/DELETE /mcp.
  */
-async function handleMcp(c: {
-  req: { url: string; raw: Request; header: (name: string) => string | undefined };
-  env: Env;
-  executionCtx: ExecutionContext;
-}): Promise<Response> {
+async function handleMcp(c: Context<{ Bindings: Env }>): Promise<Response> {
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("Bearer ")) {
     return unauthorizedResponse(c, "unauthorized", "Missing or invalid Authorization header");
   }
 
   const token = authHeader.substring(7);
-  const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token, (work) =>
+  const tokenInfo = await validateAccessToken(c.env.OAUTH_KV, token, c.env.ALLOWED_USERS || "", (work) =>
     c.executionCtx.waitUntil(work),
   );
   if (!tokenInfo) {
@@ -524,7 +520,7 @@ app.get("/", (c) => {
     protected_resource_metadata: "/.well-known/oauth-protected-resource",
     endpoints: {
       mcp: "/mcp",
-      mcp_code: "/mcp/code (Code Mode: single code tool, 81% fewer tokens)",
+      mcp_code: "/mcp/code (Code Mode: search and execute tools, 81% fewer tokens)",
       download: "/download/:token (temporary, single-use)",
     },
   });

@@ -30,6 +30,11 @@ import {
 	type OAuthRefreshTokenData,
 	type OAuthClientData,
 } from './oauth-utils';
+import {
+	consumeAuthorizationCode,
+	createAuthorizationCode,
+	inspectAuthorizationCode,
+} from './oauth-code-store';
 
 // Issue a paired access token + refresh token and persist both in KV.
 // Refresh tokens have no KV TTL — they live until explicitly revoked.
@@ -161,16 +166,18 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 		return new Response('Invalid redirect_uri', { status: 400 });
 	}
 	if (!isOOBUri) {
-		// For a pre-registered client, additionally require membership in its
-		// registered redirect_uris. Loopback URIs match on scheme+host+path but
-		// ignore the port, because native/CLI clients bind an ephemeral port at
-		// runtime that differs from the one registered (RFC 8252 §7.3).
+		// Every redirecting client must be registered. The host allowlist is a
+		// deployment boundary, not a substitute for binding a client_id to its
+		// declared callbacks. OOB remains available for explicit manual flows.
 		const clientJson = await env.OAUTH_KV.get(`client:${clientId}`);
-		if (clientJson) {
-			const clientData = JSON.parse(clientJson) as OAuthClientData;
-			if (!redirectUriMatchesRegistered(redirectUri, clientData.redirect_uris)) {
-				return new Response('Invalid redirect_uri', { status: 400 });
-			}
+		if (!clientJson) {
+			return new Response('Invalid client_id', { status: 400 });
+		}
+		const clientData = JSON.parse(clientJson) as OAuthClientData;
+		// Loopback URIs match on scheme+host+path but ignore the port because
+		// native/CLI clients bind an ephemeral port at runtime (RFC 8252 §7.3).
+		if (!redirectUriMatchesRegistered(redirectUri, clientData.redirect_uris)) {
+			return new Response('Invalid redirect_uri', { status: 400 });
 		}
 	}
 
@@ -330,9 +337,7 @@ export async function handleCallback(request: Request, env: Env, url: URL): Prom
 			used: false,
 		};
 
-		await env.OAUTH_KV.put(`code:${authCode}`, JSON.stringify(codeData), {
-			expirationTtl: CODE_TTL_SECONDS,
-		});
+		await createAuthorizationCode(env, authCode, codeData);
 
 		// Check for explicit OOB (Out-of-Band) mode
 		const isExplicitOOB = stateResult.redirect_uri === 'urn:ietf:wg:oauth:2.0:oob' ||
@@ -404,29 +409,30 @@ export async function handleToken(request: Request, env: Env, defer?: DeferWork)
 	if (!body.code) {
 		return jsonError('invalid_request', 'Missing code parameter', 400);
 	}
-
-	// Retrieve and validate authorization code from KV
-	const codeJson = await env.OAUTH_KV.get(`code:${body.code}`);
-	if (!codeJson) {
-		return jsonError('invalid_grant', 'Invalid or expired authorization code', 400);
+	if (!body.client_id) {
+		return jsonError('invalid_request', 'Missing client_id parameter', 400);
+	}
+	if (!body.redirect_uri) {
+		return jsonError('invalid_request', 'Missing redirect_uri parameter', 400);
 	}
 
-	const authCode = JSON.parse(codeJson) as OAuthCodeData;
+	// Inspect without consuming so invalid client binding or PKCE attempts do not
+	// burn a valid code. A successful request atomically consumes it below.
+	const authCode = await inspectAuthorizationCode(env, body.code);
+	if (!authCode) {
+		return jsonError('invalid_grant', 'Invalid or expired authorization code', 400);
+	}
 	if (isExpired(authCode.expires_at) || authCode.used) {
-		await env.OAUTH_KV.delete(`code:${body.code}`);
 		return jsonError('invalid_grant', 'Invalid or expired authorization code', 400);
 	}
-
-	// Mark code as used by deleting it (KV doesn't support updates)
-	await env.OAUTH_KV.delete(`code:${body.code}`);
 
 	// Validate client_id matches
-	if (body.client_id && body.client_id !== authCode.client_id) {
+	if (body.client_id !== authCode.client_id) {
 		return jsonError('invalid_grant', 'client_id mismatch', 400);
 	}
 
 	// Validate redirect_uri matches
-	if (body.redirect_uri && body.redirect_uri !== authCode.redirect_uri) {
+	if (body.redirect_uri !== authCode.redirect_uri) {
 		return jsonError('invalid_grant', 'redirect_uri mismatch', 400);
 	}
 
@@ -454,18 +460,24 @@ export async function handleToken(request: Request, env: Env, defer?: DeferWork)
 		}
 	}
 
+	// Only one concurrent redeemer can win this serialized consume operation.
+	const consumedCode = await consumeAuthorizationCode(env, body.code);
+	if (!consumedCode) {
+		return jsonError('invalid_grant', 'Invalid or expired authorization code', 400);
+	}
+
 	// Issue paired access + refresh tokens
 	const pair = await issueTokenPair(env.OAUTH_KV, {
-		client_id: authCode.client_id,
-		user_id: authCode.user_id,
-		user_login: authCode.user_login,
-		scope: authCode.scope,
+		client_id: consumedCode.client_id,
+		user_id: consumedCode.user_id,
+		user_login: consumedCode.user_login,
+		scope: consumedCode.scope,
 	});
 
 	// The client is demonstrably in use — keep its registration from lapsing.
 	// Deferred where the runtime allows it: the token is already durably stored,
 	// so this must not add KV latency to the response.
-	await slideClientRegistration(env, authCode.client_id, defer);
+	await slideClientRegistration(env, consumedCode.client_id, defer);
 
 	return new Response(
 		JSON.stringify({
@@ -473,8 +485,8 @@ export async function handleToken(request: Request, env: Env, defer?: DeferWork)
 			refresh_token: pair.refresh_token,
 			token_type: 'Bearer',
 			expires_in: pair.expires_in,
-			scope: authCode.scope,
-			user_login: authCode.user_login,
+			scope: consumedCode.scope,
+			user_login: consumedCode.user_login,
 		}),
 		{
 			status: 200,

@@ -4,7 +4,7 @@ import { parseHTML } from 'linkedom';
 /**
  * Converts HTML email bodies to clean markdown optimized for LLM consumption.
  *
- * Aggressively strips noise: images (LLMs can't see them), tracking URLs,
+ * Aggressively strips noise: images (LLMs can't see them), tracking parameters,
  * layout tables, invisible characters, and excessive formatting. The goal
  * is minimum tokens for maximum semantic content.
  */
@@ -56,6 +56,42 @@ function isLayoutTable(table: DomNode): boolean {
   return true; // No headers = likely layout
 }
 
+/** Preserve actionable destinations while removing known analytics parameters. */
+function cleanLinkDestination(href: string): string | null {
+  // Telephone links do not get URL-normalized below, so accept only the
+  // characters needed by ordinary RFC 3966-style numbers and parameters.
+  // In particular, reject whitespace and Markdown delimiters that could turn
+  // one HTML anchor into multiple rendered links.
+  if (/^tel:/i.test(href)) {
+    return /^tel:\+?[0-9A-D*#().-]+(?:;[a-z0-9-]+=[a-z0-9.+-]+)*$/i.test(href)
+      ? href
+      : null;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+
+  for (const key of Array.from(url.searchParams.keys())) {
+    if (/^utm_/i.test(key) || /^(fbclid|gclid|mc_cid|mc_eid)$/i.test(key)) {
+      url.searchParams.delete(key);
+    }
+  }
+  return url.toString();
+}
+
+/** Serialize a validated URL as one self-contained Markdown destination. */
+function markdownDestination(destination: string): string {
+  // Angle-bracket destinations safely contain parentheses. Percent-encode the
+  // two delimiters as defense in depth even though URL normalization already
+  // encodes them for HTTP(S) destinations.
+  return `<${destination.replace(/</g, '%3C').replace(/>/g, '%3E')}>`;
+}
+
 function createTurndownService(): TurndownService {
   const service = new TurndownService({
     headingStyle: 'atx',
@@ -80,19 +116,30 @@ function createTurndownService(): TurndownService {
     },
   });
 
-  // Strip ALL link URLs — LLMs can't click links, so URLs are wasted tokens.
-  // Keep only the display text. For mailto: links, keep the email address.
-  service.addRule('stripLinkUrls', {
+  // Preserve actionable web and telephone destinations. Known analytics query
+  // parameters are removed, while functional and signed parameters remain.
+  service.addRule('cleanLinkUrls', {
     filter: 'a' as any,
     replacement: (content: string, node: any) => {
       const href = (node.getAttribute('href') || '').trim();
-      const trimmed = content.trim();
+      let trimmed = content.trim();
+      // Turndown can concatenate an image's alt text with identical visible
+      // link text. Collapse only that structurally proven duplication.
+      const images = node.querySelectorAll('img');
+      if (images.length === 1) {
+        const alt = (images[0].getAttribute('alt') || '').trim();
+        if (alt && (trimmed === `${alt}${alt}` || trimmed === `${alt} ${alt}`)) {
+          trimmed = alt;
+        }
+      }
       // For mailto: links, show the email address if it differs from display text
-      if (href.startsWith('mailto:')) {
+      if (/^mailto:/i.test(href)) {
         const email = href.slice(7).split('?')[0];
         if (trimmed && trimmed !== email) return `${trimmed} (${email})`;
         return email || trimmed;
       }
+      const destination = cleanLinkDestination(href);
+      if (destination && trimmed) return `[${trimmed}](${markdownDestination(destination)})`;
       return trimmed;
     },
   });
@@ -172,10 +219,6 @@ function cleanMarkdown(md: string): string {
     .replace(/\[\s+\]\([^)]*\)/g, '')
     // Remove image-in-link leftovers: [![](url)](url) patterns
     .replace(/\[\s*!\[\s*\]\([^)]*\)\s*\]\([^)]*\)/g, '')
-    // Deduplicate adjacent repeated phrases (e.g., "Amazon Alexa Amazon Alexa" → "Amazon Alexa")
-    // This occurs when <a> wraps <img> with alt text — image rule emits alt, link rule emits text
-    // Restricted to word chars + spaces to avoid collapsing legitimate repeated data like "100 100"
-    .replace(/\b(\w[\w ]{1,78}\w)\s+\1\b/g, '$1')
     // Strip generic legal boilerplate lines (but preserve unsubscribe/preferences content)
     .replace(/^.*(?:©|all rights reserved|view in browser|view as a web page|view online version).*$/gim, '')
     // Collapse 3+ newlines to 2 (preserve paragraph breaks)
