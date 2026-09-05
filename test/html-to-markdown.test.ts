@@ -3,6 +3,41 @@ import { parseHTML } from "linkedom";
 import { marked } from "marked";
 import { htmlToMarkdown } from "../src/html-to-markdown";
 
+describe("htmlToMarkdown tables", () => {
+  it.each(['width="100%"', 'role="presentation"'])(
+    "keeps header-table conversion unchanged with %s",
+    (attributes) => {
+      const rows =
+        "<tr><th>Item</th><th>Amount</th></tr><tr><td>Apples</td><td>12</td></tr>";
+      const expected = htmlToMarkdown(`<table>${rows}</table>`);
+
+      expect(htmlToMarkdown(`<table ${attributes}>${rows}</table>`)).toBe(expected);
+      expect(expected).toBe("Item\n\nAmount\n\nApples\n\n12");
+    },
+  );
+
+  it.each(['width="100%"', 'role="presentation"'])(
+    "flattens outer layouts with %s around a nested data table",
+    (attributes) => {
+      const dataTable = '<table><tr><th>Item</th></tr><tr><td>Apples</td></tr></table>';
+      const output = htmlToMarkdown(
+        `<table ${attributes}><tr><td>Welcome</td><td>Latest news</td></tr><tr><td>${dataTable}</td></tr></table>`,
+      );
+
+      expect(output).toContain("Welcome\nLatest news");
+      expect(output).toContain(htmlToMarkdown(dataTable));
+    },
+  );
+
+  it("still flattens presentation tables without headers", () => {
+    expect(
+      htmlToMarkdown(
+        '<table role="presentation" width="100%"><tr><td>Welcome</td><td>Latest news</td></tr></table>',
+      ),
+    ).toBe("Welcome\nLatest news");
+  });
+});
+
 describe("htmlToMarkdown links", () => {
   it("preserves actionable web destinations and functional parameters", () => {
     const output = htmlToMarkdown(
