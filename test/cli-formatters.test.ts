@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatContacts, formatEmailList, formatEvents } from '../cli/formatters';
+import { formatAttachments, formatContacts, formatEmail, formatEmailList, formatEvents } from '../cli/formatters';
 
 /**
  * Address fields reach the CLI in two different shapes and both must render.
@@ -106,5 +106,27 @@ describe('compact CLI output sanitization', () => {
 		expect(email).toContain('Subject forged-subject');
 		expect(contacts).toContain('Contact # Forged heading');
 		expect(events).toContain('Room forged-location');
+	});
+});
+
+
+describe('attachment sizes', () => {
+	it.each([
+		['attachment list', (attachments: any[]) => formatAttachments(attachments)],
+		['email details', (attachments: any[]) => formatEmail({ attachments })],
+	])('distinguishes zero bytes from unknown sizes in %s', (_name, format) => {
+		const output = format([
+			{ name: 'empty.txt', size: 0 },
+			{ name: 'small.txt', size: 12 },
+			{ name: 'missing.txt' },
+			{ name: 'null.txt', size: null },
+		]);
+		expect(output).toMatch(/empty\.txt[^\n]*\(0 B\)/);
+		expect(output).toMatch(/small\.txt[^\n]*\(12 B\)/);
+		for (const name of ['missing.txt', 'null.txt']) {
+			const line = output.split('\n').find((line) => line.includes(name));
+			expect(line).toBeDefined();
+			expect(line).not.toContain('(');
+		}
 	});
 });

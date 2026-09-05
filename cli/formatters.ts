@@ -153,7 +153,7 @@ export function formatEmail(email: any): string {
     lines.push("");
     lines.push("Attachments:");
     for (const att of email.attachments) {
-      const size = att.size ? ` (${formatFileSize(att.size)})` : "";
+      const size = att.size != null ? ` (${formatFileSize(att.size)})` : "";
       lines.push(`  ${compactScalar(att.name) || "unnamed"}${size}`);
     }
   }
@@ -432,7 +432,7 @@ export function formatAttachments(attachments: any[]): string {
 
   const lines: string[] = [`# Attachments (${attachments.length})`, ""];
   for (const att of attachments) {
-    const size = att.size ? ` (${formatFileSize(att.size)})` : "";
+    const size = att.size != null ? ` (${formatFileSize(att.size)})` : "";
     const type = compactScalar(att.type || att.mimeType);
     lines.push(`${compactScalar(att.blobId || att.id) || "?"}  ${compactScalar(att.name) || "unnamed"}  ${type}${size}`);
   }
