@@ -46,8 +46,10 @@ function preprocessEmailHtml(html: string): string {
 
 /** Check if a table element is used for layout (not data). */
 function isLayoutTable(table: DomNode): boolean {
-  // Data tables have <th> headers — never treat those as layout
-  const hasHeaders = table.querySelectorAll('th').length > 0;
+  // Only headers owned by this table count; nested data tables can sit in layouts.
+  const hasHeaders = Array.from(table.querySelectorAll('th')).some(
+    (header) => header.closest('table') === table,
+  );
   if (hasHeaders) return false;
   if (table.getAttribute('role') === 'presentation') return true;
   if (table.getAttribute('width') === '100%') return true;

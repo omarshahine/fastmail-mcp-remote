@@ -16,6 +16,19 @@ describe("htmlToMarkdown tables", () => {
     },
   );
 
+  it.each(['width="100%"', 'role="presentation"'])(
+    "flattens outer layouts with %s around a nested data table",
+    (attributes) => {
+      const dataTable = '<table><tr><th>Item</th></tr><tr><td>Apples</td></tr></table>';
+      const output = htmlToMarkdown(
+        `<table ${attributes}><tr><td>Welcome</td><td>Latest news</td></tr><tr><td>${dataTable}</td></tr></table>`,
+      );
+
+      expect(output).toContain("Welcome\nLatest news");
+      expect(output).toContain(htmlToMarkdown(dataTable));
+    },
+  );
+
   it("still flattens presentation tables without headers", () => {
     expect(
       htmlToMarkdown(
