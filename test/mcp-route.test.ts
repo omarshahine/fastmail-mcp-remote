@@ -165,3 +165,51 @@ describe('/mcp transport routing', () => {
 		expect(durableFetch).not.toHaveBeenCalled();
 	});
 });
+
+
+describe('OAuth discovery routes', () => {
+	it.each([
+		'/.well-known/oauth-protected-resource',
+		'/.well-known/oauth-protected-resource/mcp',
+		'/.well-known/oauth-protected-resource/mcp/code',
+	])('serves public protected-resource metadata at %s', async (path) => {
+		const response = await app.request(`https://worker.example${path}`, undefined, {} as Env, executionCtx);
+
+		expect(response.status).toBe(200);
+		expect(response.headers.get('Content-Type')).toContain('application/json');
+		expect(response.headers.get('Cache-Control')).toBe('public, max-age=3600');
+		expect(await response.json()).toEqual({
+			resource: 'https://worker.example/mcp',
+			authorization_servers: ['https://worker.example'],
+			scopes_supported: ['mcp:read', 'mcp:write'],
+			bearer_methods_supported: ['header'],
+			resource_name: 'Fastmail MCP',
+			resource_documentation: 'https://worker.example',
+			logo_uri: 'https://worker.example/favicon.png',
+		});
+	});
+
+	it('serves public authorization-server metadata', async () => {
+		const response = await app.request(
+			'https://worker.example/.well-known/oauth-authorization-server', undefined, {} as Env, executionCtx,
+		);
+
+		expect(response.status).toBe(200);
+		expect(response.headers.get('Content-Type')).toContain('application/json');
+		expect(response.headers.get('Cache-Control')).toBe('public, max-age=3600');
+		expect(await response.json()).toEqual({
+			issuer: 'https://worker.example',
+			authorization_endpoint: 'https://worker.example/mcp/authorize',
+			token_endpoint: 'https://worker.example/mcp/token',
+			registration_endpoint: 'https://worker.example/register',
+			scopes_supported: ['mcp:read', 'mcp:write'],
+			response_types_supported: ['code'],
+			response_modes_supported: ['query'],
+			grant_types_supported: ['authorization_code', 'refresh_token'],
+			token_endpoint_auth_methods_supported: ['none', 'client_secret_post'],
+			code_challenge_methods_supported: ['S256'],
+			service_documentation: 'https://worker.example',
+			logo_uri: 'https://worker.example/favicon.png',
+		});
+	});
+});
