@@ -46,11 +46,11 @@ function preprocessEmailHtml(html: string): string {
 
 /** Check if a table element is used for layout (not data). */
 function isLayoutTable(table: DomNode): boolean {
-  if (table.getAttribute('role') === 'presentation') return true;
-  if (table.getAttribute('width') === '100%') return true;
   // Data tables have <th> headers — never treat those as layout
   const hasHeaders = table.querySelectorAll('th').length > 0;
   if (hasHeaders) return false;
+  if (table.getAttribute('role') === 'presentation') return true;
+  if (table.getAttribute('width') === '100%') return true;
   // cellpadding="0" + cellspacing="0" without headers is a strong layout signal
   if (table.getAttribute('cellpadding') === '0' && table.getAttribute('cellspacing') === '0') return true;
   return true; // No headers = likely layout
