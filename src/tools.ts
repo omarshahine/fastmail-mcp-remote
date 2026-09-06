@@ -369,6 +369,36 @@ export function registerAllTools(
         if (denied) return denied;
         return handler(...args);
       };
+      const annotations = maybeHandler ? annotationsOrHandler : undefined;
+
+      // Reject unknown parameters instead of silently dropping them.
+      //
+      // z.object(shape) is NOT strict, so a caller that passes a misspelled
+      // filter gets it stripped with no error and the tool runs unfiltered --
+      // which looks exactly like a filter that matched everything. On
+      // 2026-09-06 `advanced_search({ inMailbox })` (the real parameter is
+      // `mailboxId`; `inMailbox` is the JMAP-level name it maps onto) searched
+      // the entire account instead of one mailbox, and the caller moved 200
+      // emails out of folders they were never in. `list_emails({ offset })`
+      // failed the same way -- there is no offset parameter, so paging silently
+      // re-returned the first page.
+      //
+      // .strict() makes both cases a loud parse error naming the bad key, and
+      // adds additionalProperties:false to the advertised JSON Schema so
+      // clients can catch it before the call. Registration goes through
+      // registerTool because the legacy tool() overload only accepts a raw
+      // shape and throws on a ZodObject.
+      const canRegisterTool =
+        typeof (rawServer as any).registerTool === 'function';
+      if (canRegisterTool && schema && typeof schema === 'object') {
+        (rawServer as any).registerTool(
+          name,
+          { description, inputSchema: z.object(schema).strict(), annotations },
+          wrappedHandler,
+        );
+        return;
+      }
+
       if (maybeHandler) {
         rawServer.tool(name, description, schema, annotationsOrHandler, wrappedHandler);
       } else {
