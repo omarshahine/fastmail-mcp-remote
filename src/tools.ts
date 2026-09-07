@@ -124,11 +124,41 @@ export function legacyShapedModernServer(server: ModernMcpServer): McpServer {
       const handler = maybeHandler || annotationsOrHandler;
       server.registerTool(
         name,
-        { description, inputSchema: schema, ...(annotations ? { annotations } : {}) },
+        {
+          description,
+          // strictShape, not the raw shape: this path must reject unknown
+          // parameters for the same reason registerAllTools does. It is a
+          // separate registration route (index.ts wires it for the modern
+          // server), so leaving it non-strict would silently exempt every tool
+          // served through it from the check.
+          inputSchema: strictShape(schema),
+          ...(annotations ? { annotations } : {}),
+        },
         handler,
       );
     },
   } as unknown as McpServer;
+}
+
+/**
+ * Turn a raw Zod shape into a strict object schema, so an unknown parameter is
+ * a loud parse error instead of a silently dropped key.
+ *
+ * `z.object(shape)` strips unknown keys without complaint, which means a
+ * misspelled filter reads as a filter that matched everything. On 2026-09-06
+ * `advanced_search({ inMailbox })` -- the parameter is `mailboxId`, while
+ * `inMailbox` is the JMAP-level name jmap-client.ts maps it onto -- searched
+ * the entire account, and `list_emails({ offset })` re-returned the first page
+ * because there is no offset parameter. 200 emails were moved out of folders
+ * they had never been in.
+ *
+ * Non-object schemas are passed through untouched.
+ */
+export function strictShape(schema: any): any {
+  if (!schema || typeof schema !== "object") return schema;
+  // Already a Zod schema instance rather than a raw shape: leave it alone.
+  if ((schema as any)._def || (schema as any)._zod) return schema;
+  return z.object(schema).strict();
 }
 
 /**
@@ -393,7 +423,7 @@ export function registerAllTools(
       if (canRegisterTool && schema && typeof schema === 'object') {
         (rawServer as any).registerTool(
           name,
-          { description, inputSchema: z.object(schema).strict(), annotations },
+          { description, inputSchema: strictShape(schema), annotations },
           wrappedHandler,
         );
         return;
