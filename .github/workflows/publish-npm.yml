@@ -26,7 +26,12 @@ jobs:
         # is broken on current runner images with `Cannot find module 'promise-retry'`.
         run: npm --version
 
-      - name: Install dependencies
+      - name: Install root dependencies
+        # prepack bundles ../cli into dist/cli.cjs, and the CLI's dependencies
+        # (commander, @modelcontextprotocol/sdk, open) live in the root package.
+        run: npm ci
+
+      - name: Install plugin dependencies
         working-directory: openclaw-plugin
         run: npm install
 
