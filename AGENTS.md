@@ -155,14 +155,26 @@ The `fastmail` CLI must be installed and authenticated: `fastmail auth status`
 
 ### Publishing to npm
 
+**Publishing is automatic: pushing a `v*` tag triggers `.github/workflows/publish-npm.yml`, which publishes to npm with OIDC trusted publishing and provenance. Never run `npm publish` by hand** — that bypasses provenance and the tag/version check, and races the workflow.
+
 ```bash
-cd openclaw-plugin
-npm version patch   # or minor/major
-npm publish --access public
+# 1. Bump the version (no tag — the release commit carries it)
+cd openclaw-plugin && npm version patch --no-git-tag-version   # or minor/major
+
+# 2. Commit the bump to main (package.json + package-lock.json)
+git commit -am "chore(release): v<version>" && git push origin main
+
+# 3. Tag from a clean, pushed main and push the tag — this publishes
+git tag -s -a v<version> -m "Release v<version>" && git push origin v<version>
+
+# 4. Verify
+gh run list --workflow publish-npm.yml --limit 1
+npm view fastmail-cli version
 ```
 
-- **Prepack builds both entry points**: the OpenClaw plugin and the bundled `fastmail` CLI
-- **Verify before publish**: `npm run build`, `node test/pack-smoke.mjs`, and `npm pack --dry-run`
+- **The tag must match `openclaw-plugin/package.json`** or the workflow fails the version check.
+- **Prepack builds both entry points**: the OpenClaw plugin and the bundled `fastmail` CLI. The CLI bundle pulls `../cli`, whose dependencies live in the **root** package, so both `npm ci` (root) and the plugin install are required before packing — CI's `plugin (pack)` job covers this on every PR.
+- **Verify before tagging**: `npm run build`, `node test/pack-smoke.mjs`, and `npm pack --dry-run`
 - **Package name**: `fastmail-cli` (unscoped — `@openclaw/` is reserved for official plugins)
 - **Community listing**: PR to [openclaw/openclaw](https://github.com/openclaw/openclaw) docs/plugins/community.md
 
