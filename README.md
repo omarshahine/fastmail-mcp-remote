@@ -237,7 +237,7 @@ The `forward_email` tool forwards a message the way a mail client does. Don't re
 - **Header**: A `---------- Forwarded message ----------` block with From, Date, Subject, To and Cc, one per line
 - **Body**: The original HTML and text parts, carried over unchanged
 - **Attachments**: Re-referenced by blob ID, no re-upload
-- **Editing**: `update_draft` on a forward draft regenerates the forwarded block beneath your new note
+- **Editing**: `update_draft` on a forward draft keeps the forwarded block beneath your new note
 
 Use `send_copy` instead when you want to resend the original unchanged, with no forward header.
 

@@ -154,25 +154,73 @@ describe("markdown bodies", () => {
 });
 
 describe("update_draft on a forward draft", () => {
-  it("regenerates the forwarded message beneath the edited note", async () => {
-    const client = {
-      getEmailById: vi.fn().mockResolvedValue({
-        id: "draft-fwd",
-        subject: "Fwd: Trip plans",
-        keywords: { $draft: true },
-        inReplyTo: null,
-        references: ["root@example.com", "orig@example.com"],
-      }),
-      getEmailByMessageId: vi.fn().mockResolvedValue(sourceEmail()),
+  async function createForwardDraft(original: any) {
+    const client = { getEmailById: vi.fn().mockResolvedValue(original), createDraft: vi.fn().mockResolvedValue("draft-fwd") };
+    await registeredTools(client).get("forward_email")!({
+      emailId: "source-1", to: ["x@example.com"], body: "Old note", includeAttachments: true, sendImmediately: false,
+    }, {});
+    const created = client.createDraft.mock.calls[0][0];
+    return {
+      id: "draft-fwd",
+      subject: created.subject,
+      keywords: { $draft: true },
+      inReplyTo: null,
+      references: created.references ?? null,
+      textBody: [{ partId: "t", type: "text/plain" }],
+      htmlBody: [{ partId: "h", type: "text/html" }],
+      bodyValues: { t: { value: created.textBody }, h: { value: created.htmlBody } },
+    };
+  }
+
+  function editClient(draft: any) {
+    return {
+      getEmailById: vi.fn().mockResolvedValue(draft),
+      getEmailByMessageId: vi.fn(),
       updateDraft: vi.fn().mockResolvedValue("draft-fwd-2"),
     };
-    const handler = registeredTools(client).get("update_draft")!;
-    const result = await handler({ draftId: "draft-fwd", body: "New note", excludeQuote: false }, {});
+  }
 
-    expect(client.getEmailByMessageId).toHaveBeenCalledWith("orig@example.com");
+  it("keeps the forwarded block from the draft itself, without looking up the original", async () => {
+    // Original without a Message-ID: References would point at its parent, and a
+    // lookup could not find it anyway.
+    const draft = await createForwardDraft(sourceEmail({ messageId: null }));
+    const client = editClient(draft);
+    const result = await registeredTools(client).get("update_draft")!({ draftId: "draft-fwd", body: "New note", excludeQuote: false }, {});
+
+    expect(client.getEmailByMessageId).not.toHaveBeenCalled();
     const update = client.updateDraft.mock.calls[0][0];
-    expect(update.textBody.startsWith("New note\n\n---------- Forwarded message ----------")).toBe(true);
+    expect(update.textBody).toBe("New note" + draft.bodyValues.t.value.slice("Old note".length));
+    expect(update.textBody).not.toContain("Old note");
+    expect(update.htmlBody).not.toContain("Old note");
+    expect(update.htmlBody).toContain("<b>From:</b> Alex &lt;Agent&gt; &lt;alex@example.com&gt;<br>");
     expect(update.htmlBody).toContain("<p>See <b>attached</b>.</p>");
     expect(result.content[0].text).toContain("Forwarded message preserved beneath your message.");
+  });
+
+  it("survives repeated edits and forwarded mail that itself contains a forward", async () => {
+    const nested = sourceEmail({
+      bodyValues: {
+        "1": { value: "Hi\n\n---------- Forwarded message ----------\nFrom: someone" },
+        "2": { value: "<p>Hi</p>\n<br><br>\n<div>---------- Forwarded message ----------<br>\n<b>From:</b> someone" },
+      },
+    });
+    let draft = await createForwardDraft(nested);
+    for (const note of ["Second", "Third"]) {
+      const client = editClient(draft);
+      await registeredTools(client).get("update_draft")!({ draftId: draft.id, body: note, excludeQuote: false }, {});
+      const update = client.updateDraft.mock.calls[0][0];
+      draft = { ...draft, bodyValues: { t: { value: update.textBody }, h: { value: update.htmlBody } } };
+    }
+    expect(draft.bodyValues.t.value.startsWith("Third\n\n---------- Forwarded message ----------\nFrom: Alex")).toBe(true);
+    expect(draft.bodyValues.t.value).toContain("Hi\n\n---------- Forwarded message ----------\nFrom: someone");
+    expect(draft.bodyValues.h.value).toContain("<b>From:</b> someone");
+    expect(draft.bodyValues.h.value).not.toContain("Second");
+  });
+
+  it("drops the forwarded block only when excludeQuote is true", async () => {
+    const draft = await createForwardDraft(sourceEmail());
+    const client = editClient(draft);
+    await registeredTools(client).get("update_draft")!({ draftId: "draft-fwd", body: "Just this", excludeQuote: true }, {});
+    expect(client.updateDraft.mock.calls[0][0].textBody).toBe("Just this");
   });
 });

@@ -396,10 +396,15 @@ function formatAddressList(addrs: any[] | null | undefined): string {
   return (addrs || []).map(formatAddress).filter(Boolean).join(", ");
 }
 
+const FORWARD_SEPARATOR = "---------- Forwarded message ----------";
+/** Exact prefixes buildForwardBlock emits, used to find the block again inside a draft. */
+const FORWARD_TEXT_MARKER = `\n\n${FORWARD_SEPARATOR}\n`;
+const FORWARD_HTML_MARKER = `\n<br><br>\n<div>${FORWARD_SEPARATOR}<br>\n`;
+
 /**
  * Build the forwarded-message block (header + original body) in text and HTML,
- * matching a mail client's Forward button. Shared by `forward_email` and
- * `update_draft` (re-appended when a forward draft's note is edited).
+ * matching a mail client's Forward button. `update_draft` later finds this block
+ * inside the draft via FORWARD_TEXT_MARKER / FORWARD_HTML_MARKER and keeps it.
  *
  * Every header value comes from a third party, so each one is HTML-escaped. The
  * original HTML body is carried over verbatim — that is what forwarding means.
@@ -428,7 +433,7 @@ function buildForwardBlock(original: any): { forwardText: string; forwardHtml: s
     ["Cc", formatAddressList(original.cc)],
   ];
   const presentHeaders = headers.filter(([, value]) => value);
-  const separator = "---------- Forwarded message ----------";
+  const separator = FORWARD_SEPARATOR;
 
   const bodyValues = original.bodyValues as Record<string, { value: string }> | undefined;
   const textPart = original.textBody?.[0];
@@ -456,6 +461,28 @@ ${originalContent}
 </div>`;
 
   return { forwardText, forwardHtml };
+}
+
+/**
+ * Recover the forwarded block from an existing forward draft's own body. The
+ * draft already holds exactly what is being forwarded, so there is nothing to
+ * re-fetch: this still works when the original has no Message-ID, has been
+ * deleted, or when References would point at a different message. The first
+ * marker is used, so forwarded mail that itself contains a forward stays intact.
+ */
+function extractForwardBlock(draft: any): { forwardText: string; forwardHtml: string } | null {
+  const bodyValues = draft.bodyValues as Record<string, { value: string }> | undefined;
+  const textPartId = draft.textBody?.find((part: any) => part.type === "text/plain")?.partId;
+  const htmlPartId = draft.htmlBody?.find((part: any) => part.type === "text/html")?.partId;
+  const text = (textPartId && bodyValues?.[textPartId]?.value) || "";
+  const html = (htmlPartId && bodyValues?.[htmlPartId]?.value) || "";
+  const textIndex = text.indexOf(FORWARD_TEXT_MARKER);
+  const htmlIndex = html.indexOf(FORWARD_HTML_MARKER);
+  if (textIndex === -1 && htmlIndex === -1) return null;
+  return {
+    forwardText: textIndex === -1 ? "" : text.slice(textIndex),
+    forwardHtml: htmlIndex === -1 ? "" : html.slice(htmlIndex),
+  };
 }
 
 /** The original email's attachments (including inline cid: images), re-referenced by blobId. */
@@ -1061,7 +1088,7 @@ export function registerAllTools(
   if (shouldRegister("update_draft")) {
     server.tool(
       "update_draft",
-      "Edit the body of an existing draft, including reply drafts created by `reply_to_email` and forward drafts created by `forward_email`. JMAP email bodies are immutable, so this creates a replacement draft and deletes the old one — THE DRAFT ID CHANGES. Use the returned new draft ID for any further edits. Recipients, subject, sender identity, threading, and attachments are preserved automatically. For a reply or forward draft, provide only your message text: the quoted original (or forwarded message) is re-derived and re-appended beneath it (from `replyToEmailId` if given, otherwise found via the draft's In-Reply-To or References header). Only messages in Drafts can be edited.",
+      "Edit the body of an existing draft, including reply drafts created by `reply_to_email` and forward drafts created by `forward_email`. JMAP email bodies are immutable, so this creates a replacement draft and deletes the old one — THE DRAFT ID CHANGES. Use the returned new draft ID for any further edits. Recipients, subject, sender identity, threading, and attachments are preserved automatically. For a reply or forward draft, provide only your message text: the quoted original (or forwarded message) is re-derived and re-appended beneath it (from `replyToEmailId` if given, otherwise found via the draft's In-Reply-To header; a forward draft keeps its existing forwarded block). Only messages in Drafts can be edited.",
       {
         draftId: z.string().describe("ID of the draft to edit."),
         body: z.string().describe("The new message body (plain text). For a reply draft, provide only your message — the quoted original is re-appended automatically."),
@@ -1093,27 +1120,22 @@ export function registerAllTools(
           // the caller opted out. Prefer an explicit replyToEmailId; otherwise fall
           // back to the draft's own In-Reply-To header.
           let source: any = null;
-          // A forward draft (from forward_email) has References to the original but no
-          // In-Reply-To. Its forwarded block is regenerated instead of a reply quote.
-          const isForwardDraft =
-            !replyToEmailId &&
-            !(draft.inReplyTo && draft.inReplyTo.length > 0) &&
-            (draft.references?.length ?? 0) > 0 &&
-            /^(fwd?|fw):/i.test(draft.subject || "");
+          let forwardBlock: { forwardText: string; forwardHtml: string } | null = null;
           if (!excludeQuote) {
             if (replyToEmailId) {
               source = await client.getEmailById(replyToEmailId);
             } else if (draft.inReplyTo && draft.inReplyTo.length > 0) {
               source = await client.getEmailByMessageId(draft.inReplyTo[0]);
-            } else if (isForwardDraft) {
-              source = await client.getEmailByMessageId(draft.references[draft.references.length - 1]);
+            } else {
+              // A forward draft (from forward_email) keeps its forwarded block verbatim.
+              forwardBlock = extractForwardBlock(draft);
             }
           }
 
           let quotedText = "";
           let quotedHtml = "";
-          if (source && isForwardDraft) {
-            ({ forwardText: quotedText, forwardHtml: quotedHtml } = buildForwardBlock(source));
+          if (forwardBlock) {
+            ({ forwardText: quotedText, forwardHtml: quotedHtml } = forwardBlock);
           } else if (source) {
             ({ quotedText, quotedHtml } = buildReplyQuotes(source));
           }
@@ -1134,7 +1156,7 @@ export function registerAllTools(
           return {
             content: [
               {
-                text: `Draft updated. New draft ID: ${newDraftId}\nThe old ID (${draftId}) no longer exists — use the new ID for any further edits.${source ? `\n${isForwardDraft ? "Forwarded message" : "Quoted original"} preserved beneath your message.` : ""}`,
+                text: `Draft updated. New draft ID: ${newDraftId}\nThe old ID (${draftId}) no longer exists — use the new ID for any further edits.${forwardBlock ? "\nForwarded message preserved beneath your message." : source ? "\nQuoted original preserved beneath your message." : ""}`,
                 type: "text",
               },
             ],

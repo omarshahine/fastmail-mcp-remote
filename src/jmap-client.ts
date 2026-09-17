@@ -802,7 +802,7 @@ export class JmapClient {
   /**
    * Find an email by its RFC5322 Message-ID header value (the bare id, no angle
    * brackets — same form as the `messageId`/`inReplyTo` fields JMAP returns).
-   * Used to locate the source of a reply or forward draft so its quoted original can be regenerated.
+   * Used to locate the source of a reply draft so its quote can be regenerated.
    * Returns the first match (with full text + HTML body values) or null.
    */
   async getEmailByMessageId(messageId: string): Promise<any | null> {
@@ -819,7 +819,7 @@ export class JmapClient {
         ['Email/get', {
           accountId: session.accountId,
           '#ids': { resultOf: 'query', name: 'Email/query', path: '/ids' },
-          properties: ['id', 'subject', 'from', 'to', 'cc', 'receivedAt', 'textBody', 'htmlBody', 'bodyValues', 'messageId', 'references'],
+          properties: ['id', 'subject', 'from', 'receivedAt', 'textBody', 'htmlBody', 'bodyValues', 'messageId', 'references'],
           fetchTextBodyValues: true,
           fetchHTMLBodyValues: true,
         }, 'source'],

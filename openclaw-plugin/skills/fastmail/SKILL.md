@@ -52,7 +52,7 @@ The `fastmail` CLI must be installed and authenticated before using these tools.
 
 - **`fastmail_update_draft`** edits an existing draft's body. JMAP bodies are immutable, so it replaces the draft — **the draft ID changes**. Use the new ID from the response for any further edits.
 - Recipients, subject, sender, threading, and attachments are preserved. Provide only the new `body` (plus optional `htmlBody`/`markdownBody`).
-- **For reply and forward drafts:** pass only your message text. Forward drafts regenerate the forwarded message automatically.
+- **For reply and forward drafts:** pass only your message text. Forward drafts keep the forwarded message automatically.
 - **Reply drafts:** pass only your message text. The quoted original is re-derived and re-appended — pass `replyToEmailId` (the email being replied to) to regenerate it, or omit it to auto-locate the source via the draft's `In-Reply-To` header. Pass `excludeQuote: true` to drop the quote.
 
 ### Email Organization (6 optional tools)
