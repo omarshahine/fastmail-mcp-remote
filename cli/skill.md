@@ -53,9 +53,18 @@ fastmail email draft --to user@example.com --subject "Draft" --body "..."   # NE
 fastmail email reply <id> --body "Thanks!"           # Save reply as draft (default, correct for replies)
 fastmail email reply <id> --body "Thanks!" --send    # Prepare immediate reply for server approval
 fastmail email reply <id> --body "Noted" --all       # Reply all (only when user selected reply-all)
+fastmail email forward <id> --to a@example.com --body "FYI"   # Forward as a draft (original body + attachments included)
+fastmail email forward <id> --to a@example.com --send         # Prepare immediate forward for server approval
+fastmail email forward <id> --to a@example.com --no-attachments  # Forward without file attachments
 fastmail email update-draft <draftId> --body "Revised text"                 # Edit an existing draft's body
 fastmail email update-draft <draftId> --body "Revised" --reply-to <srcId>   # Edit a reply draft, regenerate the quote
 ```
+
+### Forwards — Critical Rules
+
+- **For forwards, ALWAYS use `fastmail email forward <id>`.** Never fake a forward with `email send` or `email draft` by pasting a "Forwarded message" header and the original text into `--body`/`--markdown`. That retypes the original, mangles the header layout, and drops attachments.
+- `--body` is only your note. The header, original body, and attachments are added automatically.
+- Forward saves a draft by default. Only pass `--send` when the user explicitly asked to send now.
 
 ### Replies — Critical Rules
 

@@ -241,6 +241,34 @@ export function registerEmailTools(api: PluginApi, cli: string) {
   }, { optional: true });
 
   api.registerTool({
+    name: "fastmail_forward_email",
+    description: "Forward an email with the original body and attachments included. Use this for ALL forwards; never rebuild a forward with send_email or create_draft. Defaults to a draft; immediate sends return a server-enforced approval URL.",
+    parameters: {
+      type: "object",
+      properties: {
+        emailId: { type: "string", description: "Email ID to forward" },
+        to: { type: "array", items: { type: "string" }, description: "Recipients" },
+        cc: { type: "array", items: { type: "string" }, description: "CC" },
+        bcc: { type: "array", items: { type: "string" }, description: "BCC" },
+        body: { type: "string", description: "Your note above the forwarded message (don't paste the original)" },
+        htmlBody: { type: "string", description: "HTML note" },
+        markdownBody: { type: "string", description: "Markdown note" },
+        from: { type: "string", description: "Sender address" },
+        includeAttachments: { type: "boolean", default: true, description: "Forward the original's file attachments" },
+        sendImmediately: { type: "boolean", default: false, description: "Send now vs draft" },
+      },
+      required: ["emailId", "to"],
+    },
+    execute: (_id, params: { emailId: string; to: string[]; cc?: string[]; bcc?: string[]; body?: string; htmlBody?: string; markdownBody?: string; from?: string; includeAttachments?: boolean; sendImmediately?: boolean }) =>
+      runTool(buildArgs(["email", "forward", params.emailId], {
+        to: params.to, cc: params.cc, bcc: params.bcc,
+        body: params.body, html: params.htmlBody, markdown: params.markdownBody,
+        from: params.from, send: params.sendImmediately,
+        "no-attachments": params.includeAttachments === false,
+      }), cli),
+  }, { optional: true });
+
+  api.registerTool({
     name: "fastmail_update_draft",
     description:
       "Edit an existing draft's body. JMAP bodies are immutable, so this creates a replacement draft and deletes the old one — the draft ID changes (use the returned new ID for further edits). Recipients, subject, sender, threading, and attachments are preserved. For a reply draft, pass only your message text; the quoted original is re-derived and re-appended (from replyToEmailId if given, otherwise via the draft's In-Reply-To header).",

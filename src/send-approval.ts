@@ -33,7 +33,7 @@ export interface SendApprovalSnapshot {
 export interface SendApprovalRecord {
   id: string;
   userLogin: string;
-  toolName: "send_email" | "send_copy" | "reply_to_email";
+  toolName: "send_email" | "send_copy" | "reply_to_email" | "forward_email";
   draftId: string;
   payloadDigest: string;
   status: SendApprovalStatus;

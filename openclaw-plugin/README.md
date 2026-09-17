@@ -1,6 +1,6 @@
 # fastmail-cli
 
-OpenClaw plugin for Fastmail email, contacts, and calendar. Provides 36 agent tools that shell out to its bundled `fastmail` CLI for token-efficient output (5-7x savings vs raw JSON). Zero runtime dependencies.
+OpenClaw plugin for Fastmail email, contacts, and calendar. Provides 38 agent tools that shell out to its bundled `fastmail` CLI for token-efficient output (5-7x savings vs raw JSON). Zero runtime dependencies.
 
 ## Installation
 
@@ -69,11 +69,12 @@ Set `requireApprovals: false` in plugin config to disable all gates.
 - `fastmail_download_attachment` - Download attachment
 - `fastmail_get_inbox_updates` - Incremental sync
 
-### Email Write (3 tools, optional)
+### Email Write (4 tools, optional)
 
 - `fastmail_send_email` - Send email
 - `fastmail_create_draft` - Create draft
 - `fastmail_reply_to_email` - Reply to email
+- `fastmail_forward_email` - Forward email (original body + attachments)
 
 ### Email Organize (6 tools, optional)
 
@@ -139,7 +140,7 @@ v2.0 replaces the in-process MCP SDK with CLI shelling. The `workerUrl` and `bea
 
 3. **Verify**: `npx --yes fastmail-cli@latest auth status` should show your user and token expiry.
 
-That's it — all 36 tools work identically, just backed by the CLI now.
+That's it — all 38 tools work identically, just backed by the CLI now.
 
 ## Development
 

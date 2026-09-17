@@ -43,3 +43,36 @@ describe("email send/draft body validation", () => {
     }
   });
 });
+
+describe("email forward", () => {
+  it("maps flags to forward_email, forwarding attachments by default", async () => {
+    const { program, callTool } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await program.parseAsync([
+      "node", "fastmail", "email", "forward", "M123",
+      "--to", "person@example.com",
+      "--markdown", "Take a look",
+    ]);
+    expect(callTool).toHaveBeenCalledWith("forward_email", expect.objectContaining({
+      emailId: "M123",
+      to: ["person@example.com"],
+      markdownBody: "Take a look",
+      includeAttachments: true,
+      sendImmediately: false,
+    }));
+  });
+
+  it("supports --no-attachments and --send", async () => {
+    const { program, callTool } = setup();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await program.parseAsync([
+      "node", "fastmail", "email", "forward", "M123",
+      "--to", "person@example.com",
+      "--no-attachments", "--send",
+    ]);
+    expect(callTool).toHaveBeenCalledWith("forward_email", expect.objectContaining({
+      includeAttachments: false,
+      sendImmediately: true,
+    }));
+  });
+});

@@ -345,7 +345,7 @@ export async function handleSendApprovalDecision(env: Env, request: Request, app
     const allowed = isToolAllowed(
       userConfig,
       record.toolName,
-      record.toolName === "reply_to_email" ? { sendImmediately: true } : undefined,
+      record.toolName === "reply_to_email" || record.toolName === "forward_email" ? { sendImmediately: true } : undefined,
     );
     if (!allowed.allowed) {
       const declined = await decideSendApproval(env, approvalId, tokenData.userLogin, "decline");

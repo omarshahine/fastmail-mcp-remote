@@ -106,6 +106,7 @@ cli/
 - `create_draft` - Create a draft email (supports attachments and reply threading)
 - `update_draft` - Edit an existing draft's body (creates a replacement draft — the ID changes; re-derives the quoted original for reply drafts)
 - `reply_to_email` - Reply to an email with automatic threading and quoting (like Fastmail's reply button)
+- `forward_email` - Forward an email with a standard forwarded-message header, the original body, and its attachments (like Fastmail's forward button)
 - `search_emails` - Search emails
 - `get_recent_emails` - Get most recent emails
 - `mark_email_read` - Mark email as read/unread
@@ -206,6 +207,39 @@ The `reply_to_email` tool provides a convenient way to reply to emails with prop
 - **Subject**: Adds "Re:" prefix if not already present
 - **Threading**: Sets `inReplyTo` and `references` headers for proper threading
 - **Quoting**: Formats quoted original in Fastmail style with attribution line
+
+### Forwarding Emails
+
+The `forward_email` tool forwards a message the way a mail client does. Don't rebuild a forward by hand with `send_email`: that retypes the original, loses its formatting, and drops attachments.
+
+```json
+{
+  "emailId": "abc123",
+  "to": ["friend@example.com"],
+  "markdownBody": "Thought you'd want to see this.",
+  "sendImmediately": false
+}
+```
+
+**Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `emailId` | string | required | ID of the email to forward |
+| `to` | string[] | required | Recipients |
+| `cc` / `bcc` | string[] | optional | Additional recipients |
+| `body` / `htmlBody` / `markdownBody` | string | optional | Your note above the forwarded message |
+| `from` | string | optional | Sender identity |
+| `includeAttachments` | boolean | `true` | Forward the original's file attachments (inline images are always kept) |
+| `sendImmediately` | boolean | `false` | Send (through the approval flow) vs create draft |
+
+**What it handles automatically:**
+- **Subject**: Adds "Fwd:" unless it already starts with Fwd:/Fw:
+- **Header**: A `---------- Forwarded message ----------` block with From, Date, Subject, To and Cc, one per line
+- **Body**: The original HTML and text parts, carried over unchanged
+- **Attachments**: Re-referenced by blob ID, no re-upload
+- **Editing**: `update_draft` on a forward draft regenerates the forwarded block beneath your new note
+
+Use `send_copy` instead when you want to resend the original unchanged, with no forward header.
 
 ### Email Threading (Low-Level)
 

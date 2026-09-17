@@ -86,6 +86,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
 
 	// REPLY (dual behavior — checked specially for sendImmediately)
 	reply_to_email: 'REPLY',
+	forward_email: 'REPLY',
 
 	// SEND
 	send_email: 'SEND',
@@ -118,6 +119,7 @@ const DENIAL_HINTS: Record<string, string> = {
 	send_copy: "Send-copy / redirect requires SEND permission. Delegates cannot redirect emails to external addresses.",
 	create_calendar_event: 'Calendar write access is not available for delegate accounts.',
 	reply_to_email: "Use 'reply_to_email' without sendImmediately:true to create a draft reply instead.",
+	forward_email: "Use 'forward_email' without sendImmediately:true to create a draft forward instead.",
 };
 
 // ─── KV Cache ───────────────────────────────────────────────────────────────
@@ -199,7 +201,7 @@ export interface PermissionResult {
  *   1. disabled_categories — tool's category is explicitly disabled for this user
  *   2. role-based denial — delegate can't use SEND or CALENDAR_WRITE
  *
- * Special case: reply_to_email with sendImmediately:true is denied for delegates.
+ * Special case: reply_to_email / forward_email with sendImmediately:true is denied for delegates.
  */
 export function isToolAllowed(
 	userConfig: UserConfig,
@@ -236,11 +238,11 @@ export function isToolAllowed(
 		};
 	}
 
-	// Special case: reply_to_email with sendImmediately:true
-	if (toolName === 'reply_to_email' && args?.sendImmediately === true) {
+	// Special case: reply_to_email / forward_email with sendImmediately:true
+	if ((toolName === 'reply_to_email' || toolName === 'forward_email') && args?.sendImmediately === true) {
 		return {
 			allowed: false,
-			error: `Permission denied: '${toolName}' with sendImmediately:true is not available for delegate accounts. ${DENIAL_HINTS.reply_to_email}`,
+			error: `Permission denied: '${toolName}' with sendImmediately:true is not available for delegate accounts. ${DENIAL_HINTS[toolName]}`,
 		};
 	}
 

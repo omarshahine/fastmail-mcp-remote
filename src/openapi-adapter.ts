@@ -59,6 +59,7 @@ function deriveTag(toolName: string): string {
     send_email: "email",
     create_draft: "email",
     reply_to_email: "email",
+    forward_email: "email",
     mark_email_read: "email",
     flag_email: "email",
     delete_email: "email",
