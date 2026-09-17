@@ -280,6 +280,50 @@ export function registerEmailCommands(
       console.log(typeof result === "string" ? result : JSON.stringify(result));
     });
 
+  // ── email forward ────────────────────────────────────────
+
+  email
+    .command("forward <emailId>")
+    .description("Forward an email (original body and attachments included)")
+    .requiredOption("--to <addrs...>", "Recipient(s)")
+    .option("--body <text>", "Your note above the forwarded message")
+    .option("--html <text>", "HTML note")
+    .option("--markdown <text>", "Markdown note")
+    .option("--cc <addrs...>", "CC recipients")
+    .option("--bcc <addrs...>", "BCC recipients")
+    .option("--from <addr>", "Sender address")
+    .option("--no-attachments", "Drop the original's file attachments (inline images are kept)")
+    .option("--send", "Prepare for immediate send through the server approval flow")
+    .option("--dry-run", "Preview what would be sent without sending")
+    .action(async (emailId, opts) => {
+      validateIds(emailId, "email ID");
+      validateEmails(opts.to, "recipient");
+      if (opts.body) validateTextArg(opts.body, "body");
+      if (opts.html) validateTextArg(opts.html, "HTML body");
+      if (opts.markdown) validateTextArg(opts.markdown, "markdown body");
+      if (opts.cc) validateEmails(opts.cc, "CC recipient");
+      if (opts.bcc) validateEmails(opts.bcc, "BCC recipient");
+      if (opts.from) validateEmails(opts.from, "sender address");
+
+      const args = {
+        emailId,
+        to: opts.to,
+        cc: opts.cc,
+        bcc: opts.bcc,
+        body: opts.body,
+        htmlBody: opts.html,
+        markdownBody: opts.markdown,
+        from: opts.from,
+        includeAttachments: opts.attachments,
+        sendImmediately: opts.send || false,
+      };
+
+      if (opts.dryRun) return dryRunOutput("forward_email", args);
+
+      const result = await client.callTool("forward_email", args);
+      console.log(typeof result === "string" ? result : JSON.stringify(result));
+    });
+
   // ── email update-draft ───────────────────────────────────
 
   email

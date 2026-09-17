@@ -15,7 +15,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { marked } from "marked";
-import { formatEmailAsMarkdown } from "./html-to-markdown";
+import { formatEmailAsMarkdown, htmlToMarkdown } from "./html-to-markdown";
 import { FastmailAuth } from "./fastmail-auth";
 import { JmapClient } from "./jmap-client";
 import { ContactsCalendarClient } from "./contacts-calendar";
@@ -376,6 +376,130 @@ ${quotedContent}
 }
 
 /**
+ * Render a Markdown email body to HTML. `breaks: true` keeps single newlines as
+ * line breaks: in email, "Love,\nOmar" is two lines, not one run-on paragraph.
+ */
+async function renderMarkdown(markdown: string): Promise<string> {
+  return marked.parse(markdown, { gfm: true, breaks: true });
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function formatAddress(addr: { name?: string | null; email?: string | null }): string {
+  if (addr.name && addr.email && addr.name !== addr.email) return `${addr.name} <${addr.email}>`;
+  return addr.email || addr.name || "";
+}
+
+function formatAddressList(addrs: any[] | null | undefined): string {
+  return (addrs || []).map(formatAddress).filter(Boolean).join(", ");
+}
+
+const FORWARD_SEPARATOR = "---------- Forwarded message ----------";
+/** Exact prefixes buildForwardBlock emits, used to find the block again inside a draft. */
+const FORWARD_TEXT_MARKER = `\n\n${FORWARD_SEPARATOR}\n`;
+const FORWARD_HTML_MARKER = `\n<br><br>\n<div>${FORWARD_SEPARATOR}<br>\n`;
+
+/**
+ * Build the forwarded-message block (header + original body) in text and HTML,
+ * matching a mail client's Forward button. `update_draft` later finds this block
+ * inside the draft via FORWARD_TEXT_MARKER / FORWARD_HTML_MARKER and keeps it.
+ *
+ * Every header value comes from a third party, so each one is HTML-escaped. The
+ * original HTML body is carried over verbatim — that is what forwarding means.
+ */
+function buildForwardBlock(original: any): { forwardText: string; forwardHtml: string } {
+  const receivedDate = new Date(original.receivedAt);
+  const dateStr = Number.isNaN(receivedDate.getTime())
+    ? ""
+    : receivedDate.toLocaleString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: "UTC",
+        timeZoneName: "short",
+      });
+
+  const headers: Array<[string, string]> = [
+    ["From", formatAddressList(original.from)],
+    ["Date", dateStr],
+    ["Subject", original.subject || ""],
+    ["To", formatAddressList(original.to)],
+    ["Cc", formatAddressList(original.cc)],
+  ];
+  const presentHeaders = headers.filter(([, value]) => value);
+  const separator = FORWARD_SEPARATOR;
+
+  const bodyValues = original.bodyValues as Record<string, { value: string }> | undefined;
+  const textPart = original.textBody?.[0];
+  const htmlPartId = original.htmlBody?.find((part: any) => part.type === "text/html")?.partId;
+  const originalHtmlBody = (htmlPartId && bodyValues?.[htmlPartId]?.value) || "";
+  // Fastmail lists the HTML part under textBody for HTML-only mail; never put raw
+  // markup in the plain-text alternative.
+  const rawText = (textPart?.partId && bodyValues?.[textPart.partId]?.value) || "";
+  const originalTextBody =
+    textPart?.type === "text/html" ? htmlToMarkdown(rawText) : rawText || (originalHtmlBody ? htmlToMarkdown(originalHtmlBody) : "");
+
+  const forwardText = `\n\n${separator}\n${presentHeaders.map(([k, v]) => `${k}: ${v}`).join("\n")}\n\n${originalTextBody}`;
+
+  const headerHtml = presentHeaders.map(([k, v]) => `<b>${k}:</b> ${escapeHtml(v)}<br>`).join("\n");
+  const originalContent =
+    originalHtmlBody || `<div style="white-space: pre-wrap;">${escapeHtml(originalTextBody)}</div>`;
+  const forwardHtml = `
+<br><br>
+<div>${separator}<br>
+${headerHtml}
+</div>
+<br>
+<div>
+${originalContent}
+</div>`;
+
+  return { forwardText, forwardHtml };
+}
+
+/**
+ * Recover the forwarded block from an existing forward draft's own body. The
+ * draft already holds exactly what is being forwarded, so there is nothing to
+ * re-fetch: this still works when the original has no Message-ID, has been
+ * deleted, or when References would point at a different message. The first
+ * marker is used, so forwarded mail that itself contains a forward stays intact.
+ */
+function extractForwardBlock(draft: any): { forwardText: string; forwardHtml: string } | null {
+  const bodyValues = draft.bodyValues as Record<string, { value: string }> | undefined;
+  const textPartId = draft.textBody?.find((part: any) => part.type === "text/plain")?.partId;
+  const htmlPartId = draft.htmlBody?.find((part: any) => part.type === "text/html")?.partId;
+  const text = (textPartId && bodyValues?.[textPartId]?.value) || "";
+  const html = (htmlPartId && bodyValues?.[htmlPartId]?.value) || "";
+  const textIndex = text.indexOf(FORWARD_TEXT_MARKER);
+  const htmlIndex = html.indexOf(FORWARD_HTML_MARKER);
+  if (textIndex === -1 && htmlIndex === -1) return null;
+  return {
+    forwardText: textIndex === -1 ? "" : text.slice(textIndex),
+    forwardHtml: htmlIndex === -1 ? "" : html.slice(htmlIndex),
+  };
+}
+
+/** The original email's attachments (including inline cid: images), re-referenced by blobId. */
+function forwardedAttachments(original: any) {
+  return (original.attachments || [])
+    .filter((att: any) => att.blobId)
+    .map((att: any) => ({
+      blobId: att.blobId,
+      type: att.type || "application/octet-stream",
+      name: att.name || "attachment",
+      ...(att.size !== undefined && { size: att.size }),
+      ...(att.cid && { cid: att.cid }),
+      ...(att.disposition && { disposition: att.disposition }),
+    }));
+}
+
+/**
  * Register all Fastmail MCP tools on the given server.
  *
  * @param server - McpServer instance to register tools on
@@ -560,7 +684,7 @@ export function registerAllTools(
 
         try {
           const client = ctx.getJmapClient();
-          const finalHtmlBody = markdownBody ? await marked.parse(markdownBody) : htmlBody;
+          const finalHtmlBody = markdownBody ? await renderMarkdown(markdownBody) : htmlBody;
           if (requiresServerApproval(ctx)) {
             const draftId = await client.createDraft({
               to,
@@ -686,7 +810,7 @@ export function registerAllTools(
         }
         try {
           const client = ctx.getJmapClient();
-          const finalHtmlBody = markdownBody ? await marked.parse(markdownBody) : htmlBody;
+          const finalHtmlBody = markdownBody ? await renderMarkdown(markdownBody) : htmlBody;
           const draftId = await client.createDraft({
             to,
             cc,
@@ -795,7 +919,7 @@ export function registerAllTools(
           }
 
           const finalTextBody = body + quotedText;
-          const replyHtml = markdownBody ? await marked.parse(markdownBody) : htmlBody;
+          const replyHtml = markdownBody ? await renderMarkdown(markdownBody) : htmlBody;
           const finalHtmlBody = replyHtml
             ? `<div>${replyHtml}</div>${quotedHtml}`
             : `<div style="white-space: pre-wrap;">${body.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>${quotedHtml}`;
@@ -862,10 +986,109 @@ export function registerAllTools(
     );
   }
 
+  if (shouldRegister("forward_email")) {
+    server.tool(
+      "forward_email",
+      "Forward an existing email to new recipients, just like Fastmail's Forward button. Adds a 'Fwd:' subject, an optional note from you above a '---------- Forwarded message ----------' header (From, Date, Subject, To, Cc), the original message body exactly as received, and all original attachments (including inline images). This is the ONLY correct way to forward. Do NOT rebuild a forward by hand with send_email or create_draft: that loses the original formatting and attachments. With sendImmediately=false (default), it creates a draft. With sendImmediately=true in required-approval mode, it returns an authenticated review URL and submits only after approval. To send the original unchanged with no forward header, use send_copy instead.",
+      {
+        emailId: z.string().describe("ID of the email to forward"),
+        to: z.array(z.string()).describe("Recipient email addresses"),
+        cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
+        bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
+        body: z.string().optional().describe("Your note above the forwarded message (plain text, optional). Do not paste the original email here; it is included automatically."),
+        htmlBody: z.string().optional().describe("Your note (HTML, optional). If not provided, plain text body is used."),
+        markdownBody: z
+          .string()
+          .optional()
+          .describe("Your note (Markdown, optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
+        from: z
+          .string()
+          .optional()
+          .describe("Sender email address (optional, defaults to account primary email). Use list_identities to see available aliases."),
+        includeAttachments: z.boolean().default(true).describe("If false, drop the original's attachments (inline images in the body are always kept). Default forwards them."),
+        sendImmediately: z.boolean().default(false).describe("If true, send the forward immediately. If false (default), create a draft."),
+      },
+      SEND_TOOL_ANNOTATIONS,
+      async ({ emailId, to, cc, bcc, body, htmlBody, markdownBody, from, includeAttachments, sendImmediately }, extra) => {
+        // DEFENSE-IN-DEPTH: Block delegates from sending forwards immediately
+        if (sendImmediately) {
+          const denied = await ctx.checkToolPermission("forward_email", { sendImmediately: true });
+          if (denied) return denied;
+          const resumed = await resumeSendApproval(ctx, extra, "forward_email");
+          if (resumed) return resumed;
+        }
+
+        if (to.length === 0) {
+          return { content: [{ text: "Error: At least one recipient is required to forward an email", type: "text" }] };
+        }
+
+        try {
+          const client = ctx.getJmapClient();
+          const original = await client.getEmailById(emailId);
+          if (!original) {
+            return { content: [{ text: `Error: Email with ID '${emailId}' not found`, type: "text" }] };
+          }
+
+          let subject = original.subject || "";
+          if (!/^(fwd?|fw):/i.test(subject)) {
+            subject = `Fwd: ${subject}`;
+          }
+
+          // References (not In-Reply-To) ties the forward to the original's thread
+          // for the user's own mailbox without making it look like a reply.
+          const references = [...(original.references || []), ...(original.messageId || [])];
+
+          const { forwardText, forwardHtml } = buildForwardBlock(original);
+          const noteHtml = markdownBody ? await renderMarkdown(markdownBody) : htmlBody;
+          // The note is optional in every format; derive the plain-text alternative
+          // from whichever one was given so text-only clients still see it.
+          const note = body ?? markdownBody ?? (htmlBody ? htmlToMarkdown(htmlBody) : "");
+          const finalTextBody = note + forwardText;
+          const finalHtmlBody = noteHtml
+            ? `<div>${noteHtml}</div>${forwardHtml}`
+            : `<div style="white-space: pre-wrap;">${escapeHtml(note)}</div>${forwardHtml}`;
+
+          // Inline images referenced by cid: in the body must always travel with it.
+          const existingAttachments = forwardedAttachments(original).filter(
+            (att: any) => includeAttachments || (att.cid && att.disposition === "inline"),
+          );
+
+          const message = {
+            to,
+            cc: cc && cc.length > 0 ? cc : undefined,
+            bcc: bcc && bcc.length > 0 ? bcc : undefined,
+            from,
+            subject,
+            textBody: finalTextBody,
+            htmlBody: finalHtmlBody,
+            existingAttachments,
+            references: references.length > 0 ? references : undefined,
+          };
+          const summary = `To: ${to.join(", ")}${cc?.length ? `\nCC: ${cc.join(", ")}` : ""}${bcc?.length ? `\nBCC: ${bcc.join(", ")}` : ""}\nSubject: ${subject}\nAttachments: ${existingAttachments.length}`;
+
+          if (sendImmediately) {
+            if (requiresServerApproval(ctx)) {
+              const draftId = await client.createDraft(message);
+              return await prepareSendApproval(ctx, extra, "forward_email", draftId);
+            }
+            const submissionId = await client.sendEmail(message);
+            return { content: [{ text: `Forward sent successfully. Submission ID: ${submissionId}\n${summary}`, type: "text" }] };
+          }
+
+          const draftId = await client.createDraft(message);
+          return { content: [{ text: `Forward draft created successfully. Draft ID: ${draftId}\n${summary}`, type: "text" }] };
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          return { content: [{ text: `Failed to forward email: ${errorMessage}`, type: "text" }] };
+        }
+      },
+    );
+  }
+
   if (shouldRegister("update_draft")) {
     server.tool(
       "update_draft",
-      "Edit the body of an existing draft, including reply drafts created by `reply_to_email`. JMAP email bodies are immutable, so this creates a replacement draft and deletes the old one — THE DRAFT ID CHANGES. Use the returned new draft ID for any further edits. Recipients, subject, sender identity, threading, and attachments are preserved automatically. For a reply draft, provide only your message text: the quoted original is re-derived and re-appended beneath it (from `replyToEmailId` if given, otherwise found via the draft's In-Reply-To header). Only messages in Drafts can be edited.",
+      "Edit the body of an existing draft, including reply drafts created by `reply_to_email` and forward drafts created by `forward_email`. JMAP email bodies are immutable, so this creates a replacement draft and deletes the old one — THE DRAFT ID CHANGES. Use the returned new draft ID for any further edits. Recipients, subject, sender identity, threading, and attachments are preserved automatically. For a reply or forward draft, provide only your message text: the quoted original (or forwarded message) is re-derived and re-appended beneath it (from `replyToEmailId` if given, otherwise found via the draft's In-Reply-To header; a forward draft keeps its existing forwarded block). Only messages in Drafts can be edited.",
       {
         draftId: z.string().describe("ID of the draft to edit."),
         body: z.string().describe("The new message body (plain text). For a reply draft, provide only your message — the quoted original is re-appended automatically."),
@@ -897,18 +1120,28 @@ export function registerAllTools(
           // the caller opted out. Prefer an explicit replyToEmailId; otherwise fall
           // back to the draft's own In-Reply-To header.
           let source: any = null;
+          let forwardBlock: { forwardText: string; forwardHtml: string } | null = null;
           if (!excludeQuote) {
             if (replyToEmailId) {
               source = await client.getEmailById(replyToEmailId);
             } else if (draft.inReplyTo && draft.inReplyTo.length > 0) {
               source = await client.getEmailByMessageId(draft.inReplyTo[0]);
+            } else {
+              // A forward draft (from forward_email) keeps its forwarded block verbatim.
+              forwardBlock = extractForwardBlock(draft);
             }
           }
 
-          const { quotedText, quotedHtml } = source ? buildReplyQuotes(source) : { quotedText: "", quotedHtml: "" };
+          let quotedText = "";
+          let quotedHtml = "";
+          if (forwardBlock) {
+            ({ forwardText: quotedText, forwardHtml: quotedHtml } = forwardBlock);
+          } else if (source) {
+            ({ quotedText, quotedHtml } = buildReplyQuotes(source));
+          }
 
           const finalTextBody = body + quotedText;
-          const replyHtml = markdownBody ? await marked.parse(markdownBody) : htmlBody;
+          const replyHtml = markdownBody ? await renderMarkdown(markdownBody) : htmlBody;
           const finalHtmlBody = replyHtml
             ? `<div>${replyHtml}</div>${quotedHtml}`
             : `<div style="white-space: pre-wrap;">${body.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>${quotedHtml}`;
@@ -923,7 +1156,7 @@ export function registerAllTools(
           return {
             content: [
               {
-                text: `Draft updated. New draft ID: ${newDraftId}\nThe old ID (${draftId}) no longer exists — use the new ID for any further edits.${source ? "\nQuoted original preserved beneath your message." : ""}`,
+                text: `Draft updated. New draft ID: ${newDraftId}\nThe old ID (${draftId}) no longer exists — use the new ID for any further edits.${forwardBlock ? "\nForwarded message preserved beneath your message." : source ? "\nQuoted original preserved beneath your message." : ""}`,
                 type: "text",
               },
             ],
@@ -1694,6 +1927,7 @@ export function registerAllTools(
           "delete_memo",
           "generate_email_action_urls",
           "reply_to_email",
+          "forward_email",
           "list_identities",
         ];
 

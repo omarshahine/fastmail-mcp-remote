@@ -76,8 +76,9 @@ export interface JmapEmailAttachment {
   blobId: string;
   type: string;
   name: string;
-  size: number;
-  disposition: 'attachment' | 'inline';
+  size?: number;
+  disposition?: 'attachment' | 'inline';
+  cid?: string;
 }
 
 /** JMAP Email body part reference */
@@ -588,6 +589,8 @@ export class JmapClient {
     htmlBody?: string;
     from?: string;
     attachments?: AttachmentInput[];
+    /** Blobs already in this account (e.g. a forwarded email's attachments), re-referenced without re-upload. */
+    existingAttachments?: JmapEmailAttachment[];
     inReplyTo?: string[];
     references?: string[];
   }): Promise<string> {
@@ -647,9 +650,13 @@ export class JmapClient {
       ...(email.references && { references: email.references }),
     };
 
-    // Add attachments if any were uploaded
-    if (uploadedAttachments.length > 0) {
-      emailObject.attachments = this.toJmapAttachments(uploadedAttachments);
+    // Add uploaded attachments plus any existing blobs being carried over
+    const allAttachments = [
+      ...(email.existingAttachments || []),
+      ...this.toJmapAttachments(uploadedAttachments),
+    ];
+    if (allAttachments.length > 0) {
+      emailObject.attachments = allAttachments;
     }
 
     // Only Email/set - no EmailSubmission/set (that's what makes it a draft)
@@ -946,6 +953,8 @@ export class JmapClient {
     from?: string;
     mailboxId?: string;
     attachments?: AttachmentInput[];
+    /** Blobs already in this account (e.g. a forwarded email's attachments), re-referenced without re-upload. */
+    existingAttachments?: JmapEmailAttachment[];
     inReplyTo?: string[];
     references?: string[];
   }): Promise<string> {
@@ -1014,9 +1023,13 @@ export class JmapClient {
       ...(email.references && { references: email.references }),
     };
 
-    // Add attachments if any were uploaded
-    if (uploadedAttachments.length > 0) {
-      emailObject.attachments = this.toJmapAttachments(uploadedAttachments);
+    // Add uploaded attachments plus any existing blobs being carried over
+    const allAttachments = [
+      ...(email.existingAttachments || []),
+      ...this.toJmapAttachments(uploadedAttachments),
+    ];
+    if (allAttachments.length > 0) {
+      emailObject.attachments = allAttachments;
     }
 
     const request: JmapRequest = {

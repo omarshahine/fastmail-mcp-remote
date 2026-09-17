@@ -91,6 +91,13 @@ describe('isToolAllowed — admin', () => {
 		).toBe(true);
 	});
 
+	it('allows forward_email as a draft but denies sendImmediately:true', () => {
+		expect(isToolAllowed(delegateConfig(), 'forward_email').allowed).toBe(true);
+		const result = isToolAllowed(delegateConfig(), 'forward_email', { sendImmediately: true });
+		expect(result.allowed).toBe(false);
+		expect(result.error).toContain('draft forward');
+	});
+
 	it('denies tools in disabled categories', () => {
 		const result = isToolAllowed(adminConfig(), 'list_contacts');
 		expect(result.allowed).toBe(false);
@@ -425,8 +432,8 @@ describe('getPermissionsConfig — fail-closed defaults', () => {
 });
 
 describe('TOOL_CATEGORIES completeness', () => {
-	it('maps all 38 tools', () => {
-		expect(Object.keys(TOOL_CATEGORIES).length).toBe(38);
+	it('maps all 39 tools', () => {
+		expect(Object.keys(TOOL_CATEGORIES).length).toBe(39);
 	});
 
 	it('has no empty categories', () => {

@@ -24,7 +24,7 @@ The `fastmail` CLI must be installed and authenticated before using these tools.
 | `fastmail_download_attachment` | Get download URL for an attachment |
 | `fastmail_get_inbox_updates` | Incremental sync: get changes since a state token |
 
-### Email Writing (3 optional tools)
+### Email Writing (5 optional tools)
 
 | Tool | Purpose |
 |------|---------|
@@ -32,6 +32,13 @@ The `fastmail` CLI must be installed and authenticated before using these tools.
 | `fastmail_create_draft` | Create a NEW draft (no source email). **Never use for replies.** |
 | `fastmail_update_draft` | Edit an existing draft's body. **The draft ID changes** — use the returned new ID afterward. |
 | `fastmail_reply_to_email` | Reply to an email. Use this for ALL replies — draft OR send. |
+| `fastmail_forward_email` | Forward an email with its original body and attachments. Use this for ALL forwards. |
+
+### Forwards — Critical Rules
+
+- **For forwards, ALWAYS use `fastmail_forward_email`.** Never rebuild a forward with `fastmail_send_email` or `fastmail_create_draft` by pasting a "Forwarded message" header and the original text. That retypes the original, mangles the header layout, and drops attachments.
+- `body`/`markdownBody` is only your note. The header, original body, and attachments are added automatically.
+- Defaults to a draft. Only pass `sendImmediately: true` when the user explicitly asked to send now.
 
 ### Replies — Critical Rules
 
@@ -45,7 +52,8 @@ The `fastmail` CLI must be installed and authenticated before using these tools.
 
 - **`fastmail_update_draft`** edits an existing draft's body. JMAP bodies are immutable, so it replaces the draft — **the draft ID changes**. Use the new ID from the response for any further edits.
 - Recipients, subject, sender, threading, and attachments are preserved. Provide only the new `body` (plus optional `htmlBody`/`markdownBody`).
-- **For reply drafts:** pass only your message text. The quoted original is re-derived and re-appended — pass `replyToEmailId` (the email being replied to) to regenerate it, or omit it to auto-locate the source via the draft's `In-Reply-To` header. Pass `excludeQuote: true` to drop the quote.
+- **For reply and forward drafts:** pass only your message text. Forward drafts keep the forwarded message automatically.
+- **Reply drafts:** pass only your message text. The quoted original is re-derived and re-appended — pass `replyToEmailId` (the email being replied to) to regenerate it, or omit it to auto-locate the source via the draft's `In-Reply-To` header. Pass `excludeQuote: true` to drop the quote.
 
 ### Email Organization (6 optional tools)
 
