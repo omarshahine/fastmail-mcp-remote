@@ -24,7 +24,7 @@
 		"@modelcontextprotocol/server": "2.0.0",
 		"agents": "^0.20.1",
 		"commander": "^14.0.3",
-		"hono": "^4.12.8",
+		"hono": "^4.13.7",
 		"just-pick": "^4.2.0",
 		"linkedom": "^0.18.12",
 		"marked": "^17.0.4",
