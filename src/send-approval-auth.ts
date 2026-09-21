@@ -12,6 +12,7 @@ import {
 import {
   generateState,
   getAccessBaseUrl,
+  resolveAccessTeamName,
   isUserAllowed,
   verifyAccessIdToken,
 } from "./oauth-utils";
@@ -225,7 +226,8 @@ export async function handleSendApprovalStart(env: Env, url: URL): Promise<Respo
   const record = await getSendApproval(env, approvalId);
   if (!record) return page("Approval not found", "<h1>Approval not found</h1><p>The link is invalid or no longer available.</p>", 404);
 
-  if (!env.ACCESS_CLIENT_ID || !env.ACCESS_TEAM_NAME) {
+  const teamName = resolveAccessTeamName(env.ACCESS_TEAM_NAME);
+  if (!env.ACCESS_CLIENT_ID || !teamName) {
     return page("Approval unavailable", "<h1>Approval unavailable</h1><p>Cloudflare Access is not configured.</p>", 500);
   }
 
@@ -233,13 +235,13 @@ export async function handleSendApprovalStart(env: Env, url: URL): Promise<Respo
   const stateData: ApprovalAuthState = {
     approvalId,
     userLogin: record.userLogin,
-    teamName: env.ACCESS_TEAM_NAME,
+    teamName,
   };
   await env.OAUTH_KV.put(`send-approval-auth:${state}`, JSON.stringify(stateData), {
     expirationTtl: AUTH_STATE_TTL_SECONDS,
   });
 
-  const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME);
+  const accessBaseUrl = getAccessBaseUrl(teamName);
   const accessAuthUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/authorization`;
   const params = new URLSearchParams({
     client_id: env.ACCESS_CLIENT_ID,

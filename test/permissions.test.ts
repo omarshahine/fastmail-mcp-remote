@@ -408,16 +408,51 @@ describe('getPermissionsConfig — fail-closed defaults', () => {
 			});
 		const kv = { get } as unknown as KVNamespace;
 
-		// First call fails → fail-closed default.
+		// First call fails → deny-all fallback.
 		const failed = await getPermissionsConfig(kv);
 		expect(failed.default_role).toBe('delegate');
 		expect(failed.users).toEqual({});
+		expect(getVisibleTools(getUserConfig(failed, 'omar@example.com')).size).toBe(0);
 
 		// A transient failure must not be cached for the 5-minute window: the
 		// very next call re-reads KV and picks up the real config.
 		const recovered = await getPermissionsConfig(kv);
 		expect(getUserConfig(recovered, 'omar@example.com').role).toBe('admin');
 		expect(get).toHaveBeenCalledTimes(2);
+	});
+
+	it('does not restore categories a user\'s policy disables when a read fails after cache expiry', async () => {
+		const restricted: PermissionsConfig = {
+			users: {
+				'limited@example.com': {
+					role: 'delegate',
+					disabled_categories: ['EMAIL_READ', 'INBOX_MANAGE'],
+				},
+			},
+			default_role: 'delegate',
+			default_disabled_categories: [],
+		};
+		const get = vi.fn().mockResolvedValueOnce(restricted).mockRejectedValue(new Error('KV unavailable'));
+		const kv = { get } as unknown as KVNamespace;
+		const now = vi.spyOn(Date, 'now');
+
+		try {
+			now.mockReturnValue(1_000_000);
+			const loaded = getUserConfig(await getPermissionsConfig(kv), 'limited@example.com');
+			expect(isToolAllowed(loaded, 'get_email').allowed).toBe(false);
+
+			// Expire the 5-minute cache, then fail the re-read.
+			now.mockReturnValue(1_000_000 + 6 * 60 * 1000);
+			const fallback = getUserConfig(await getPermissionsConfig(kv), 'limited@example.com');
+
+			for (const tool of ['get_email', 'list_mailboxes', 'delete_email', 'list_contacts', 'create_draft', 'send_email']) {
+				expect(isToolAllowed(fallback, tool).allowed).toBe(false);
+			}
+			expect(getVisibleTools(fallback).size).toBe(0);
+			expect(get).toHaveBeenCalledTimes(2);
+		} finally {
+			now.mockRestore();
+		}
 	});
 
 	it('caches a genuine miss (does not re-read KV on every call)', async () => {

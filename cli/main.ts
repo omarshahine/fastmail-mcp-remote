@@ -36,7 +36,7 @@ const auth = program
   .command("auth")
   .description("Authenticate with the Fastmail MCP server")
   .option("--url <url>", "Worker URL (required on first run)")
-  .option("--team <name>", "Cloudflare Access team name (e.g. 'myteam')")
+  .option("--team <name>", "Cloudflare Access team name, saved as a label (the server uses its ACCESS_TEAM_NAME)")
   .option("--headless", "Token paste flow for SSH / no-browser environments")
   .action(async (opts) => {
     try {

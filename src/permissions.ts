@@ -139,6 +139,16 @@ const DEFAULT_CONFIG: PermissionsConfig = {
 	default_disabled_categories: [],
 };
 
+// Served only when the permissions store cannot be READ. Unlike a genuine miss,
+// a read failure says nothing about the real policy, and the delegate default
+// would re-enable categories a user's policy disables. Deny every category
+// until the store answers again.
+const READ_FAILURE_CONFIG: PermissionsConfig = {
+	users: {},
+	default_role: 'delegate',
+	default_disabled_categories: [...new Set(Object.values(TOOL_CATEGORIES))],
+};
+
 /** Load permissions config from KV with 5-minute module-level cache. */
 export async function getPermissionsConfig(kv: KVNamespace): Promise<PermissionsConfig> {
 	const now = Date.now();
@@ -154,8 +164,8 @@ export async function getPermissionsConfig(kv: KVNamespace): Promise<Permissions
 		// here would pin it for the whole 5-minute window on one transient
 		// blip, so serve fail-closed for this request only and retry on the
 		// next one.
-		console.error(`[permissions] KV read failed — failing closed for this request: ${e}`);
-		return DEFAULT_CONFIG;
+		console.error(`[permissions] KV read failed — denying all tools for this request: ${e}`);
+		return READ_FAILURE_CONFIG;
 	}
 
 	// A genuine miss (key absent) is cacheable: the fallback is fail-closed.

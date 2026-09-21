@@ -23,11 +23,15 @@ import {
 	TOKEN_TTL_SECONDS,
 	CLIENT_TTL_SECONDS,
 	DEFAULT_SCOPE,
+	REFRESH_TOKEN_USAGE_PREFIX,
+	REFRESH_TOKEN_USAGE_TTL_SECONDS,
 	getAccessBaseUrl,
+	resolveAccessTeamName,
 	type OAuthStateData,
 	type OAuthCodeData,
 	type OAuthTokenData,
 	type OAuthRefreshTokenData,
+	type OAuthRefreshTokenUsage,
 	type OAuthClientData,
 } from './oauth-utils';
 import {
@@ -35,6 +39,8 @@ import {
 	createAuthorizationCode,
 	inspectAuthorizationCode,
 } from './oauth-code-store';
+
+const ACCESS_TEAM_NAME_ERROR = 'ACCESS_TEAM_NAME is not configured or is not a valid Cloudflare Access team name';
 
 // Issue a paired access token + refresh token and persist both in KV.
 // Refresh tokens have no KV TTL — they live until explicitly revoked.
@@ -193,10 +199,11 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 	const combinedState = clientState ? `${state}:${clientState}` : state;
 	const expiresAt = getExpiresAt(STATE_TTL_SECONDS);
 
-	// Resolve team name: env var takes priority, then query param from CLI
-	const teamName = env.ACCESS_TEAM_NAME || url.searchParams.get('team_name');
+	// The Access team comes only from deployment config. A `team_name` query
+	// parameter (sent by older CLI versions) is ignored.
+	const teamName = resolveAccessTeamName(env.ACCESS_TEAM_NAME);
 	if (!teamName) {
-		return new Response('ACCESS_TEAM_NAME not configured and no team_name parameter provided', { status: 500 });
+		return new Response(ACCESS_TEAM_NAME_ERROR, { status: 500 });
 	}
 
 	const stateData: OAuthStateData = {
@@ -206,7 +213,6 @@ export async function handleAuthorize(request: Request, env: Env, url: URL): Pro
 		code_challenge: codeChallenge,
 		code_challenge_method: codeChallengeMethod,
 		expires_at: expiresAt,
-		team_name: teamName,
 	};
 
 	await env.OAUTH_KV.put(`state:${state}`, JSON.stringify(stateData), {
@@ -274,11 +280,11 @@ export async function handleCallback(request: Request, env: Env, url: URL): Prom
 	await env.OAUTH_KV.delete(`state:${ourState}`);
 
 	try {
-		// Exchange code for tokens with Cloudflare Access
-		// Use team_name from stored state (set during authorize), falling back to env var
-		const teamName = stateResult.team_name || env.ACCESS_TEAM_NAME;
+		// Exchange code for tokens with Cloudflare Access. The team is always
+		// the configured one, never a value carried in state.
+		const teamName = resolveAccessTeamName(env.ACCESS_TEAM_NAME);
 		if (!teamName) {
-			throw new Error('ACCESS_TEAM_NAME not available');
+			throw new Error(ACCESS_TEAM_NAME_ERROR);
 		}
 		const accessBaseUrl = getAccessBaseUrl(teamName);
 		const tokenUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/token`;
@@ -552,14 +558,19 @@ async function handleRefreshTokenGrant(
 		expirationTtl: TOKEN_TTL_SECONDS,
 	});
 
-	// Update the refresh token record with the new access_token_hash link
-	// and last_used_at stamp — single write using the record we already have
-	// in hand, avoiding a second (eventually-consistent) KV read. Best-effort:
-	// the access token above is the source of truth returned to the client.
+	// Record the new access_token_hash link and last_used_at stamp under a
+	// separate key. The refresh-token record itself is never rewritten here:
+	// writing back the snapshot read above would undo a `revoked: true` (or
+	// re-create a deleted record) set by an operator in the meantime.
+	// Best-effort: the access token above is what the client receives.
 	try {
-		refreshData.access_token_hash = accessTokenHash;
-		refreshData.last_used_at = new Date().toISOString();
-		await env.OAUTH_KV.put(`refresh_token:${refreshTokenHash}`, JSON.stringify(refreshData));
+		const usage: OAuthRefreshTokenUsage = {
+			access_token_hash: accessTokenHash,
+			last_used_at: new Date().toISOString(),
+		};
+		await env.OAUTH_KV.put(`${REFRESH_TOKEN_USAGE_PREFIX}${refreshTokenHash}`, JSON.stringify(usage), {
+			expirationTtl: REFRESH_TOKEN_USAGE_TTL_SECONDS,
+		});
 	} catch (e) {
 		console.warn(`[oauth] Failed to update refresh token metadata (non-fatal): ${e}`);
 	}
@@ -906,15 +917,16 @@ export async function handleGetToken(request: Request, env: Env, url: URL): Prom
 		return new Response('OAuth not configured', { status: 500 });
 	}
 
-	// Resolve team name: env var takes priority, then query param
-	const teamName = env.ACCESS_TEAM_NAME || url.searchParams.get('team_name');
+	// The Access team comes only from deployment config. A `team_name` query
+	// parameter (sent by older CLI versions) is ignored.
+	const teamName = resolveAccessTeamName(env.ACCESS_TEAM_NAME);
 	if (!teamName) {
-		return new Response('ACCESS_TEAM_NAME not configured and no team_name parameter provided', { status: 500 });
+		return new Response(ACCESS_TEAM_NAME_ERROR, { status: 500 });
 	}
 
-	// Generate state for CSRF protection (store team_name so callback can use it)
+	// Generate state for CSRF protection
 	const state = generateState();
-	await env.OAUTH_KV.put(`direct-token-state:${state}`, JSON.stringify({ team_name: teamName }), {
+	await env.OAUTH_KV.put(`direct-token-state:${state}`, JSON.stringify({}), {
 		expirationTtl: STATE_TTL_SECONDS,
 	});
 
@@ -953,27 +965,18 @@ export async function handleGetTokenCallback(request: Request, env: Env, url: UR
 		return new Response('Missing code or state', { status: 400 });
 	}
 
-	// Validate state and extract stored data (includes team_name)
+	// Validate state (CSRF). Any team_name stored by an older version is ignored.
 	const stateDataJson = await env.OAUTH_KV.get(`direct-token-state:${state}`);
 	if (!stateDataJson) {
 		return new Response('Invalid or expired state', { status: 400 });
 	}
 	await env.OAUTH_KV.delete(`direct-token-state:${state}`);
 
-	// Parse stored state — may be 'pending' (legacy) or JSON with team_name
-	let storedTeamName: string | null = null;
-	try {
-		const parsed = JSON.parse(stateDataJson);
-		storedTeamName = parsed.team_name || null;
-	} catch {
-		// Legacy format: plain string 'pending'
-	}
-
 	try {
 		// Exchange code for tokens with Cloudflare Access
-		const teamName = storedTeamName || env.ACCESS_TEAM_NAME;
+		const teamName = resolveAccessTeamName(env.ACCESS_TEAM_NAME);
 		if (!teamName) {
-			throw new Error('ACCESS_TEAM_NAME not available');
+			throw new Error(ACCESS_TEAM_NAME_ERROR);
 		}
 		const accessBaseUrl = getAccessBaseUrl(teamName);
 		const tokenUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/token`;
