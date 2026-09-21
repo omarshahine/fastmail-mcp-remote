@@ -12,7 +12,10 @@ export const CODE_TTL_SECONDS = 60; // 1 minute
 export const TOKEN_TTL_SECONDS = 86400 * 30; // 30 days
 export const CLIENT_TTL_SECONDS = 86400 * 90; // 90 days — bounds unauthenticated /register growth
 export const CLIENT_TTL_REFRESH_INTERVAL_SECONDS = 86400; // slide a client record at most once a day
-export const DEFAULT_SCOPE = 'mcp:read mcp:write';
+// `mcp:read` is not advertised: nothing enforces a read-only scope, so offering it
+// promised a restriction the server does not apply. Requested scopes are still
+// accepted as-is, so clients and tokens that carry `mcp:read` keep working.
+export const DEFAULT_SCOPE = 'mcp:write';
 
 // Redirect URIs are constrained to a host allowlist at authorize, token, and
 // registration time so that open, unauthenticated dynamic client registration
