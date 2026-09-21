@@ -344,7 +344,7 @@ Add `ACCESS_TEAM_NAME` and `ALLOWED_USERS` as plaintext vars in your `wrangler.j
 }
 ```
 
-- **ACCESS_TEAM_NAME**: Your Cloudflare Zero Trust team name (the subdomain before `.cloudflareaccess.com`)
+- **ACCESS_TEAM_NAME**: Your Cloudflare Zero Trust team name (the subdomain before `.cloudflareaccess.com`). Required: sign-in fails until it is set. The CLI's `--team` flag no longer selects the team.
 - **ALLOWED_USERS**: Comma-separated list of email addresses allowed to access the server
 - **SEND_APPROVAL_MODE**: Outbound mail policy. `required` is the default and server-enforced. `client` relies on the MCP client's tool approval UI. `off` sends directly.
 

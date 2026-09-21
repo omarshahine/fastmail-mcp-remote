@@ -89,8 +89,23 @@ export function isAllowedRedirectUri(
 	return hosts.some((h) => host === h || host.endsWith(`.${h}`));
 }
 
+// A Cloudflare Zero Trust team name is a single DNS label.
+const ACCESS_TEAM_NAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+
+// Resolve the Access team from deployment configuration only. The team decides
+// where the client secret is sent and which issuer and JWKS are trusted, so it
+// must never come from a request. Returns null when unset or malformed.
+export function resolveAccessTeamName(configured: string | undefined | null): string | null {
+	const teamName = configured?.trim();
+	if (!teamName || !ACCESS_TEAM_NAME_PATTERN.test(teamName)) return null;
+	return teamName;
+}
+
 // Build Access base URL from team name (set via ACCESS_TEAM_NAME env var)
 export function getAccessBaseUrl(teamName: string): string {
+	if (!ACCESS_TEAM_NAME_PATTERN.test(teamName)) {
+		throw new Error('Invalid Access team name');
+	}
 	return `https://${teamName}.cloudflareaccess.com/cdn-cgi/access/sso/oidc`;
 }
 
@@ -381,8 +396,10 @@ export interface OAuthTokenData {
 }
 
 // Refresh tokens never expire (no expires_at). `revoked` is the kill switch.
-// `access_token_hash` pairs the refresh token with its most-recently-minted
-// access token for audit/revoke chaining.
+// `access_token_hash` pairs the refresh token with the access token minted
+// alongside it. Later refreshes record their usage under
+// `refresh_token_usage:<hash>` instead, so this record is written only at issue
+// time and an operator's revocation can never be overwritten.
 export interface OAuthRefreshTokenData {
 	client_id: string;
 	user_id: string;
@@ -392,6 +409,16 @@ export interface OAuthRefreshTokenData {
 	created_at: string;
 	last_used_at?: string;
 	revoked?: boolean;
+}
+
+export const REFRESH_TOKEN_USAGE_PREFIX = 'refresh_token_usage:';
+// Rewritten on every refresh, so an active token's entry never lapses.
+export const REFRESH_TOKEN_USAGE_TTL_SECONDS = 90 * 24 * 60 * 60;
+
+// Most recent use of a refresh token (audit/revoke chaining).
+export interface OAuthRefreshTokenUsage {
+	access_token_hash: string;
+	last_used_at: string;
 }
 
 export interface OAuthClientData {
@@ -526,9 +553,9 @@ export async function validateAccessToken(
 }
 
 // Validate refresh token (KV-based). Refresh tokens never expire — only
-// `revoked=true` invalidates them. Returns the full KV record plus the
-// computed `token_hash` so callers can stamp `last_used_at` (and any other
-// mutations) in a single write without a second eventually-consistent read.
+// `revoked=true` (or deleting the record) invalidates them. Returns the KV
+// record plus the computed `token_hash`. Callers must not write the record
+// back: that would overwrite a revocation made after this read.
 export async function validateRefreshToken(
 	kv: KVNamespace,
 	token: string

@@ -133,17 +133,6 @@ export function startCallbackServer(expectedState: string): Promise<{
   });
 }
 
-/** Prompt the user for input on the terminal. */
-function prompt(question: string): Promise<string> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
-
 /** Prompt for a secret without echoing the answer to the terminal. */
 export function promptSecret(
   question: string,
@@ -184,16 +173,9 @@ async function resolveAuthParams(
     process.exit(1);
   }
 
-  let resolvedTeamName = teamName || config?.teamName;
-  if (!resolvedTeamName) {
-    resolvedTeamName = await prompt(
-      "Cloudflare Access team name (e.g. 'myteam' from myteam.cloudflareaccess.com): ",
-    );
-    if (!resolvedTeamName) {
-      console.error("Error: Team name is required for authentication.");
-      process.exit(1);
-    }
-  }
+  // The server always uses its own ACCESS_TEAM_NAME. The team name is kept in
+  // the config only as a label for `fastmail auth status`.
+  const resolvedTeamName = teamName || config?.teamName || "";
 
   return { baseUrl, teamName: resolvedTeamName, config };
 }
@@ -269,7 +251,7 @@ export async function authenticate(
   const { port, codePromise, server } = await startCallbackServer(oauthState);
   const redirectUri = `http://127.0.0.1:${port}/callback`;
 
-  // Build authorization URL (pass team_name so Worker can construct CF Access URL)
+  // Build authorization URL. The Worker picks the Access team from its config.
   const authParams = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
@@ -277,7 +259,6 @@ export async function authenticate(
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
     state: oauthState,
-    team_name: resolvedTeamName,
   });
   const authUrl = `${baseUrl}/mcp/authorize?${authParams}`;
 
@@ -351,13 +332,9 @@ export async function authenticateHeadless(
     process.exit(1);
   }
 
-  // Team name is optional — the server uses its ACCESS_TEAM_NAME env var as default.
-  // Only include it in the URL if explicitly provided via CLI arg or saved config.
+  // The server always uses its own ACCESS_TEAM_NAME; the team name is only a label.
   const resolvedTeamName = teamName || config?.teamName;
-  const tokenParams = resolvedTeamName
-    ? `?team_name=${encodeURIComponent(resolvedTeamName)}`
-    : "";
-  const tokenUrl = `${baseUrl}/get-token${tokenParams}`;
+  const tokenUrl = `${baseUrl}/get-token`;
 
   console.log("Headless authentication mode");
   console.log("\u2500".repeat(50));

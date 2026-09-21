@@ -506,6 +506,78 @@ describe('handleToken — client registration TTL slides on use', () => {
 		expect(writes[0][2]).toEqual({ expirationTtl: CLIENT_TTL_SECONDS });
 	});
 
+	it('a refresh racing an operator revocation leaves the revocation in place', async () => {
+		const refreshToken = 'refresh-token-value';
+		const tokenHash = await hashToken(refreshToken);
+		const refreshKey = `refresh_token:${tokenHash}`;
+		const { kv, store } = makeKv({
+			[refreshKey]: {
+				client_id: 'registered-client',
+				user_id: 'user-1',
+				user_login: 'allowed@example.com',
+				scope: 'mcp:read mcp:write',
+				access_token_hash: 'old-hash',
+				created_at: new Date(Date.now() - 86_400_000).toISOString(),
+			},
+		});
+		// The operator revokes the record after the grant has validated it
+		// (i.e. when the new access token is written), before it finishes.
+		const put = kv.put;
+		kv.put = vi.fn(async (key: string, value: string) => {
+			await put(key, value);
+			if (key.startsWith('token:')) {
+				store[refreshKey] = { ...(store[refreshKey] as object), revoked: true };
+			}
+		});
+
+		const first = await handleToken(
+			tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken }),
+			env(kv)
+		);
+		expect(first.status).toBe(200);
+
+		expect(store[refreshKey]).toMatchObject({ revoked: true, access_token_hash: 'old-hash' });
+		expect(store[`refresh_token_usage:${tokenHash}`]).toMatchObject({
+			access_token_hash: expect.any(String),
+			last_used_at: expect.any(String),
+		});
+
+		const second = await handleToken(
+			tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken }),
+			env(kv)
+		);
+		expect(second.status).toBe(400);
+		expect(await second.json()).toMatchObject({ error: 'invalid_grant' });
+	});
+
+	it('a refresh does not re-create a refresh-token record deleted mid-grant', async () => {
+		const refreshToken = 'refresh-token-value';
+		const refreshKey = `refresh_token:${await hashToken(refreshToken)}`;
+		const { kv, store } = makeKv({
+			[refreshKey]: {
+				client_id: 'registered-client',
+				user_id: 'user-1',
+				user_login: 'allowed@example.com',
+				scope: 'mcp:read mcp:write',
+				access_token_hash: 'old-hash',
+				created_at: new Date(Date.now() - 86_400_000).toISOString(),
+			},
+		});
+		const put = kv.put;
+		kv.put = vi.fn(async (key: string, value: string) => {
+			await put(key, value);
+			if (key.startsWith('token:')) delete store[refreshKey];
+		});
+
+		const response = await handleToken(
+			tokenRequest({ grant_type: 'refresh_token', refresh_token: refreshToken }),
+			env(kv)
+		);
+
+		expect(response.status).toBe(200);
+		expect(store[refreshKey]).toBeUndefined();
+	});
+
 	it('still issues a token when the client record has already lapsed', async () => {
 		const refreshToken = 'refresh-token-value';
 		const refreshKey = `refresh_token:${await hashToken(refreshToken)}`;

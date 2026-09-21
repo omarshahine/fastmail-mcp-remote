@@ -12,6 +12,7 @@ import {
 import {
   generateState,
   getAccessBaseUrl,
+  resolveAccessTeamName,
   isUserAllowed,
   verifyAccessIdToken,
 } from "./oauth-utils";
@@ -23,7 +24,6 @@ const AUTH_STATE_TTL_SECONDS = 10 * 60;
 interface ApprovalAuthState {
   approvalId: string;
   userLogin: string;
-  teamName: string;
 }
 
 function escapeHtml(value: unknown): string {
@@ -225,7 +225,8 @@ export async function handleSendApprovalStart(env: Env, url: URL): Promise<Respo
   const record = await getSendApproval(env, approvalId);
   if (!record) return page("Approval not found", "<h1>Approval not found</h1><p>The link is invalid or no longer available.</p>", 404);
 
-  if (!env.ACCESS_CLIENT_ID || !env.ACCESS_TEAM_NAME) {
+  const teamName = resolveAccessTeamName(env.ACCESS_TEAM_NAME);
+  if (!env.ACCESS_CLIENT_ID || !teamName) {
     return page("Approval unavailable", "<h1>Approval unavailable</h1><p>Cloudflare Access is not configured.</p>", 500);
   }
 
@@ -233,13 +234,12 @@ export async function handleSendApprovalStart(env: Env, url: URL): Promise<Respo
   const stateData: ApprovalAuthState = {
     approvalId,
     userLogin: record.userLogin,
-    teamName: env.ACCESS_TEAM_NAME,
   };
   await env.OAUTH_KV.put(`send-approval-auth:${state}`, JSON.stringify(stateData), {
     expirationTtl: AUTH_STATE_TTL_SECONDS,
   });
 
-  const accessBaseUrl = getAccessBaseUrl(env.ACCESS_TEAM_NAME);
+  const accessBaseUrl = getAccessBaseUrl(teamName);
   const accessAuthUrl = `${accessBaseUrl}/${env.ACCESS_CLIENT_ID}/authorization`;
   const params = new URLSearchParams({
     client_id: env.ACCESS_CLIENT_ID,
@@ -262,8 +262,10 @@ export async function handleSendApprovalCallback(env: Env, url: URL): Promise<Re
   const stateData = JSON.parse(stateJson) as ApprovalAuthState;
 
   try {
-    if (!env.ACCESS_CLIENT_ID || !env.ACCESS_CLIENT_SECRET) throw new Error("Cloudflare Access is not configured");
-    const tokenResponse = await fetch(`${getAccessBaseUrl(stateData.teamName)}/${env.ACCESS_CLIENT_ID}/token`, {
+    // Resolve the team from configuration now; never from state.
+    const teamName = resolveAccessTeamName(env.ACCESS_TEAM_NAME);
+    if (!env.ACCESS_CLIENT_ID || !env.ACCESS_CLIENT_SECRET || !teamName) throw new Error("Cloudflare Access is not configured");
+    const tokenResponse = await fetch(`${getAccessBaseUrl(teamName)}/${env.ACCESS_CLIENT_ID}/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -278,7 +280,7 @@ export async function handleSendApprovalCallback(env: Env, url: URL): Promise<Re
     const tokenData = await tokenResponse.json<{ id_token?: string }>();
     if (!tokenData.id_token) throw new Error("Cloudflare Access did not return an identity token");
     const identity = await verifyAccessIdToken(tokenData.id_token, {
-      teamName: stateData.teamName,
+      teamName,
       clientId: env.ACCESS_CLIENT_ID,
     });
     if (!isUserAllowed(identity.email, env.ALLOWED_USERS || "")) throw new Error("User is not allowed");
