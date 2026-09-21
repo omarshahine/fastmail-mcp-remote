@@ -42,5 +42,8 @@
 		"typescript": "5.9.3",
 		"vitest": "^4.0.18",
 		"wrangler": "^4.75.0"
+	},
+	"overrides": {
+		"sharp": "0.35.4"
 	}
 }
