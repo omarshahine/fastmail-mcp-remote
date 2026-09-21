@@ -6,6 +6,7 @@ import {
 	handleGetTokenCallback,
 } from '../src/oauth-handler';
 import { getAccessBaseUrl, resolveAccessTeamName } from '../src/oauth-utils';
+import { handleSendApprovalCallback } from '../src/send-approval-auth';
 
 const TEAM_NAME = 'example-team';
 const CLIENT_ID = 'access-client-id';
@@ -172,6 +173,31 @@ describe('callbacks use only the configured Access team', () => {
 		const url = new URL('https://worker.example/get-token/callback?code=abc&state=s2');
 
 		const response = await handleGetTokenCallback(new Request(url), makeEnv(kv, null), url);
+
+		expect(response.status).toBeGreaterThanOrEqual(400);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('handleSendApprovalCallback exchanges the code with the configured team, not the stored one', async () => {
+		const fetchMock = stubAccessFetch();
+		const kv = makeKv({
+			'send-approval-auth:s3': JSON.stringify({ approvalId: 'a1', userLogin: 'allowed@example.com', teamName: 'attacker' }),
+		});
+		const url = new URL('https://worker.example/mcp/callback?code=abc&state=s3');
+
+		await handleSendApprovalCallback(makeEnv(kv), url);
+
+		expect(fetchedHosts(fetchMock)).toEqual([CONFIGURED_HOST]);
+	});
+
+	it('handleSendApprovalCallback sends nothing when ACCESS_TEAM_NAME is unset', async () => {
+		const fetchMock = stubAccessFetch();
+		const kv = makeKv({
+			'send-approval-auth:s3': JSON.stringify({ approvalId: 'a1', userLogin: 'allowed@example.com', teamName: 'attacker' }),
+		});
+		const url = new URL('https://worker.example/mcp/callback?code=abc&state=s3');
+
+		const response = await handleSendApprovalCallback(makeEnv(kv, null), url);
 
 		expect(response.status).toBeGreaterThanOrEqual(400);
 		expect(fetchMock).not.toHaveBeenCalled();
