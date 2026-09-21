@@ -93,7 +93,7 @@ function handleProtectedResourceMetadata(c: { req: { url: string } }): Response 
     JSON.stringify({
       resource: `${url.origin}/mcp`,
       authorization_servers: [url.origin],
-      scopes_supported: ["mcp:read", "mcp:write"],
+      scopes_supported: ["mcp:write"],
       bearer_methods_supported: ["header"],
       resource_name: "Fastmail MCP",
       resource_documentation: url.origin,

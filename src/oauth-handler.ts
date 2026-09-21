@@ -109,7 +109,7 @@ export function handleOAuthDiscovery(url: URL): Response {
 		authorization_endpoint: `${url.origin}/mcp/authorize`,
 		token_endpoint: `${url.origin}/mcp/token`,
 		registration_endpoint: `${url.origin}/register`,
-		scopes_supported: ['mcp:read', 'mcp:write'],
+		scopes_supported: ['mcp:write'],
 		response_types_supported: ['code'],
 		response_modes_supported: ['query'],
 		grant_types_supported: ['authorization_code', 'refresh_token'],

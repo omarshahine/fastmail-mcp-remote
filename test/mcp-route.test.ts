@@ -181,7 +181,7 @@ describe('OAuth discovery routes', () => {
 		expect(await response.json()).toEqual({
 			resource: 'https://worker.example/mcp',
 			authorization_servers: ['https://worker.example'],
-			scopes_supported: ['mcp:read', 'mcp:write'],
+			scopes_supported: ['mcp:write'],
 			bearer_methods_supported: ['header'],
 			resource_name: 'Fastmail MCP',
 			resource_documentation: 'https://worker.example',
@@ -202,7 +202,7 @@ describe('OAuth discovery routes', () => {
 			authorization_endpoint: 'https://worker.example/mcp/authorize',
 			token_endpoint: 'https://worker.example/mcp/token',
 			registration_endpoint: 'https://worker.example/register',
-			scopes_supported: ['mcp:read', 'mcp:write'],
+			scopes_supported: ['mcp:write'],
 			response_types_supported: ['code'],
 			response_modes_supported: ['query'],
 			grant_types_supported: ['authorization_code', 'refresh_token'],
