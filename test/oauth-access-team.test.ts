@@ -203,3 +203,29 @@ describe('callbacks use only the configured Access team', () => {
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
 });
+
+describe('default OAuth scope', () => {
+	// mcp:read is no longer advertised because nothing enforced it. A client that
+	// omits `scope` must be recorded with the default, which no longer claims a
+	// read-only restriction the server does not apply.
+	async function storedStateScope(url: URL): Promise<string> {
+		const kv = makeKv();
+		const res = await handleAuthorize(new Request(url), makeEnv(kv), url);
+		expect(res.status).toBeLessThan(400);
+		const entry = [...kv.store.entries()].find(([k]) => k.startsWith('state:'));
+		expect(entry, 'authorize must store its state').toBeDefined();
+		return JSON.parse(entry![1]).scope;
+	}
+
+	it('records mcp:write when the authorize request omits scope', async () => {
+		const scope = await storedStateScope(oobAuthorizeUrl(TEAM_NAME));
+		expect(scope).toBe('mcp:write');
+		expect(scope).not.toContain('mcp:read');
+	});
+
+	it('still accepts an explicit mcp:read as sent, so older clients keep working', async () => {
+		const url = oobAuthorizeUrl(TEAM_NAME);
+		url.searchParams.set('scope', 'mcp:read');
+		expect(await storedStateScope(url)).toBe('mcp:read');
+	});
+});

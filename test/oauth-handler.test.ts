@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleGetTokenCallback, handleAuthorize, handleToken } from '../src/oauth-handler';
-import { CLIENT_TTL_SECONDS, hashToken } from '../src/oauth-utils';
+import { CLIENT_TTL_SECONDS, DEFAULT_SCOPE, hashToken } from '../src/oauth-utils';
 import { OAuthCodeStore } from '../src/oauth-code-store';
 
 const TEAM_NAME = 'example-team';
@@ -366,6 +366,37 @@ describe('handleToken — client registration TTL slides on use', () => {
 	function clientWrites(put: ReturnType<typeof vi.fn>) {
 		return put.mock.calls.filter((call: any[]) => String(call[0]).startsWith('client:'));
 	}
+
+	it('returns the default mcp:write scope recorded on the code in the token response', async () => {
+		// The scope a client omitted at authorize time is carried on the code and
+		// echoed here. Guards against the default silently regaining mcp:read.
+		const { kv, store } = makeKv({
+			'code:auth-code-default': {
+				client_id: 'registered-client',
+				user_id: 'user-1',
+				user_login: 'allowed@example.com',
+				user_email: 'allowed@example.com',
+				scope: DEFAULT_SCOPE,
+				redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+				code_challenge: null,
+				code_challenge_method: null,
+				expires_at: new Date(Date.now() + 60_000).toISOString(),
+				used: false,
+			},
+		});
+		const response = await handleToken(
+			tokenRequest({
+				grant_type: 'authorization_code',
+				code: 'auth-code-default',
+				client_id: 'registered-client',
+				redirect_uri: 'https://claude.ai/api/mcp/auth_callback',
+			}),
+			env(kv, store)
+		);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { scope?: string };
+		expect(body.scope).toBe('mcp:write');
+	});
 
 	it('slides the registration on the authorization_code grant', async () => {
 		const { kv, put, store } = makeKv({
