@@ -1,3 +1,8 @@
+---
+name: fastmail
+description: Use Fastmail CLI tools to read and manage email, contacts, and calendars through the remote Fastmail service.
+---
+
 # Fastmail Tools
 
 Token-efficient tools for Fastmail email, contacts, and calendar. Each tool shells out to the `fastmail` CLI, which connects to a remote Fastmail MCP Worker and returns compact text optimized for LLM token efficiency (5-7x savings vs raw JSON).
