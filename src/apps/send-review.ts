@@ -79,7 +79,7 @@ const BODY = `
   .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); }
   .badge[data-status="sent"] { color: var(--accent); border-color: var(--accent); }
-  .badge[data-status="declined"], .badge[data-status="expired"] { color: var(--danger); border-color: var(--danger); }
+  .badge[data-status="declined"], .badge[data-status="expired"], .badge[data-status="error"] { color: var(--danger); border-color: var(--danger); }
   .fields { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 0; }
   .fields dt { color: var(--muted); }
   .fields dd { margin: 0; }
@@ -204,8 +204,39 @@ ${UNMARK_SCRIPT}
     });
   });
 
+  // A result that never needed approval: a saved draft, a direct send, or an error.
+  var settle = function (status, label, text) {
+    var badge = $("status");
+    badge.setAttribute("data-status", status);
+    badge.textContent = label;
+    show("approve", false);
+    show("hint", false);
+    show("link", false);
+    setMessage(text);
+  };
+
+  var resultText = function (result) {
+    var parts = (result && result.content) || [];
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i] && parts[i].type === "text" && parts[i].text) return parts[i].text;
+    }
+    return "";
+  };
+
   app.onToolResult(function (result) {
     var data = result && result.structuredContent;
+    if (result && result.isError) {
+      settle("error", "Error", resultText(result) || "The email could not be prepared.");
+      return;
+    }
+    if (data && typeof data.approvalId !== "string" && data.status === "draft") {
+      settle("draft", "Draft", "Saved as draft. Nothing was sent.");
+      return;
+    }
+    if (data && typeof data.approvalId !== "string" && data.status === "sent") {
+      settle("sent", "Sent", "Sent.");
+      return;
+    }
     if (!data || typeof data.approvalId !== "string") {
       setStatus("unknown");
       $("status").textContent = "No approval";

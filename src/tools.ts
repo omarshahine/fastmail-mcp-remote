@@ -257,6 +257,23 @@ function approvalResult(record: SendApprovalRecord, url: string): ToolResult {
   );
 }
 
+/**
+ * Send tool results outside the approval flow. The send review card (MCP
+ * Apps) renders these as a saved draft, a completed send or an error instead
+ * of reporting a missing approval.
+ */
+function draftResult(text: string, draftId: string): ToolResult {
+  return { content: [{ type: "text", text }], structuredContent: { draftId, status: "draft" } };
+}
+
+function sentResult(text: string): ToolResult {
+  return { content: [{ type: "text", text }], structuredContent: { status: "sent" } };
+}
+
+function sendToolError(text: string): ToolResult {
+  return { content: [{ type: "text", text }], isError: true };
+}
+
 async function requestModernApproval(
   ctx: ToolContext,
   extra: any,
@@ -789,9 +806,7 @@ export function registerAllTools(
         if (resumed) return resumed;
 
         if (!textBody && !htmlBody && !markdownBody) {
-          return {
-            content: [{ text: "Error: Either textBody, htmlBody, or markdownBody is required", type: "text" }],
-          };
+          return sendToolError("Error: Either textBody, htmlBody, or markdownBody is required");
         }
 
         try {
@@ -827,14 +842,10 @@ export function registerAllTools(
           const attachmentCount = attachments?.length || 0;
           const attachmentNote = attachmentCount > 0 ? ` with ${attachmentCount} attachment(s)` : "";
           const replyNote = inReplyTo ? " (reply)" : "";
-          return {
-            content: [{ text: `Email sent successfully${attachmentNote}${replyNote}. Submission ID: ${submissionId}`, type: "text" }],
-          };
+          return sentResult(`Email sent successfully${attachmentNote}${replyNote}. Submission ID: ${submissionId}`);
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ text: `Failed to send email: ${errorMessage}`, type: "text" }],
-          };
+          return sendToolError(`Failed to send email: ${errorMessage}`);
         }
       },
     );
@@ -868,14 +879,10 @@ export function registerAllTools(
             return await prepareSendApproval(ctx, extra, "send_copy", draftId);
           }
           const submissionId = await client.sendCopy({ emailId, to, cc, bcc, from });
-          return {
-            content: [{ text: `Copy sent successfully. Submission ID: ${submissionId}\nOriginal email: ${emailId}\nRecipients: ${[...to, ...(cc || []), ...(bcc || [])].join(", ")}`, type: "text" }],
-          };
+          return sentResult(`Copy sent successfully. Submission ID: ${submissionId}\nOriginal email: ${emailId}\nRecipients: ${[...to, ...(cc || []), ...(bcc || [])].join(", ")}`);
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ text: `Failed to send copy: ${errorMessage}`, type: "text" }],
-          };
+          return sendToolError(`Failed to send copy: ${errorMessage}`);
         }
       },
     );
@@ -994,16 +1001,12 @@ export function registerAllTools(
           const original = await client.getEmailById(emailId);
 
           if (!original) {
-            return {
-              content: [{ text: `Error: Email with ID '${emailId}' not found`, type: "text" }],
-            };
+            return sendToolError(`Error: Email with ID '${emailId}' not found`);
           }
 
           const replyToAddrs = original.replyTo || original.from || [];
           if (replyToAddrs.length === 0) {
-            return {
-              content: [{ text: `Error: Cannot reply - email has no sender address`, type: "text" }],
-            };
+            return sendToolError(`Error: Cannot reply - email has no sender address`);
           }
           const toRecipients = replyToAddrs.map((addr: any) => addr.email);
           const toRecipientsLower = toRecipients.map((e: string) => e.toLowerCase());
@@ -1064,14 +1067,9 @@ export function registerAllTools(
               inReplyTo,
               references,
             });
-            return {
-              content: [
-                {
-                  text: `Reply sent successfully. Submission ID: ${submissionId}\nTo: ${toRecipients.join(", ")}${ccRecipients.length > 0 ? `\nCC: ${ccRecipients.join(", ")}` : ""}`,
-                  type: "text",
-                },
-              ],
-            };
+            return sentResult(
+              `Reply sent successfully. Submission ID: ${submissionId}\nTo: ${toRecipients.join(", ")}${ccRecipients.length > 0 ? `\nCC: ${ccRecipients.join(", ")}` : ""}`,
+            );
           } else {
             const draftId = await client.createDraft({
               to: toRecipients,
@@ -1083,20 +1081,14 @@ export function registerAllTools(
               inReplyTo,
               references,
             });
-            return {
-              content: [
-                {
-                  text: `Reply draft created successfully. Draft ID: ${draftId}\nTo: ${toRecipients.join(", ")}${ccRecipients.length > 0 ? `\nCC: ${ccRecipients.join(", ")}` : ""}\nSubject: ${subject}`,
-                  type: "text",
-                },
-              ],
-            };
+            return draftResult(
+              `Reply draft created successfully. Draft ID: ${draftId}\nTo: ${toRecipients.join(", ")}${ccRecipients.length > 0 ? `\nCC: ${ccRecipients.join(", ")}` : ""}\nSubject: ${subject}`,
+              draftId,
+            );
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ text: `Failed to create reply: ${errorMessage}`, type: "text" }],
-          };
+          return sendToolError(`Failed to create reply: ${errorMessage}`);
         }
       },
     );
@@ -1137,14 +1129,14 @@ export function registerAllTools(
         }
 
         if (to.length === 0) {
-          return { content: [{ text: "Error: At least one recipient is required to forward an email", type: "text" }] };
+          return sendToolError("Error: At least one recipient is required to forward an email");
         }
 
         try {
           const client = ctx.getJmapClient();
           const original = await client.getEmailById(emailId);
           if (!original) {
-            return { content: [{ text: `Error: Email with ID '${emailId}' not found`, type: "text" }] };
+            return sendToolError(`Error: Email with ID '${emailId}' not found`);
           }
 
           let subject = original.subject || "";
@@ -1190,14 +1182,14 @@ export function registerAllTools(
               return await prepareSendApproval(ctx, extra, "forward_email", draftId);
             }
             const submissionId = await client.sendEmail(message);
-            return { content: [{ text: `Forward sent successfully. Submission ID: ${submissionId}\n${summary}`, type: "text" }] };
+            return sentResult(`Forward sent successfully. Submission ID: ${submissionId}\n${summary}`);
           }
 
           const draftId = await client.createDraft(message);
-          return { content: [{ text: `Forward draft created successfully. Draft ID: ${draftId}\n${summary}`, type: "text" }] };
+          return draftResult(`Forward draft created successfully. Draft ID: ${draftId}\n${summary}`, draftId);
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          return { content: [{ text: `Failed to forward email: ${errorMessage}`, type: "text" }] };
+          return sendToolError(`Failed to forward email: ${errorMessage}`);
         }
       },
     );

@@ -343,3 +343,116 @@ describe("send review app", () => {
     expect(calls.every(([name]) => name === "ui_get_send_review")).toBe(true);
   });
 });
+
+describe("send review card outside the approval flow", () => {
+  function sourceEmail() {
+    return {
+      id: "source-1",
+      subject: "Trip plans",
+      from: [{ name: "Alex", email: "alex@example.com" }],
+      to: [{ email: "sender@example.com" }],
+      receivedAt: "2026-09-16T21:17:00Z",
+      messageId: ["orig@example.com"],
+      references: [],
+      textBody: [{ partId: "1", type: "text/plain" }],
+      htmlBody: [],
+      bodyValues: { "1": { value: "Hi" } },
+      attachments: [],
+    };
+  }
+
+  function sendClient() {
+    return {
+      ...fakeClient(),
+      getEmailById: vi.fn().mockResolvedValue(sourceEmail()),
+      getUserEmail: vi.fn().mockResolvedValue("sender@example.com"),
+      sendEmail: vi.fn().mockResolvedValue("submission-1"),
+      sendCopy: vi.fn().mockResolvedValue("submission-2"),
+      createDraft: vi.fn().mockResolvedValue("draft-plain"),
+    };
+  }
+
+  const offEnv = () => ({ ...testEnv(), SEND_APPROVAL_MODE: "off" }) as unknown as Env;
+
+  it.each([
+    ["reply_to_email", { emailId: "source-1", body: "Thanks" }],
+    ["forward_email", { emailId: "source-1", to: ["lora@example.com"], body: "FYI" }],
+  ])("%s draft results carry a draft status", async (name, args) => {
+    const h = harness({ client: sendClient() });
+    const result = await h.handlers.get(name)!({ sendImmediately: false, ...args }, {});
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({ draftId: "draft-plain", status: "draft" });
+  });
+
+  it.each([
+    ["send_email", { to: ["r@example.com"], subject: "S", textBody: "B" }],
+    ["send_copy", { emailId: "source-1", to: ["r@example.com"] }],
+    ["reply_to_email", { emailId: "source-1", body: "Thanks", sendImmediately: true }],
+    ["forward_email", { emailId: "source-1", to: ["r@example.com"], body: "FYI", sendImmediately: true }],
+  ])("%s direct sends (approval off) carry a sent status", async (name, args) => {
+    const h = harness({ env: offEnv(), client: sendClient() });
+    const result = await h.handlers.get(name)!(args, {});
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({ status: "sent" });
+  });
+
+  it.each([
+    ["send_email", { to: ["r@example.com"], subject: "S" }, "Either textBody"],
+    ["send_copy", { emailId: "source-1", to: ["r@example.com"] }, "Failed to send copy"],
+    ["reply_to_email", { emailId: "source-1", body: "Thanks", sendImmediately: false }, "Failed to create reply"],
+    ["forward_email", { emailId: "source-1", to: [], sendImmediately: false }, "At least one recipient"],
+  ])("%s errors are flagged as errors", async (name, args, text) => {
+    const client = sendClient();
+    client.sendCopy.mockRejectedValue(new Error("boom"));
+    client.createDraft.mockRejectedValue(new Error("boom"));
+    client.getEmailById.mockResolvedValue(sourceEmail());
+    const h = harness({ env: offEnv(), client });
+    const result = await h.handlers.get(name)!(args, {});
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain(text);
+    expect(result.structuredContent).toBeUndefined();
+  });
+
+  it("the card shows a saved draft neutrally", async () => {
+    const h = harness({ client: sendClient() });
+    const draft = await h.handlers.get("reply_to_email")!({ emailId: "source-1", body: "Thanks", sendImmediately: false }, {});
+    const { document, result } = runReviewView({});
+    result(draft);
+    await tick();
+    expect(document.getElementById("status")!.textContent).toBe("Draft");
+    expect(document.getElementById("message")!.textContent).toBe("Saved as draft. Nothing was sent.");
+    expect(document.getElementById("approve")!.hidden).toBe(true);
+  });
+
+  it("the card shows a direct send as sent", async () => {
+    const h = harness({ env: offEnv(), client: sendClient() });
+    const sent = await h.handlers.get("send_email")!({ to: ["r@example.com"], subject: "S", textBody: "B" }, {});
+    const { document, result } = runReviewView({});
+    result(sent);
+    await tick();
+    expect(document.getElementById("status")!.textContent).toBe("Sent");
+    expect(document.getElementById("message")!.textContent).toBe("Sent.");
+    expect(document.getElementById("approve")!.hidden).toBe(true);
+  });
+
+  it("the card shows an error's text, not a missing approval", async () => {
+    const client = sendClient();
+    client.createDraft.mockRejectedValue(new Error("mailbox unavailable"));
+    const h = harness({ client });
+    const failed = await h.handlers.get("forward_email")!({ emailId: "source-1", to: ["r@example.com"], sendImmediately: false }, {});
+    const { document, result } = runReviewView({});
+    result(failed);
+    await tick();
+    expect(document.getElementById("status")!.textContent).toBe("Error");
+    expect(document.getElementById("status")!.getAttribute("data-status")).toBe("error");
+    expect(document.getElementById("message")!.textContent).toBe("Failed to forward email: mailbox unavailable");
+    expect(document.getElementById("message")!.textContent).not.toContain("approval");
+  });
+
+  it("the card still reports a result with nothing to show", async () => {
+    const { document, result } = runReviewView({});
+    result({ content: [{ type: "text", text: "?" }] });
+    await tick();
+    expect(document.getElementById("status")!.textContent).toBe("No approval");
+  });
+});

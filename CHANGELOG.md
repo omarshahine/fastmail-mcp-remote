@@ -35,6 +35,10 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `/mcp` accepts browser `Origin` headers (such as claude.ai) on both protocol
   eras. Every request is Bearer-validated, so the SDK Origin allowlist is off.
 - Cc and Bcc addresses are now included in direct-send SMTP envelopes.
+- `send_email`, `send_copy`, `reply_to_email` and `forward_email` failures now
+  set `isError`. Draft results carry `{ draftId, status: "draft" }` and direct
+  sends carry `{ status: "sent" }`, so the send review card shows a saved
+  draft, a completed send or the error instead of "No approval".
 - Client registration TTL now slides whenever a client proves it is in use — both
   token grants and any request that validates a bearer token — so a client keeps
   its registered `redirect_uris` enforced instead of silently falling back to
