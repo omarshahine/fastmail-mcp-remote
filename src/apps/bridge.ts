@@ -32,6 +32,7 @@ export function installBridge(win: any): void {
     lastResult: undefined as any,
     hasInput: false,
     hasResult: false,
+    initialized: false,
     lastHeight: -1,
     post(message: any) {
       host.postMessage(message, "*");
@@ -51,7 +52,11 @@ export function installBridge(win: any): void {
       if (params !== undefined) message.params = params;
       state.post(message);
     },
+    // No-op until the ui/initialize response: browsers fire the first
+    // ResizeObserver callback on the next frame, usually before the host
+    // answers, and a host may ignore pre-handshake notifications.
     reportSize() {
+      if (!state.initialized) return;
       var doc = win.document;
       var height = Math.ceil(
         (doc && doc.documentElement && doc.documentElement.scrollHeight) ||
@@ -144,7 +149,10 @@ export function installBridge(win: any): void {
       protocolVersion: "2026-01-26",
     },
     () => {
+      state.initialized = true;
       state.notify("ui/notifications/initialized");
+      // Always send the first size after the handshake, whatever was measured.
+      state.lastHeight = -1;
       state.reportSize();
     },
     () => undefined,

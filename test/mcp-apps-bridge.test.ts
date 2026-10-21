@@ -146,10 +146,36 @@ describe("MCP Apps bridge", () => {
   });
 
   it("reports size changes", () => {
-    const { sent, observers } = ready();
+    const { win, sent, observers } = ready();
+    const sizes = () => sent.filter((m) => m.method === "ui/notifications/size-changed");
+    expect(sizes().map((m) => m.params)).toEqual([{ height: 321 }]);
+    win.document.documentElement.scrollHeight = 500;
     observers.forEach((cb) => cb());
-    const size = sent.find((m) => m.method === "ui/notifications/size-changed");
-    expect(size.params).toEqual({ height: 321 });
+    expect(sizes().map((m) => m.params)).toEqual([{ height: 321 }, { height: 500 }]);
+  });
+
+  it("sends the first size after initialized even if the observer fired earlier", () => {
+    const fake = fakeWindow();
+    // Browsers fire the initial observation before the host's init response;
+    // model that by firing synchronously inside observe().
+    fake.win.ResizeObserver = class {
+      cb: () => void;
+      constructor(cb: () => void) {
+        this.cb = cb;
+      }
+      observe() {
+        this.cb();
+      }
+    };
+    install(fake.win);
+    expect(fake.sent.map((m) => m.method)).toEqual(["ui/initialize"]);
+    fake.dispatch({ jsonrpc: "2.0", id: fake.sent[0].id, result: {} });
+    expect(fake.sent.map((m) => m.method)).toEqual([
+      "ui/initialize",
+      "ui/notifications/initialized",
+      "ui/notifications/size-changed",
+    ]);
+    expect(fake.sent[2].params).toEqual({ height: 321 });
   });
 
   it("resource-teardown is answered", () => {

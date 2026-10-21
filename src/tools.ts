@@ -6,7 +6,11 @@
  * endpoint (/mcp/code) both call this with different ToolContext implementations.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  McpServer,
+  type ReadResourceCallback,
+  type ResourceMetadata,
+} from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   inputRequired,
   inputResponse,
@@ -542,7 +546,13 @@ export interface RegisterToolsOptions {
  * Every handler is wrapped in the per-user permission check and every input
  * goes through `strictShape`.
  */
-export type ToolRegistrar = McpServer & { readonly appsEnabled: boolean };
+export interface ToolRegistrar {
+  readonly appsEnabled: boolean;
+  tool: McpServer["tool"];
+  registerTool: McpServer["registerTool"];
+  /** Four-argument form only: `metadata` is required. */
+  resource(name: string, uri: string, metadata: ResourceMetadata, read: ReadResourceCallback): void;
+}
 
 export function createToolRegistrar(
   rawServer: McpServer,
