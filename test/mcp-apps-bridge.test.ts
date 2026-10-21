@@ -296,7 +296,7 @@ describe("MCP Apps registration plumbing", () => {
     const { server, tools, resources } = rawServer();
     registerAllTools(server as never, ctx(), undefined, { apps: true });
     expect(tools.size).toBeGreaterThan(0);
-    expect([...resources.values()].map((resource: any) => resource.uri)).toEqual([SEND_REVIEW_URI]);
+    expect([...resources.values()].map((resource: any) => resource.uri)).toEqual([SEND_REVIEW_URI, EMAIL_READER_URI]);
   });
 
   it("legacyShapedModernServer forwards _meta and resources to the v2 server", () => {

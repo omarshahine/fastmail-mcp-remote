@@ -78,6 +78,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
 	// MEMO (private notes on emails)
 	create_memo: 'INBOX_MANAGE',
 	get_memo: 'EMAIL_READ',
+	ui_get_email_view: 'EMAIL_READ',
 	delete_memo: 'INBOX_MANAGE',
 
 	// DRAFT

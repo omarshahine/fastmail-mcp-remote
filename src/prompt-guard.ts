@@ -270,7 +270,8 @@ function markToolResult(result: unknown, toolName: string): unknown {
     toolName === "advanced_search" ||
     toolName === "get_thread" ||
     toolName === "get_inbox_updates" ||
-    toolName === "ui_get_send_review"
+    toolName === "ui_get_send_review" ||
+    toolName === "ui_get_email_view"
   ) {
     if (Array.isArray(marked.messages)) {
       marked.messages = (marked.messages as Array<Record<string, unknown>>).map((m) => markItem(m, "mail"));
@@ -310,6 +311,8 @@ const EXTERNAL_DATA_TOOLS = new Set([
   "get_memo",
   // Send review card: replies and forwards quote external mail.
   "ui_get_send_review",
+  // Email reader view: headers and bodies of received mail.
+  "ui_get_email_view",
 ]);
 
 /**

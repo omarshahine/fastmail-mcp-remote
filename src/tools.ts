@@ -39,8 +39,9 @@ import {
 } from "./send-approval";
 import { gateBulkOperation } from "./bulk-confirm";
 import type { ModernRequestState } from "./mcp-server";
-import { APP_ONLY, SEND_REVIEW_URI, UI_MIME_TYPE } from "./apps/constants";
+import { APP_ONLY, EMAIL_READER_URI, SEND_REVIEW_URI, UI_MIME_TYPE } from "./apps/constants";
 import { buildSendReviewView, renderSendReviewApp } from "./apps/send-review";
+import { buildEmailReaderView, renderEmailReaderApp } from "./apps/email-reader";
 import {
   formatEmailList,
   formatMailboxes,
@@ -59,6 +60,7 @@ import {
 
 /** `_meta` linking the four send tools to the send review card (MCP Apps). */
 const SEND_REVIEW_META = { ui: { resourceUri: SEND_REVIEW_URI } };
+const EMAIL_READER_META = { ui: { resourceUri: EMAIL_READER_URI } };
 
 /** Tools that return email lists where addresses can be flattened (Alt C) */
 const EMAIL_LIST_TOOLS = new Set([
@@ -712,15 +714,18 @@ export function registerAllTools(
   }
 
   if (shouldRegister("get_email")) {
-    server.tool(
+    server.registerTool(
       "get_email",
-      "Get a specific email by ID. Returns LLM-friendly markdown by default (converts HTML to clean markdown, strips tracking pixels and layout noise). Use format='html' to get the raw JMAP JSON when you need to inspect original HTML.",
       {
-        emailId: z.string().describe("ID of the email to retrieve"),
-        format: z
-          .enum(["markdown", "html"])
-          .default("markdown")
-          .describe("Output format: 'markdown' (default) returns clean readable text, 'html' returns raw JMAP JSON"),
+        description: "Get a specific email by ID. Returns LLM-friendly markdown by default (converts HTML to clean markdown, strips tracking pixels and layout noise). Use format='html' to get the raw JMAP JSON when you need to inspect original HTML.",
+        inputSchema: {
+          emailId: z.string().describe("ID of the email to retrieve"),
+          format: z
+            .enum(["markdown", "html"])
+            .default("markdown")
+            .describe("Output format: 'markdown' (default) returns clean readable text, 'html' returns raw JMAP JSON"),
+        },
+        _meta: EMAIL_READER_META,
       },
       async ({ emailId, format }) => {
         const client = ctx.getJmapClient();
@@ -1237,6 +1242,58 @@ export function registerAllTools(
     );
   }
 
+  // MCP Apps: the email reader shown next to get_email / get_thread, and its
+  // app-only data tool.
+  if (server.appsEnabled) {
+    server.resource(
+      "email-reader",
+      EMAIL_READER_URI,
+      {
+        title: "Email",
+        description: "Reader for one email or thread, with read, flag, archive and draft-reply actions.",
+        mimeType: UI_MIME_TYPE,
+        _meta: { ui: { prefersBorder: true } },
+      },
+      async () => ({
+        contents: [{ uri: EMAIL_READER_URI, mimeType: UI_MIME_TYPE, text: renderEmailReaderApp() }],
+      }),
+    );
+  }
+
+  if (server.appsEnabled && shouldRegister("ui_get_email_view")) {
+    server.registerTool(
+      "ui_get_email_view",
+      {
+        description: "Email reader data: headers, read/flag state and a sanitized preview for one email or every message in a thread, plus the archive mailbox. Called by the reader view only.",
+        inputSchema: {
+          emailId: z.string().optional().describe("ID of one email to show"),
+          threadId: z.string().optional().describe("ID of a thread to show"),
+        },
+        _meta: APP_ONLY,
+      },
+      async ({ emailId, threadId }) => {
+        const hasEmail = typeof emailId === "string" && emailId !== "";
+        const hasThread = typeof threadId === "string" && threadId !== "";
+        if (hasEmail === hasThread) {
+          return {
+            content: [{ type: "text" as const, text: "Provide exactly one of emailId or threadId." }],
+            isError: true,
+          };
+        }
+        try {
+          const view = await buildEmailReaderView(ctx, hasEmail ? { emailId: emailId! } : { threadId: threadId! });
+          const guarded = ctx.guardResponse("ui_get_email_view", view);
+          return { content: guarded.content, structuredContent: { ...view } };
+        } catch (error) {
+          return {
+            content: [{ type: "text" as const, text: `Email view failed: ${error instanceof Error ? error.message : String(error)}` }],
+            isError: true,
+          };
+        }
+      },
+    );
+  }
+
   if (shouldRegister("update_draft")) {
     server.tool(
       "update_draft",
@@ -1580,15 +1637,18 @@ export function registerAllTools(
   }
 
   if (shouldRegister("get_thread")) {
-    server.tool(
+    server.registerTool(
       "get_thread",
-      "Get all emails in a conversation thread. Returns LLM-friendly markdown by default (converts HTML to clean markdown, strips tracking pixels and layout noise). Use format='html' to get the raw JMAP JSON when you need to inspect original HTML.",
       {
-        threadId: z.string().describe("ID of the thread/conversation"),
-        format: z
-          .enum(["markdown", "html"])
-          .default("markdown")
-          .describe("Output format: 'markdown' (default) returns clean readable text, 'html' returns raw JMAP JSON"),
+        description: "Get all emails in a conversation thread. Returns LLM-friendly markdown by default (converts HTML to clean markdown, strips tracking pixels and layout noise). Use format='html' to get the raw JMAP JSON when you need to inspect original HTML.",
+        inputSchema: {
+          threadId: z.string().describe("ID of the thread/conversation"),
+          format: z
+            .enum(["markdown", "html"])
+            .default("markdown")
+            .describe("Output format: 'markdown' (default) returns clean readable text, 'html' returns raw JMAP JSON"),
+        },
+        _meta: EMAIL_READER_META,
       },
       async ({ threadId, format }) => {
         const client = ctx.getJmapClient();
