@@ -9,8 +9,9 @@ const READ = [
 	'get_inbox_updates', 'get_email_attachments', 'download_attachment', 'advanced_search',
 	'get_thread', 'get_memo', 'get_mailbox_stats', 'get_account_summary', 'list_identities',
 	'list_contacts', 'get_contact', 'search_contacts', 'list_calendars', 'list_calendar_events',
-	'get_calendar_event', 'generate_email_action_urls', 'check_function_availability',
+	'get_calendar_event', 'check_function_availability',
 ];
+const WRITE_NON_IDEMPOTENT = ['create_draft', 'create_memo', 'create_calendar_event', 'generate_email_action_urls'];
 const DESTRUCTIVE = ['delete_email', 'delete_memo', 'bulk_delete', 'bulk_move'];
 const SEND = ['send_email', 'send_copy', 'reply_to_email', 'forward_email'];
 
@@ -48,6 +49,18 @@ describe('tool annotations', () => {
 	it('read tools are read-only', () => {
 		const configs = registeredTools();
 		for (const name of READ) expect(configs.get(name)?.annotations.readOnlyHint, name).toBe(true);
+	});
+
+	it('non-idempotent writes, including action URL minting, are plain writes', () => {
+		const configs = registeredTools();
+		for (const name of WRITE_NON_IDEMPOTENT) {
+			expect(configs.get(name)?.annotations, name).toEqual({
+				readOnlyHint: false,
+				destructiveHint: false,
+				idempotentHint: false,
+				openWorldHint: false,
+			});
+		}
 	});
 
 	it('destructive and send tools are marked destructive', () => {

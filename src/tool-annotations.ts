@@ -47,7 +47,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = Object.fromEntr
       "get_inbox_updates", "get_email_attachments", "download_attachment", "advanced_search",
       "get_thread", "get_memo", "get_mailbox_stats", "get_account_summary", "list_identities",
       "list_contacts", "get_contact", "search_contacts", "list_calendars", "list_calendar_events",
-      "get_calendar_event", "generate_email_action_urls", "check_function_availability",
+      "get_calendar_event", "check_function_availability",
       "ui_get_send_review", "ui_get_email_view",
     ],
     READ,
@@ -56,7 +56,12 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = Object.fromEntr
     ["update_draft", "mark_email_read", "flag_email", "move_email", "bulk_mark_read", "bulk_flag"],
     writeAnnotations(true),
   ),
-  ...entries(["create_draft", "create_memo", "create_calendar_event"], writeAnnotations(false)),
+  // generate_email_action_urls mints bearer archive/delete links, so it is a
+  // write even though it does not touch the mailbox itself.
+  ...entries(
+    ["create_draft", "create_memo", "create_calendar_event", "generate_email_action_urls"],
+    writeAnnotations(false),
+  ),
   // bulk_move is destructive: on 2026-09-06 a mis-scoped call moved 200 emails.
   ...entries(["delete_email", "delete_memo", "bulk_delete", "bulk_move"], DESTRUCTIVE),
   ...entries(["send_email", "send_copy", "reply_to_email", "forward_email"], SEND),
