@@ -21,21 +21,26 @@ const bearerFetch: typeof fetch = (input, init) => {
 };
 
 const negotiationModes = [
-	{ label: 'legacy', versionNegotiation: { mode: 'legacy' } },
-	{ label: 'auto', versionNegotiation: { mode: 'auto' } },
-	{ label: 'pin 2026-07-28', versionNegotiation: { pin: '2026-07-28' } },
+	{ label: 'legacy', versionNegotiation: { mode: 'legacy' }, version: /^2025-/ },
+	{ label: 'auto', versionNegotiation: { mode: 'auto' }, version: /^2026-07-28$/ },
+	{ label: 'pin 2026-07-28', versionNegotiation: { mode: { pin: '2026-07-28' } }, version: /^2026-07-28$/ },
 ] as const;
 
 describe.skipIf(!hasLiveCredentials)('live MCP client compatibility matrix', () => {
-	describe.each(negotiationModes)('/mcp with $label negotiation', ({ versionNegotiation }) => {
+	describe.each(negotiationModes)('/mcp with $label negotiation', ({ versionNegotiation, version }) => {
 		async function withClient<T>(run: (client: ClientV2) => Promise<T>): Promise<T> {
 			const client = new ClientV2(
 				{ name: 'mcp-compat-test', version: '1.0.0' },
-				{ versionNegotiation: versionNegotiation as any },
+				{
+					versionNegotiation,
+					// The server gates MCP Apps on this extension for 2026-07-28 requests.
+					capabilities: { extensions: { 'io.modelcontextprotocol/ui': {} } },
+				},
 			);
 			const transport = new TransportV2(endpoint('/mcp'), { fetch: bearerFetch });
 			await client.connect(transport);
 			try {
+				expect(client.getNegotiatedProtocolVersion()).toMatch(version);
 				return await run(client);
 			} finally {
 				await client.close();
