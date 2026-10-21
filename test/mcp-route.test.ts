@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { durableFetch } = vi.hoisted(() => ({
 	durableFetch: vi.fn(async (request: Request) =>
@@ -52,6 +52,9 @@ vi.mock('../src/permissions', async (importOriginal) => {
 
 import app from '../src/index';
 import { validateAccessToken } from '../src/oauth-utils';
+import { getVisibleTools } from '../src/permissions';
+import { JmapClient } from '../src/jmap-client';
+import { SendApprovalStore } from '../src/send-approval';
 
 const env = {
 	ACTION_SIGNING_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
@@ -261,6 +264,120 @@ describe('/mcp single stateless v2 server', () => {
 		expect(response.status).toBe(400);
 		const body = await readJsonRpc(response);
 		expect(body.error.code).toBe(-32020);
+	});
+});
+
+/** In-memory SEND_APPROVALS namespace backed by the real SendApprovalStore. */
+function memoryApprovalNamespace() {
+	const stores = new Map<string, SendApprovalStore>();
+	const memoryState = () => {
+		const values = new Map<string, unknown>();
+		let queue: Promise<unknown> = Promise.resolve();
+		return {
+			storage: {
+				get: async (key: string) => values.get(key),
+				put: async (key: string, value: unknown) => void values.set(key, structuredClone(value)),
+				setAlarm: async () => undefined,
+				deleteAll: async () => values.clear(),
+			},
+			blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T> {
+				const result = queue.then(callback);
+				queue = result.then(() => undefined, () => undefined);
+				return result;
+			},
+		};
+	};
+	return {
+		getByName(id: string) {
+			let store = stores.get(id);
+			if (!store) {
+				store = new SendApprovalStore(memoryState() as unknown as DurableObjectState, {} as Env);
+				stores.set(id, store);
+			}
+			return { fetch: (request: Request | string, init?: RequestInit) => store!.fetch(new Request(request, init)) };
+		},
+	};
+}
+
+/** Every JSON-RPC message in a JSON or SSE response body. */
+async function readAllJsonRpc(response: Response): Promise<any[]> {
+	const text = await response.text();
+	if (!(response.headers.get('content-type') ?? '').includes('text/event-stream')) {
+		return [JSON.parse(text)];
+	}
+	return text
+		.split('\n')
+		.filter((line) => line.startsWith('data:'))
+		.map((line) => JSON.parse(line.slice('data:'.length).trim()));
+}
+
+describe('/mcp legacy send approval', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.mocked(getVisibleTools).mockImplementation(() => new Set(['list_mailboxes']));
+	});
+
+	it('2025-era send_email returns the approval URL in text, with no elicitation', async () => {
+		vi.mocked(getVisibleTools).mockImplementation(() => new Set(['list_mailboxes', 'send_email']));
+		const createDraft = vi.spyOn(JmapClient.prototype, 'createDraft').mockResolvedValue('draft-route');
+		vi.spyOn(JmapClient.prototype, 'getDraftApprovalSnapshot').mockResolvedValue({
+			blobId: 'raw-message-route',
+			from: 'user@example.com',
+			to: ['recipient@example.com'],
+			cc: [],
+			bcc: [],
+			subject: 'Route approval',
+			textBody: 'Hello',
+			htmlBody: '',
+			attachments: [],
+			inReplyTo: [],
+			references: [],
+			truncated: false,
+		} as any);
+		const sendEmail = vi.spyOn(JmapClient.prototype, 'sendEmail');
+		const sendEnv = {
+			...env,
+			SEND_APPROVAL_MODE: 'required',
+			WORKER_URL: 'https://mail.example.test',
+			SEND_APPROVALS: memoryApprovalNamespace(),
+		} as unknown as Env;
+
+		const response = await app.request(
+			new Request('https://worker.example/mcp', {
+				method: 'POST',
+				headers: {
+					Authorization: 'Bearer test-token',
+					'Content-Type': 'application/json',
+					Accept: 'application/json, text/event-stream',
+					'Mcp-Protocol-Version': '2025-06-18',
+				},
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 7,
+					method: 'tools/call',
+					params: {
+						name: 'send_email',
+						arguments: { to: ['recipient@example.com'], subject: 'Route approval', textBody: 'Hello' },
+					},
+				}),
+			}),
+			undefined,
+			sendEnv,
+			executionCtx,
+		);
+
+		expect(response.status).toBe(200);
+		const messages = await readAllJsonRpc(response);
+		// No server-to-client request (elicitation/create or otherwise) on the legacy lane.
+		expect(messages.filter((message) => 'method' in message)).toEqual([]);
+		const result = messages.find((message) => message.id === 7)?.result;
+		expect(result, JSON.stringify(messages)).toBeDefined();
+		expect(result.resultType).not.toBe('input_required');
+		expect(result.inputRequests).toBeUndefined();
+		expect(result.content[0].text).toContain('https://mail.example.test/approve/send/');
+		expect(createDraft).toHaveBeenCalledOnce();
+		expect(sendEmail).not.toHaveBeenCalled();
+		expect(durableFetch).not.toHaveBeenCalled();
 	});
 });
 
