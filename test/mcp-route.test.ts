@@ -55,6 +55,7 @@ import { validateAccessToken } from '../src/oauth-utils';
 import { getVisibleTools } from '../src/permissions';
 import { JmapClient } from '../src/jmap-client';
 import { SendApprovalStore } from '../src/send-approval';
+import { SEND_REVIEW_URI, UI_MIME_TYPE } from '../src/apps/constants';
 
 const env = {
 	ACTION_SIGNING_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
@@ -267,6 +268,27 @@ describe('/mcp single stateless v2 server', () => {
 		expect(response.status).toBe(200);
 		const body = await readJsonRpc(response);
 		expect(body.result.supportedVersions).toContain('2026-07-28');
+	});
+
+	it('modern resources/read returns the send review app', async () => {
+		const response = await mcpPost(
+			{
+				jsonrpc: '2.0',
+				id: 8,
+				method: 'resources/read',
+				params: { uri: SEND_REVIEW_URI, _meta: modernMeta },
+			},
+			{
+				'Mcp-Method': 'resources/read',
+				'Mcp-Name': SEND_REVIEW_URI,
+				'Mcp-Protocol-Version': '2026-07-28',
+			},
+		);
+
+		const body = await readJsonRpc(response);
+		expect(response.status, JSON.stringify(body)).toBe(200);
+		expect(body.result.contents[0].mimeType).toBe(UI_MIME_TYPE);
+		expect(body.result.contents[0].text).toContain('fastmailApp');
 	});
 
 	it('modern tools/call with mismatched Mcp-Name is rejected', async () => {

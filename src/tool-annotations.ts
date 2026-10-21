@@ -48,6 +48,7 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = Object.fromEntr
       "get_thread", "get_memo", "get_mailbox_stats", "get_account_summary", "list_identities",
       "list_contacts", "get_contact", "search_contacts", "list_calendars", "list_calendar_events",
       "get_calendar_event", "generate_email_action_urls", "check_function_availability",
+      "ui_get_send_review",
     ],
     READ,
   ),

@@ -91,6 +91,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
 	// SEND
 	send_email: 'SEND',
 	send_copy: 'SEND',
+	ui_get_send_review: 'SEND',
 
 	// EMAIL_READ (incremental sync)
 	get_inbox_updates: 'EMAIL_READ',

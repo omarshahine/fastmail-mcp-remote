@@ -147,7 +147,7 @@ const UNTRUSTED_FIELDS: Record<string, string[]> = {
   // Contact fields
   contact: ["notes", "organization", "jobTitle", "prefix", "suffix", "nickname"],
   // Mail fields - highest risk since email is externally authored
-  mail: ["subject", "from", "sender", "body", "content", "snippet", "preview", "textBody", "htmlBody"],
+  mail: ["subject", "from", "sender", "body", "content", "snippet", "preview", "textBody", "htmlBody", "previewDocument"],
   // Memos can contain quoted or copied third-party content.
   memo: ["text"],
 };
@@ -269,7 +269,8 @@ function markToolResult(result: unknown, toolName: string): unknown {
     toolName === "get_recent_emails" ||
     toolName === "advanced_search" ||
     toolName === "get_thread" ||
-    toolName === "get_inbox_updates"
+    toolName === "get_inbox_updates" ||
+    toolName === "ui_get_send_review"
   ) {
     if (Array.isArray(marked.messages)) {
       marked.messages = (marked.messages as Array<Record<string, unknown>>).map((m) => markItem(m, "mail"));
@@ -307,6 +308,8 @@ const EXTERNAL_DATA_TOOLS = new Set([
   "get_calendar_event",
   "list_calendars",
   "get_memo",
+  // Send review card: replies and forwards quote external mail.
+  "ui_get_send_review",
 ]);
 
 /**

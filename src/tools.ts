@@ -39,6 +39,8 @@ import {
 } from "./send-approval";
 import { gateBulkOperation } from "./bulk-confirm";
 import type { ModernRequestState } from "./mcp-server";
+import { APP_ONLY, SEND_REVIEW_URI, UI_MIME_TYPE } from "./apps/constants";
+import { buildSendReviewView, renderSendReviewApp } from "./apps/send-review";
 import {
   formatEmailList,
   formatMailboxes,
@@ -54,6 +56,9 @@ import {
   formatInboxUpdates,
   flattenEmailList,
 } from "./formatters";
+
+/** `_meta` linking the four send tools to the send review card (MCP Apps). */
+const SEND_REVIEW_META = { ui: { resourceUri: SEND_REVIEW_URI } };
 
 /** Tools that return email lists where addresses can be flattened (Alt C) */
 const EMAIL_LIST_TOOLS = new Set([
@@ -223,24 +228,31 @@ export function guardResponse(
 }
 
 function approvalResult(record: SendApprovalRecord, url: string): ToolResult {
+  // The send review card (MCP Apps) reads `approvalId` from here and fetches
+  // the preview through `ui_get_send_review`. It can only open `reviewUrl`.
+  const structuredContent = {
+    approvalId: record.id,
+    status: record.status,
+    expiresAt: record.expiresAt,
+    reviewUrl: url,
+    draftId: record.draftId,
+  };
+  const text = (value: string): ToolResult => ({ content: [{ type: "text", text: value }], structuredContent });
   if (record.status === "sent") {
-    return { content: [{ type: "text", text: `Email sent successfully. Submission ID: ${record.submissionId || "unknown"}` }] };
+    return text(`Email sent successfully. Submission ID: ${record.submissionId || "unknown"}`);
   }
   if (record.status === "declined") {
-    return { content: [{ type: "text", text: `Email not sent. The approval was declined. Draft ID: ${record.draftId}` }] };
+    return text(`Email not sent. The approval was declined. Draft ID: ${record.draftId}`);
   }
   if (record.status === "expired") {
-    return { content: [{ type: "text", text: `Email not sent. The approval expired. Draft ID: ${record.draftId}` }] };
+    return text(`Email not sent. The approval expired. Draft ID: ${record.draftId}`);
   }
   if (record.status === "sending") {
-    return { content: [{ type: "text", text: `The email send is being processed. Check Fastmail Sent before retrying. Draft ID: ${record.draftId}` }] };
+    return text(`The email send is being processed. Check Fastmail Sent before retrying. Draft ID: ${record.draftId}`);
   }
-  return {
-    content: [{
-      type: "text",
-      text: `Email prepared as a Fastmail draft. Nothing will be sent until you approve it.\n\nReview and approve: ${url}\nDraft ID: ${record.draftId}\nApproval expires: ${record.expiresAt}`,
-    }],
-  };
+  return text(
+    `Email prepared as a Fastmail draft. Nothing will be sent until you approve it.\n\nReview and approve: ${url}\nDraft ID: ${record.draftId}\nApproval expires: ${record.expiresAt}`,
+  );
 }
 
 async function requestModernApproval(
@@ -726,39 +738,42 @@ export function registerAllTools(
   }
 
   if (shouldRegister("send_email")) {
-    server.tool(
+    server.registerTool(
       "send_email",
-      "Prepare and send a new email. In the default required-approval mode, this creates a Fastmail draft and returns an authenticated review URL; the email is submitted only after approval. Supports file attachments via base64-encoded content. For replies, use reply_to_email.",
       {
-        to: z.array(z.string()).describe("Recipient email addresses"),
-        cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
-        bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
-        from: z.string().optional().describe("Sender email address (optional, defaults to account primary email)"),
-        subject: z.string().describe("Email subject"),
-        textBody: z.string().optional().describe("Plain text body (optional)"),
-        htmlBody: z.string().optional().describe("HTML body (optional)"),
-        markdownBody: z
-          .string()
-          .optional()
-          .describe("Markdown body (optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
-        attachments: z
-          .array(
-            z.object({
-              filename: z.string().describe("Filename for the attachment (e.g., 'report.pdf')"),
-              mimeType: z.string().describe("MIME type (e.g., 'application/pdf', 'image/png')"),
-              content: z.string().describe("Base64-encoded file content"),
-            }),
-          )
-          .optional()
-          .describe("File attachments (optional). Each attachment needs filename, mimeType, and base64 content. Max 25MB per file."),
-        inReplyTo: z
-          .array(z.string())
-          .optional()
-          .describe("Advanced: Message-ID(s) this email is replying to. For true replies, prefer `reply_to_email` — it handles threading, recipients, subject, and quoted source. Only use this here for edge cases (forwards, cross-thread references) where you explicitly do not want auto-quoting."),
-        references: z
-          .array(z.string())
-          .optional()
-          .describe("Advanced: Message-ID chain for threading. For true replies, prefer `reply_to_email` — it computes this from the source email automatically."),
+        description: "Prepare and send a new email. In the default required-approval mode, this creates a Fastmail draft and returns an authenticated review URL; the email is submitted only after approval. Supports file attachments via base64-encoded content. For replies, use reply_to_email.",
+        inputSchema: {
+          to: z.array(z.string()).describe("Recipient email addresses"),
+          cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
+          bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
+          from: z.string().optional().describe("Sender email address (optional, defaults to account primary email)"),
+          subject: z.string().describe("Email subject"),
+          textBody: z.string().optional().describe("Plain text body (optional)"),
+          htmlBody: z.string().optional().describe("HTML body (optional)"),
+          markdownBody: z
+            .string()
+            .optional()
+            .describe("Markdown body (optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
+          attachments: z
+            .array(
+              z.object({
+                filename: z.string().describe("Filename for the attachment (e.g., 'report.pdf')"),
+                mimeType: z.string().describe("MIME type (e.g., 'application/pdf', 'image/png')"),
+                content: z.string().describe("Base64-encoded file content"),
+              }),
+            )
+            .optional()
+            .describe("File attachments (optional). Each attachment needs filename, mimeType, and base64 content. Max 25MB per file."),
+          inReplyTo: z
+            .array(z.string())
+            .optional()
+            .describe("Advanced: Message-ID(s) this email is replying to. For true replies, prefer `reply_to_email` — it handles threading, recipients, subject, and quoted source. Only use this here for edge cases (forwards, cross-thread references) where you explicitly do not want auto-quoting."),
+          references: z
+            .array(z.string())
+            .optional()
+            .describe("Advanced: Message-ID chain for threading. For true replies, prefer `reply_to_email` — it computes this from the source email automatically."),
+        },
+        _meta: SEND_REVIEW_META,
       },
       async ({ to, cc, bcc, from, subject, textBody, htmlBody, markdownBody, attachments, inReplyTo, references }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates even if the outer Hono check is bypassed
@@ -821,15 +836,18 @@ export function registerAllTools(
   }
 
   if (shouldRegister("send_copy")) {
-    server.tool(
+    server.registerTool(
       "send_copy",
-      "Prepare and send a copy of an existing email to a new recipient (equivalent to Fastmail's 'Send a copy...' menu item). In required-approval mode, returns an authenticated review URL and submits only after approval. Preserves the original subject, body, and embedded images while changing the recipients.",
       {
-        emailId: z.string().describe("ID of the existing email to send a copy of"),
-        to: z.array(z.string()).describe("Recipient email addresses for the copy"),
-        cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
-        bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
-        from: z.string().optional().describe("Sender identity to use (optional, defaults to account primary). Must be a verified identity."),
+        description: "Prepare and send a copy of an existing email to a new recipient (equivalent to Fastmail's 'Send a copy...' menu item). In required-approval mode, returns an authenticated review URL and submits only after approval. Preserves the original subject, body, and embedded images while changing the recipients.",
+        inputSchema: {
+          emailId: z.string().describe("ID of the existing email to send a copy of"),
+          to: z.array(z.string()).describe("Recipient email addresses for the copy"),
+          cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
+          bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
+          from: z.string().optional().describe("Sender identity to use (optional, defaults to account primary). Must be a verified identity."),
+        },
+        _meta: SEND_REVIEW_META,
       },
       async ({ emailId, to, cc, bcc, from }, extra) => {
         const denied = await ctx.checkToolPermission('send_copy');
@@ -933,26 +951,29 @@ export function registerAllTools(
   }
 
   if (shouldRegister("reply_to_email")) {
-    server.tool(
+    server.registerTool(
       "reply_to_email",
-      "Reply to an email with proper threading and quoting, just like Fastmail's reply button. Automatically handles recipients, subject, threading headers, and quotes the original message. This is the ONLY correct way to draft or send a reply. With sendImmediately=false (default), it creates a reply draft. With sendImmediately=true in required-approval mode, it returns an authenticated review URL and submits only after approval. Do NOT use create_draft for replies.",
       {
-        emailId: z.string().describe("ID of the email to reply to"),
-        body: z.string().describe("Your reply message (plain text)"),
-        htmlBody: z.string().optional().describe("Your reply message (HTML, optional). If not provided, plain text body is used."),
-        markdownBody: z
-          .string()
-          .optional()
-          .describe(
-            "Your reply message (Markdown, optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided.",
-          ),
-        from: z
-          .string()
-          .optional()
-          .describe("Sender email address (optional, defaults to account primary email). Use list_identities to see available aliases."),
-        replyAll: z.boolean().default(false).describe("If true, reply to all recipients (sender + CC). Default is reply to sender only."),
-        sendImmediately: z.boolean().default(false).describe("If true, send the reply immediately. If false (default), create a draft."),
-        excludeQuote: z.boolean().default(false).describe("If true, don't include quoted original message. Default includes quote."),
+        description: "Reply to an email with proper threading and quoting, just like Fastmail's reply button. Automatically handles recipients, subject, threading headers, and quotes the original message. This is the ONLY correct way to draft or send a reply. With sendImmediately=false (default), it creates a reply draft. With sendImmediately=true in required-approval mode, it returns an authenticated review URL and submits only after approval. Do NOT use create_draft for replies.",
+        inputSchema: {
+          emailId: z.string().describe("ID of the email to reply to"),
+          body: z.string().describe("Your reply message (plain text)"),
+          htmlBody: z.string().optional().describe("Your reply message (HTML, optional). If not provided, plain text body is used."),
+          markdownBody: z
+            .string()
+            .optional()
+            .describe(
+              "Your reply message (Markdown, optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided.",
+            ),
+          from: z
+            .string()
+            .optional()
+            .describe("Sender email address (optional, defaults to account primary email). Use list_identities to see available aliases."),
+          replyAll: z.boolean().default(false).describe("If true, reply to all recipients (sender + CC). Default is reply to sender only."),
+          sendImmediately: z.boolean().default(false).describe("If true, send the reply immediately. If false (default), create a draft."),
+          excludeQuote: z.boolean().default(false).describe("If true, don't include quoted original message. Default includes quote."),
+        },
+        _meta: SEND_REVIEW_META,
       },
       async ({ emailId, body, htmlBody, markdownBody, from, replyAll, sendImmediately, excludeQuote }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates from sending replies immediately
@@ -1077,26 +1098,29 @@ export function registerAllTools(
   }
 
   if (shouldRegister("forward_email")) {
-    server.tool(
+    server.registerTool(
       "forward_email",
-      "Forward an existing email to new recipients, just like Fastmail's Forward button. Adds a 'Fwd:' subject, an optional note from you above a '---------- Forwarded message ----------' header (From, Date, Subject, To, Cc), the original message body exactly as received, and all original attachments (including inline images). This is the ONLY correct way to forward. Do NOT rebuild a forward by hand with send_email or create_draft: that loses the original formatting and attachments. With sendImmediately=false (default), it creates a draft. With sendImmediately=true in required-approval mode, it returns an authenticated review URL and submits only after approval. To send the original unchanged with no forward header, use send_copy instead.",
       {
-        emailId: z.string().describe("ID of the email to forward"),
-        to: z.array(z.string()).describe("Recipient email addresses"),
-        cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
-        bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
-        body: z.string().optional().describe("Your note above the forwarded message (plain text, optional). Do not paste the original email here; it is included automatically."),
-        htmlBody: z.string().optional().describe("Your note (HTML, optional). If not provided, plain text body is used."),
-        markdownBody: z
-          .string()
-          .optional()
-          .describe("Your note (Markdown, optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
-        from: z
-          .string()
-          .optional()
-          .describe("Sender email address (optional, defaults to account primary email). Use list_identities to see available aliases."),
-        includeAttachments: z.boolean().default(true).describe("If false, drop the original's attachments (inline images in the body are always kept). Default forwards them."),
-        sendImmediately: z.boolean().default(false).describe("If true, send the forward immediately. If false (default), create a draft."),
+        description: "Forward an existing email to new recipients, just like Fastmail's Forward button. Adds a 'Fwd:' subject, an optional note from you above a '---------- Forwarded message ----------' header (From, Date, Subject, To, Cc), the original message body exactly as received, and all original attachments (including inline images). This is the ONLY correct way to forward. Do NOT rebuild a forward by hand with send_email or create_draft: that loses the original formatting and attachments. With sendImmediately=false (default), it creates a draft. With sendImmediately=true in required-approval mode, it returns an authenticated review URL and submits only after approval. To send the original unchanged with no forward header, use send_copy instead.",
+        inputSchema: {
+          emailId: z.string().describe("ID of the email to forward"),
+          to: z.array(z.string()).describe("Recipient email addresses"),
+          cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
+          bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
+          body: z.string().optional().describe("Your note above the forwarded message (plain text, optional). Do not paste the original email here; it is included automatically."),
+          htmlBody: z.string().optional().describe("Your note (HTML, optional). If not provided, plain text body is used."),
+          markdownBody: z
+            .string()
+            .optional()
+            .describe("Your note (Markdown, optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
+          from: z
+            .string()
+            .optional()
+            .describe("Sender email address (optional, defaults to account primary email). Use list_identities to see available aliases."),
+          includeAttachments: z.boolean().default(true).describe("If false, drop the original's attachments (inline images in the body are always kept). Default forwards them."),
+          sendImmediately: z.boolean().default(false).describe("If true, send the forward immediately. If false (default), create a draft."),
+        },
+        _meta: SEND_REVIEW_META,
       },
       async ({ emailId, to, cc, bcc, body, htmlBody, markdownBody, from, includeAttachments, sendImmediately }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates from sending forwards immediately
@@ -1170,6 +1194,45 @@ export function registerAllTools(
           const errorMessage = error instanceof Error ? error.message : String(error);
           return { content: [{ text: `Failed to forward email: ${errorMessage}`, type: "text" }] };
         }
+      },
+    );
+  }
+
+  // MCP Apps: the send review card and its app-only data tool. Code Mode
+  // (`/mcp/code`) registers without apps, so neither exists there.
+  if (server.appsEnabled) {
+    server.resource(
+      "send-review",
+      SEND_REVIEW_URI,
+      {
+        title: "Email review",
+        description: "Preview of an email awaiting approval, with a link to the authenticated approval page.",
+        mimeType: UI_MIME_TYPE,
+        _meta: { ui: { prefersBorder: true } },
+      },
+      async () => ({
+        contents: [{ uri: SEND_REVIEW_URI, mimeType: UI_MIME_TYPE, text: renderSendReviewApp() }],
+      }),
+    );
+  }
+
+  if (server.appsEnabled && shouldRegister("ui_get_send_review")) {
+    server.registerTool(
+      "ui_get_send_review",
+      {
+        description: "Send review card data: recipients, subject, sanitized preview and approval status for one pending send. Called by the review card only; it cannot approve or send.",
+        inputSchema: {
+          approvalId: z.string().describe("Approval ID from a send tool's structuredContent"),
+        },
+        _meta: APP_ONLY,
+      },
+      async ({ approvalId }) => {
+        const view = await buildSendReviewView(ctx, approvalId);
+        if (!view) {
+          return { content: [{ type: "text" as const, text: "Approval not found." }], isError: true };
+        }
+        const guarded = ctx.guardResponse("ui_get_send_review", view);
+        return { content: guarded.content, structuredContent: { ...view } };
       },
     );
   }

@@ -128,6 +128,7 @@ cli/
 - `get_memo` - Get the memo attached to an email
 - `delete_memo` - Delete a memo from an email
 - `generate_email_action_urls` - Generate HMAC-signed URLs for email archive/delete actions (24h expiry, single-use)
+- `ui_get_send_review` - App-only: data for the send review card (recipients, subject, sanitized preview, approval status). Hidden from the model and never registered on Code Mode
 
 ### Email Body Formats
 
@@ -367,6 +368,12 @@ With `SEND_APPROVAL_MODE=required`, `send_email`, `send_copy`, and immediate rep
 4. Re-checks the draft digest and submits it once after approval. Declined and expired approvals leave the draft unsent.
 
 The review URL works with regular MCP, Code Mode, the CLI, and OpenClaw. MCP 2026-07-28 clients use the stateless multi-round-trip elicitation flow. Older and headless clients receive the authenticated URL in the normal tool result. Tool annotations also mark outbound tools as write operations for clients with native approval policies. Code Mode cannot expose annotations for its inner tools, so it always applies the server gate unless approval mode is explicitly `off`.
+
+#### Send review card (MCP Apps)
+
+On `/mcp`, the four send tools (`send_email`, `send_copy`, `reply_to_email`, `forward_email`) link to the `ui://fastmail/send-review.html` app. Hosts that support MCP Apps, such as claude.ai, render it next to the tool result. The card shows the approval status, From, To, Cc, Bcc, the subject, and a sanitized preview in a sandboxed iframe. It loads that data through the app-only `ui_get_send_review` tool, which returns the approval only to the user who created it, and refreshes every 5 seconds until the approval is sent, declined, or expired.
+
+The card cannot approve anything. Its **Review & approve** button only opens the authenticated `/approve/send/:id` page, which stays the one place a send is approved. Code Mode (`/mcp/code`) registers no apps.
 
 #### Client-side approval (defense in depth)
 
