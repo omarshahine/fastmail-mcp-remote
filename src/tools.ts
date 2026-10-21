@@ -33,6 +33,8 @@ import {
   type SendApprovalRecord,
   type SendApprovalRequestState,
 } from "./send-approval";
+import { gateBulkOperation } from "./bulk-confirm";
+import type { ModernRequestState } from "./mcp-server";
 import {
   formatEmailList,
   formatMailboxes,
@@ -58,7 +60,11 @@ const EMAIL_LIST_TOOLS = new Set([
 ]);
 
 /** Standard MCP tool result shape */
-export type ToolResult = { content: { text: string; type: "text" }[] };
+export type ToolResult = {
+  content: { text: string; type: "text" }[];
+  isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+};
 
 /** Guard response options for compact formatting */
 export interface GuardOptions {
@@ -82,7 +88,7 @@ export interface ToolContext {
   guardResponse: (toolName: string, data: unknown, options?: GuardOptions) => ToolResult;
   modernMcp?: {
     getClientCapabilities: () => any;
-    mintRequestState: (state: SendApprovalRequestState, context: ServerContext) => Promise<string>;
+    mintRequestState: (state: ModernRequestState, context: ServerContext) => Promise<string>;
   };
   forceServerApproval?: boolean;
 }
@@ -251,8 +257,9 @@ async function resumeSendApproval(
   toolName: SendApprovalRecord["toolName"],
 ): Promise<any | null> {
   if (!ctx.modernMcp || !extra?.mcpReq?.requestState) return null;
-  const state = extra.mcpReq.requestState() as SendApprovalRequestState | undefined;
-  if (!state) return null;
+  const state = extra.mcpReq.requestState() as ModernRequestState | undefined;
+  // Bulk confirmation state belongs to the bulk gate, not to send approval.
+  if (!state || ("kind" in state && state.kind === "bulk_confirm")) return null;
   const currentUser = ctx.getCurrentUser();
   if (!currentUser || state.userLogin.toLowerCase() !== currentUser.toLowerCase() || state.toolName !== toolName) {
     return { content: [{ type: "text", text: "Email not sent. Approval state does not match this request." }], isError: true };
@@ -1603,7 +1610,9 @@ export function registerAllTools(
         emailIds: z.array(z.string()).describe("Array of email IDs to move"),
         targetMailboxId: z.string().describe("ID of target mailbox"),
       },
-      async ({ emailIds, targetMailboxId }) => {
+      async ({ emailIds, targetMailboxId }, extra) => {
+        const gated = await gateBulkOperation(ctx, extra, { toolName: "bulk_move", emailIds, targetMailboxId });
+        if (gated) return gated as any; // input_required passes through the v1-typed registrar
         const client = ctx.getJmapClient();
         await client.bulkMove(emailIds, targetMailboxId);
         return {
@@ -1620,7 +1629,9 @@ export function registerAllTools(
       {
         emailIds: z.array(z.string()).describe("Array of email IDs to delete"),
       },
-      async ({ emailIds }) => {
+      async ({ emailIds }, extra) => {
+        const gated = await gateBulkOperation(ctx, extra, { toolName: "bulk_delete", emailIds });
+        if (gated) return gated as any; // input_required passes through the v1-typed registrar
         const client = ctx.getJmapClient();
         await client.bulkDelete(emailIds);
         return {

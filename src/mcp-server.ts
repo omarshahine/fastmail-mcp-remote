@@ -15,9 +15,10 @@ import {
 } from "@modelcontextprotocol/server";
 import { registerAllTools, buildToolContext, legacyShapedModernServer } from "./tools";
 import type { SendApprovalRequestState } from "./send-approval";
+import type { BulkConfirmRequestState } from "./bulk-confirm";
 
 /** Opaque state carried across input-required rounds. */
-export type ModernRequestState = SendApprovalRequestState;
+export type ModernRequestState = SendApprovalRequestState | BulkConfirmRequestState;
 
 export interface McpRequestStateCodec {
   mint(state: ModernRequestState, context: ServerContext): Promise<string>;
@@ -30,7 +31,7 @@ export interface McpRequestStateCodec {
  * against another.
  */
 export function createMcpRequestStateCodec(env: Env, userLogin: string): McpRequestStateCodec {
-  return createRequestStateCodec<SendApprovalRequestState>({
+  return createRequestStateCodec<ModernRequestState>({
     key: env.ACTION_SIGNING_KEY,
     ttlSeconds: 10 * 60,
     bind: (context) => `${userLogin}\0${context.mcpReq.method}`,

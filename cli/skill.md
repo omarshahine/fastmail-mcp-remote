@@ -102,6 +102,8 @@ fastmail bulk move <mailboxId> <id1> <id2>     # Move multiple
 fastmail bulk flag <id1> <id2>                 # Flag multiple
 ```
 
+Bulk delete or move of 25 or more emails may ask for a yes/no confirmation on clients that support form elicitation (an interactive terminal).
+
 ### Mailboxes & Account
 
 ```bash
