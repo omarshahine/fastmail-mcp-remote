@@ -399,9 +399,9 @@ The `cloudflare@cloudflare` plugin is enabled for this project. `CLOUDFLARE_ACCO
 
 ### MCP SDK Pin Must Match Agents SDK
 
-`@modelcontextprotocol/sdk` is pinned to an exact version (no `^`) in `package.json` to match the version that the `agents` package pins internally. This forces npm to deduplicate to a single copy, preventing TypeScript type incompatibility (TS2416) where two different `McpServer` types exist.
+`agents`, `@modelcontextprotocol/sdk`, `@modelcontextprotocol/client`, and `@modelcontextprotocol/server` are pinned to exact versions in `package.json`. Agents declares exact MCP peer versions, so update all four together. The compatible set is Agents 0.28.1, SDK 1.32.1, and client/server 2.3.1. Independent MCP updates can fail `npm ci` with ERESOLVE or install incompatible `McpServer` types (TS2416).
 
-**When upgrading `agents`:** Check what MCP SDK version it pins internally (`node -e "console.log(require('./node_modules/agents/package.json').dependencies['@modelcontextprotocol/sdk'])"`) and update our pin to match. If versions diverge, npm installs two copies and the `McpServer` type error resurfaces.
+**When upgrading:** Inspect `npm view agents@<version> peerDependencies --json`, match all three MCP pins, then run clean `npm ci`, `npm ls agents @modelcontextprotocol/sdk @modelcontextprotocol/client @modelcontextprotocol/server`, tests, typechecking, and the plugin pack smoke. Verify both the legacy Durable Object transport and the modern stateless transport in local workerd before landing.
 
 ### No JMAP Sieve/Rules API (as of January 2026)
 
