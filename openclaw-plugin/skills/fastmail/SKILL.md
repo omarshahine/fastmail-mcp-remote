@@ -82,6 +82,8 @@ The `fastmail` CLI must be installed and authenticated before using these tools.
 | `fastmail_bulk_delete` | Delete multiple emails |
 | `fastmail_bulk_move` | Move multiple emails to a mailbox |
 
+Bulk delete or move of 25 or more emails may ask for confirmation on clients that support form elicitation; headless runs proceed without a prompt.
+
 ### Contacts (3 tools)
 
 | Tool | Purpose |

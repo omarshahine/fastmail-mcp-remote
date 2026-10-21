@@ -24,7 +24,8 @@ npm run cli -- inbox         # Run CLI (or use alias: fastmail inbox)
 ```
 src/
 ├── index.ts              # Main entry point, FastmailMCP class, Hono routing, Code Mode endpoint
-├── tools.ts              # All MCP tool registrations (registerAllTools), shared by DO and Code Mode
+├── tools.ts              # All MCP tool registrations (registerAllTools), shared by /mcp and Code Mode
+├── mcp-server.ts         # createFastmailMcpServer: the single stateless v2 server factory for /mcp
 ├── jmap-client.ts        # JMAP protocol client for Fastmail API (email, memos)
 ├── contacts-calendar.ts  # Contacts and calendar functionality
 ├── html-to-markdown.ts   # HTML to Markdown conversion (Turndown + linkedom)
@@ -66,7 +67,7 @@ openclaw-plugin/                     # OpenClaw plugin: "fastmail-cli" on npm
 - **Entry Point**: `src/index.ts` exports Hono app with custom OAuth routing
 - **OAuth**: Cloudflare Access OAuth (supports GitHub + OTP via Zero Trust)
 - **API Communication**: JMAP protocol to Fastmail API (`src/jmap-client.ts`)
-- **State**: Cloudflare Durable Objects with SQLite for session management
+- **MCP transport**: Stateless v2 server for all eras on `/mcp` (`src/mcp-server.ts`, served by `createMcpHandler` with `legacy: "stateless"`). 2026-07-28 requests are served natively; 2025-era requests use the agents stateless legacy lane. The `FastmailMCP` session Durable Object is exported but unrouted; DO retired in Task 8
 - **Storage**: KV namespace (`OAUTH_KV`) for OAuth state and tokens; a per-code Durable Object atomically consumes authorization codes
 
 ## OAuth Flow
@@ -211,24 +212,17 @@ npx @modelcontextprotocol/inspector@latest
 
 ## Adding New Tools
 
-1. Add the tool definition in `src/index.ts` within the `init()` method:
-   ```typescript
-   this.server.tool(
-     "tool_name",
-     "Tool description",
-     { /* zod schema for params */ },
-     async (params) => {
-       // Implementation
-       return { content: [{ text: "result", type: "text" }] };
-     }
-   );
-   ```
+1. Register the tool in `src/tools.ts` inside `registerAllTools`, guarded by `shouldRegister("tool_name")`, with `server.tool(...)` or `server.registerTool(...)` (the latter when it needs `_meta`). Every surface (`/mcp` and `/mcp/code`) registers through this one function. Input schemas go through `strictShape` automatically, so unknown parameters are rejected without extra work.
 
-2. If the tool needs JMAP functionality, add the method in `src/jmap-client.ts`
+2. Add a `TOOL_CATEGORIES` entry in `src/permissions.ts` (drives role filtering) and a `TOOL_ANNOTATIONS` entry in `src/tool-annotations.ts` (read-only, write, destructive or send hints). `test/tool-annotations.test.ts` fails if either is missing.
 
-3. Update the `check_function_availability` tool's function list in `src/index.ts`
+3. If the tool returns email, contact or calendar content, add it to `EXTERNAL_DATA_TOOLS` in `src/prompt-guard.ts` and return its data through `ctx.guardResponse(...)` so it is datamarked.
 
-4. Update README.md with the new tool
+4. MCP Apps tools, `ui://` resources and tool `_meta.ui` links must be gated on `server.appsEnabled`. Code Mode and 2026-07-28 clients without the `io.modelcontextprotocol/ui` extension register without apps.
+
+5. If the tool needs JMAP functionality, add the method in `src/jmap-client.ts`.
+
+6. Update the `check_function_availability` function list in `src/tools.ts`, and README.md.
 
 ## User Access Control
 

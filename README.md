@@ -128,6 +128,8 @@ cli/
 - `get_memo` - Get the memo attached to an email
 - `delete_memo` - Delete a memo from an email
 - `generate_email_action_urls` - Generate HMAC-signed URLs for email archive/delete actions (24h expiry, single-use)
+- `ui_get_send_review` - App-only: data for the send review card (recipients, subject, sanitized preview, approval status). Hosts that honor MCP Apps visibility hide it from the model; other hosts may show it. Its results are datamarked either way. Never registered on Code Mode
+- `ui_get_email_view` - App-only: data for the email reader (headers, read and flag state, sanitized previews for one email or a whole thread, archive mailbox). Hosts that honor MCP Apps visibility hide it from the model; other hosts may show it. Its results are datamarked either way. Never registered on Code Mode
 
 ### Email Body Formats
 
@@ -368,13 +370,41 @@ With `SEND_APPROVAL_MODE=required`, `send_email`, `send_copy`, and immediate rep
 
 The review URL works with regular MCP, Code Mode, the CLI, and OpenClaw. MCP 2026-07-28 clients use the stateless multi-round-trip elicitation flow. Older and headless clients receive the authenticated URL in the normal tool result. Tool annotations also mark outbound tools as write operations for clients with native approval policies. Code Mode cannot expose annotations for its inner tools, so it always applies the server gate unless approval mode is explicitly `off`.
 
+#### Send review card (MCP Apps)
+
+On `/mcp`, the four send tools (`send_email`, `send_copy`, `reply_to_email`, `forward_email`) link to the `ui://fastmail/send-review.html` app. Hosts that support MCP Apps, such as claude.ai, render it next to the tool result. The card shows the approval status, From, To, Cc, Bcc, the subject, and a sanitized preview in a sandboxed iframe. It loads that data through the app-only `ui_get_send_review` tool, which returns the approval only to the user who created it, and refreshes every 5 seconds until the approval is sent, declined, or expired.
+
+The card cannot approve anything. Its **Review & approve** button only opens the authenticated `/approve/send/:id` page, which stays the one place a send is approved. A reply or forward saved as a draft shows "Saved as draft. Nothing was sent.", a direct send (approval mode `off`) shows "Sent.", and a failed call shows its error.
+
+Which clients get the apps:
+
+- 2025-era clients (such as claude.ai today) get the `ui://` resources, the app-only tools and the tool `_meta.ui` links.
+- MCP 2026-07-28 clients get them only when their request advertises the `io.modelcontextprotocol/ui` extension in its client capabilities. Clients without it, such as Claude Code, see neither the app-only tools nor the links.
+- Code Mode (`/mcp/code`) registers no apps.
+
+#### Email reader (MCP Apps)
+
+`get_email` and `get_thread` link to the `ui://fastmail/email-reader.html` app. The reader loads the email or thread through the app-only `ui_get_email_view` tool and shows each message's From, To, date and subject, with the body in a sandboxed iframe. Bodies are sanitized first: scripts, forms and remote images are removed, and the preview's CSP only allows `data:` images, so opening an email in the reader never fires a tracking pixel.
+
+Each message has four buttons:
+
+| Button | What it does |
+|--------|--------------|
+| Mark read / Mark unread | Calls `mark_email_read` |
+| Flag / Unflag | Calls `flag_email` |
+| Archive | Calls `move_email` with the mailbox whose role is `archive`. Hidden when the account has none |
+| Draft reply | Sends "Draft a reply to email <id>" to the chat. The model drafts it with `reply_to_email`, which creates a draft by default |
+
+The buttons call the same tools the model uses, so the same per-user permissions apply. A failed action leaves the button state unchanged.
+
 #### Client-side approval (defense in depth)
 
 The server gate stands on its own — it does not trust the client. These settings
 just add a native prompt in front of it, so a send is visible before the tool
 call even happens.
 
-`send_email`, `send_copy`, and `reply_to_email` are annotated
+Every tool carries MCP annotations (see `src/tool-annotations.ts`). The send
+tools (`send_email`, `send_copy`, `reply_to_email`, `forward_email`) are
 `readOnlyHint: false`, `destructiveHint: true`, `idempotentHint: false`,
 `openWorldHint: true`. Clients with native per-tool approval policies read those
 annotations. In Codex, opt in explicitly (`~/.codex/config.toml`):

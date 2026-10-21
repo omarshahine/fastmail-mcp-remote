@@ -78,6 +78,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
 	// MEMO (private notes on emails)
 	create_memo: 'INBOX_MANAGE',
 	get_memo: 'EMAIL_READ',
+	ui_get_email_view: 'EMAIL_READ',
 	delete_memo: 'INBOX_MANAGE',
 
 	// DRAFT
@@ -91,6 +92,7 @@ export const TOOL_CATEGORIES: Record<string, ToolCategory> = {
 	// SEND
 	send_email: 'SEND',
 	send_copy: 'SEND',
+	ui_get_send_review: 'SEND',
 
 	// EMAIL_READ (incremental sync)
 	get_inbox_updates: 'EMAIL_READ',

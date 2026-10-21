@@ -147,7 +147,7 @@ const UNTRUSTED_FIELDS: Record<string, string[]> = {
   // Contact fields
   contact: ["notes", "organization", "jobTitle", "prefix", "suffix", "nickname"],
   // Mail fields - highest risk since email is externally authored
-  mail: ["subject", "from", "sender", "body", "content", "snippet", "preview", "textBody", "htmlBody"],
+  mail: ["subject", "from", "sender", "to", "cc", "bcc", "body", "content", "snippet", "preview", "textBody", "htmlBody", "previewDocument"],
   // Memos can contain quoted or copied third-party content.
   memo: ["text"],
 };
@@ -164,8 +164,14 @@ function markItem(item: Record<string, unknown>, domain: string): Record<string,
   const marked = { ...item };
 
   for (const field of fields) {
-    if (marked[field] && typeof marked[field] === "string") {
-      marked[field] = markUntrustedText(marked[field] as string, `${domain}.${field}`);
+    const value = marked[field];
+    if (value && typeof value === "string") {
+      marked[field] = markUntrustedText(value, `${domain}.${field}`);
+    } else if (Array.isArray(value)) {
+      // Formatted address lists (MCP Apps views) are plain strings.
+      marked[field] = value.map((entry) =>
+        typeof entry === "string" ? markUntrustedText(entry, `${domain}.${field}`) : entry,
+      );
     }
   }
 
@@ -269,7 +275,9 @@ function markToolResult(result: unknown, toolName: string): unknown {
     toolName === "get_recent_emails" ||
     toolName === "advanced_search" ||
     toolName === "get_thread" ||
-    toolName === "get_inbox_updates"
+    toolName === "get_inbox_updates" ||
+    toolName === "ui_get_send_review" ||
+    toolName === "ui_get_email_view"
   ) {
     if (Array.isArray(marked.messages)) {
       marked.messages = (marked.messages as Array<Record<string, unknown>>).map((m) => markItem(m, "mail"));
@@ -307,6 +315,10 @@ const EXTERNAL_DATA_TOOLS = new Set([
   "get_calendar_event",
   "list_calendars",
   "get_memo",
+  // Send review card: replies and forwards quote external mail.
+  "ui_get_send_review",
+  // Email reader view: headers and bodies of received mail.
+  "ui_get_email_view",
 ]);
 
 /**

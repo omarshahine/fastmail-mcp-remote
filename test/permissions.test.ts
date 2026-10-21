@@ -467,8 +467,8 @@ describe('getPermissionsConfig — fail-closed defaults', () => {
 });
 
 describe('TOOL_CATEGORIES completeness', () => {
-	it('maps all 39 tools', () => {
-		expect(Object.keys(TOOL_CATEGORIES).length).toBe(39);
+	it('maps all 41 tools', () => {
+		expect(Object.keys(TOOL_CATEGORIES).length).toBe(41);
 	});
 
 	it('has no empty categories', () => {

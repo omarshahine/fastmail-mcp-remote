@@ -1,9 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import {
-  McpServer as ModernMcpServer,
-  createRequestStateCodec,
-  isLegacyRequest,
-} from "@modelcontextprotocol/server";
+import { isLegacyRequest } from "@modelcontextprotocol/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { McpAgent } from "agents/mcp";
 import { createMcpHandler } from "agents/mcp/server";
@@ -24,13 +20,14 @@ import { getPermissionsConfig, getUserConfig, getVisibleTools } from "./permissi
 import { verifyAction, nonceKey } from "./action-urls";
 import { FastmailAuth } from "./fastmail-auth";
 import { JmapClient } from "./jmap-client";
-import { registerAllTools, buildToolContext, legacyShapedModernServer } from "./tools";
+import { registerAllTools, buildToolContext } from "./tools";
+import { clientSupportsApps, createFastmailMcpServer, createMcpRequestStateCodec } from "./mcp-server";
 import {
   handleSendApprovalCallback,
   handleSendApprovalDecision,
   handleSendApprovalStart,
 } from "./send-approval-auth";
-import { SendApprovalStore, type SendApprovalRequestState } from "./send-approval";
+import { SendApprovalStore } from "./send-approval";
 import { OAuthCodeStore } from "./oauth-code-store";
 
 export { OAuthCodeStore, SendApprovalStore };
@@ -246,27 +243,21 @@ app.post("/mcp/code", async (c) => {
   return withTokenExpiresAt(response, tokenInfo.expiresAt);
 });
 
-// ─── /mcp — Main MCP endpoint, routed through the FastmailMCP Durable Object ──
+// ─── /mcp — Main MCP endpoint, served by one stateless SDK v2 server ────────
 //
-// The DO gives the streamable-HTTP transport unlimited wall-clock (vs the ~30s
-// a stateless Worker gets after client disconnect), which is what a 60s send-
-// confirmation elicitation dialog needs. Tools register once per session in
-// FastmailMCP.init() instead of on every request. See issue #42.
-//
-// The agents runtime reads the per-session props off the ExecutionContext
-// (ctx.props) at session init and persists them in the DO. We validate the
-// Bearer token here at the edge and compute the user's visible-tools set, then
-// hand both to the DO as props. POST messages and DELETE teardown are Bearer-
-// validated here before the runtime routes them to the (unguessable, DO-unique)
-// session id. Standalone GET streams are rejected at the edge below: a long-
-// lived SSE response would otherwise occupy the session DO and serialize every
-// later POST behind it. The server sends elicitation requests on POST responses
-// and does not rely on this optional server-initiated notification channel.
-const mcpDurableObjectHandler = FastmailMCP.serve("/mcp", { binding: "MCP_OBJECT" });
+// Every POST/DELETE is Bearer-validated here, then handed to the agents
+// stateless handler, which builds a fresh v2 McpServer per request via
+// createFastmailMcpServer(). 2026-07-28 requests are served natively;
+// 2025-era requests (any protocolVersion, with or without a leftover
+// Mcp-Session-Id) go through the agents stateless legacy lane, which blocks
+// server-to-client requests. Those clients advertise no URL elicitation, so
+// send approval falls back to the approval URL in the tool result text. The
+// FastmailMCP Durable Object above stays exported for its binding but is no
+// longer routed.
 
 /**
- * Validate the Bearer token, attach per-session props to the ExecutionContext,
- * and delegate to the Durable Object handler. Shared by GET/POST/DELETE /mcp.
+ * Validate the Bearer token, compute the user's visible tools, and serve the
+ * request from the stateless v2 server. Shared by POST/DELETE /mcp.
  */
 async function handleMcp(c: Context<{ Bindings: Env }>): Promise<Response> {
   const authHeader = c.req.header("Authorization");
@@ -282,59 +273,54 @@ async function handleMcp(c: Context<{ Bindings: Env }>): Promise<Response> {
     return unauthorizedResponse(c, "invalid_token", "Invalid or expired access token");
   }
 
-  // Precompute the permission-filtered tool set and pass it, plus the user
-  // identity, into the DO via ctx.props. init() reads these to register the
-  // correct tools; the persisted userLogin also drives the inner defense-in-
-  // depth checks in buildToolContext.
+  // The permission-filtered tool set decides what is registered; the user
+  // identity also drives the inner defense-in-depth checks in buildToolContext.
   const config = await getPermissionsConfig(c.env.OAUTH_KV);
   const userConfig = getUserConfig(config, tokenInfo.user_login);
   const visibleTools = getVisibleTools(userConfig);
 
-  // MCP 2026-07-28 uses a stateless multi-round-trip response for URL
-  // elicitation. Keep existing 2025 sessions on the feature-frozen DO path.
-  if (!(await isLegacyRequest(c.req.raw))) {
-    const requestStateCodec = createRequestStateCodec<SendApprovalRequestState>({
-      key: c.env.ACTION_SIGNING_KEY,
-      ttlSeconds: 10 * 60,
-      bind: (context) => `${tokenInfo.user_login}\0${context.mcpReq.method}`,
-    });
-    const modernHandler = createMcpHandler(() => {
-      const server = new ModernMcpServer(
-        { name: "Fastmail MCP Remote", version: "1.0.0" },
-        {
-          inputRequired: { legacyShim: false, maxRounds: 3 },
-          requestState: { verify: requestStateCodec.verify },
-        },
-      );
-      const toolContext = buildToolContext(c.env, tokenInfo.user_login, {
-        getClientCapabilities: () => server.server.getClientCapabilities(),
-        mintRequestState: (state, context) => requestStateCodec.mint(state, context),
-      });
-      registerAllTools(legacyShapedModernServer(server), toolContext, visibleTools);
-      return server;
-    }, { route: "/mcp", legacy: "reject" });
-    const response = await modernHandler.fetch(c.req.raw, {
-      authInfo: {
-        token,
-        clientId: tokenInfo.user_id,
-        scopes: ["mcp:read", "mcp:write"],
-        expiresAt: Math.floor(Date.parse(tokenInfo.expiresAt) / 1000),
-      },
-    });
-    return withTokenExpiresAt(response, tokenInfo.expiresAt);
-  }
+  // Era telemetry for the Durable Object retirement soak (Task 8), and the
+  // per-request MCP Apps decision. Reads a clone; the parse is reused below.
+  // `method` is the JSON-RPC method when the body has one, else the HTTP
+  // method (DELETE).
+  const parsedBody: unknown = c.req.method === "POST"
+    ? await c.req.raw.clone().json().catch(() => undefined)
+    : undefined;
+  const isLegacy = await isLegacyRequest(c.req.raw.clone(), parsedBody);
+  const rpcMethod = parsedBody && typeof parsedBody === "object" && !Array.isArray(parsedBody)
+    ? (parsedBody as { method?: unknown }).method
+    : undefined;
+  console.log(JSON.stringify({
+    mcpEra: isLegacy ? "legacy" : "modern",
+    method: typeof rpcMethod === "string" ? rpcMethod : c.req.method,
+  }));
 
-  const props: McpSessionProps = {
+  const requestStateCodec = createMcpRequestStateCodec(c.env, tokenInfo.user_login);
+  const apps = clientSupportsApps(parsedBody, isLegacy);
+  const handler = createMcpHandler(() => createFastmailMcpServer({
+    env: c.env,
     userLogin: tokenInfo.user_login,
-    visibleTools: visibleTools ? [...visibleTools] : [],
-  };
-  // ctx.props is the agents runtime's sanctioned channel for per-request auth
-  // context; it is read off this exact ExecutionContext inside serve(). Capture
-  // the ctx once so the object we set props on is the object we pass through.
-  const execCtx = c.executionCtx as ExecutionContext & { props?: McpSessionProps };
-  execCtx.props = props;
-
-  const response = await mcpDurableObjectHandler.fetch(c.req.raw, c.env, execCtx);
+    visibleTools,
+    requestStateCodec,
+    apps,
+  }), {
+    route: "/mcp",
+    legacy: "stateless",
+    // Browser-hosted clients (claude.ai) send an Origin the agents default
+    // allowlist rejects with 403. Every request was Bearer-validated above,
+    // so an Origin check adds no protection here.
+    allowedOriginHostnames: "*",
+  });
+  // Hand the body parsed above to the SDK so it does not parse it again.
+  const response = await handler.fetch(c.req.raw, {
+    parsedBody,
+    authInfo: {
+      token,
+      clientId: tokenInfo.user_id,
+      scopes: ["mcp:read", "mcp:write"],
+      expiresAt: Math.floor(Date.parse(tokenInfo.expiresAt) / 1000),
+    },
+  });
   return withTokenExpiresAt(response, tokenInfo.expiresAt);
 }
 

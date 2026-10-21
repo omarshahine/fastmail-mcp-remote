@@ -6,7 +6,11 @@
  * endpoint (/mcp/code) both call this with different ToolContext implementations.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  McpServer,
+  type ReadResourceCallback,
+  type ResourceMetadata,
+} from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   inputRequired,
   inputResponse,
@@ -22,6 +26,7 @@ import { ContactsCalendarClient } from "./contacts-calendar";
 import { getPermissionsConfig, getUserConfig, getVisibleTools, isToolAllowed, TOOL_CATEGORIES } from "./permissions";
 import { markToolResult, markUntrustedText, isExternalDataTool, getDatamarkingPreamble } from "./prompt-guard";
 import { generateActionUrls } from "./action-urls";
+import { TOOL_ANNOTATIONS } from "./tool-annotations";
 import {
   approvalUrl,
   createSendApproval,
@@ -32,6 +37,11 @@ import {
   type SendApprovalRecord,
   type SendApprovalRequestState,
 } from "./send-approval";
+import { gateBulkOperation } from "./bulk-confirm";
+import type { ModernRequestState } from "./mcp-server";
+import { APP_ONLY, EMAIL_READER_URI, SEND_REVIEW_URI, UI_MIME_TYPE } from "./apps/constants";
+import { buildSendReviewView, renderSendReviewApp } from "./apps/send-review";
+import { buildEmailReaderView, renderEmailReaderApp } from "./apps/email-reader";
 import {
   formatEmailList,
   formatMailboxes,
@@ -48,6 +58,10 @@ import {
   flattenEmailList,
 } from "./formatters";
 
+/** `_meta` linking the four send tools to the send review card (MCP Apps). */
+const SEND_REVIEW_META = { ui: { resourceUri: SEND_REVIEW_URI } };
+const EMAIL_READER_META = { ui: { resourceUri: EMAIL_READER_URI } };
+
 /** Tools that return email lists where addresses can be flattened (Alt C) */
 const EMAIL_LIST_TOOLS = new Set([
   "list_emails",
@@ -57,7 +71,11 @@ const EMAIL_LIST_TOOLS = new Set([
 ]);
 
 /** Standard MCP tool result shape */
-export type ToolResult = { content: { text: string; type: "text" }[] };
+export type ToolResult = {
+  content: { text: string; type: "text" }[];
+  isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+};
 
 /** Guard response options for compact formatting */
 export interface GuardOptions {
@@ -81,7 +99,7 @@ export interface ToolContext {
   guardResponse: (toolName: string, data: unknown, options?: GuardOptions) => ToolResult;
   modernMcp?: {
     getClientCapabilities: () => any;
-    mintRequestState: (state: SendApprovalRequestState, context: ServerContext) => Promise<string>;
+    mintRequestState: (state: ModernRequestState, context: ServerContext) => Promise<string>;
   };
   forceServerApproval?: boolean;
 }
@@ -116,26 +134,42 @@ export function buildToolContext(
   };
 }
 
-/** Adapt the SDK v2 registration API to the shared SDK v1-shaped registrar. */
+/**
+ * Adapt the SDK v2 registration API to the shared SDK v1-shaped registrar.
+ *
+ * `tool()` keeps the original call shape. `registerTool()` carries `_meta`
+ * and `registerResource()` is a straight passthrough; together they let
+ * `createToolRegistrar` forward MCP Apps metadata and `ui://` resources to the
+ * v2 server.
+ */
 export function legacyShapedModernServer(server: ModernMcpServer): McpServer {
+  const registerTool = (name: string, config: any, handler: any) => {
+    const annotations = config.annotations ?? TOOL_ANNOTATIONS[name];
+    server.registerTool(
+      name,
+      {
+        description: config.description,
+        // strictShape, not the raw shape: this path must reject unknown
+        // parameters for the same reason registerAllTools does. It is a
+        // separate registration route (mcp-server.ts wires it for the modern
+        // server), so leaving it non-strict would silently exempt every tool
+        // served through it from the check. strictShape leaves an already
+        // strict schema untouched.
+        inputSchema: strictShape(config.inputSchema),
+        ...(annotations ? { annotations } : {}),
+        ...(config._meta ? { _meta: config._meta } : {}),
+      },
+      handler,
+    );
+  };
   return {
     tool(name: string, description: string, schema: any, annotationsOrHandler: any, maybeHandler?: any) {
       const annotations = maybeHandler ? annotationsOrHandler : undefined;
-      const handler = maybeHandler || annotationsOrHandler;
-      server.registerTool(
-        name,
-        {
-          description,
-          // strictShape, not the raw shape: this path must reject unknown
-          // parameters for the same reason registerAllTools does. It is a
-          // separate registration route (index.ts wires it for the modern
-          // server), so leaving it non-strict would silently exempt every tool
-          // served through it from the check.
-          inputSchema: strictShape(schema),
-          ...(annotations ? { annotations } : {}),
-        },
-        handler,
-      );
+      registerTool(name, { description, inputSchema: schema, annotations }, maybeHandler || annotationsOrHandler);
+    },
+    registerTool,
+    registerResource(name: string, uri: string, config: any, read: any) {
+      server.registerResource(name, uri, config, read);
     },
   } as unknown as McpServer;
 }
@@ -195,33 +229,49 @@ export function guardResponse(
   return { content: [{ text: json, type: "text" }] };
 }
 
-const SEND_TOOL_ANNOTATIONS = {
-  title: "Send email",
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
-  openWorldHint: true,
-};
-
 function approvalResult(record: SendApprovalRecord, url: string): ToolResult {
+  // The send review card (MCP Apps) reads `approvalId` from here and fetches
+  // the preview through `ui_get_send_review`. It can only open `reviewUrl`.
+  const structuredContent = {
+    approvalId: record.id,
+    status: record.status,
+    expiresAt: record.expiresAt,
+    reviewUrl: url,
+    draftId: record.draftId,
+  };
+  const text = (value: string): ToolResult => ({ content: [{ type: "text", text: value }], structuredContent });
   if (record.status === "sent") {
-    return { content: [{ type: "text", text: `Email sent successfully. Submission ID: ${record.submissionId || "unknown"}` }] };
+    return text(`Email sent successfully. Submission ID: ${record.submissionId || "unknown"}`);
   }
   if (record.status === "declined") {
-    return { content: [{ type: "text", text: `Email not sent. The approval was declined. Draft ID: ${record.draftId}` }] };
+    return text(`Email not sent. The approval was declined. Draft ID: ${record.draftId}`);
   }
   if (record.status === "expired") {
-    return { content: [{ type: "text", text: `Email not sent. The approval expired. Draft ID: ${record.draftId}` }] };
+    return text(`Email not sent. The approval expired. Draft ID: ${record.draftId}`);
   }
   if (record.status === "sending") {
-    return { content: [{ type: "text", text: `The email send is being processed. Check Fastmail Sent before retrying. Draft ID: ${record.draftId}` }] };
+    return text(`The email send is being processed. Check Fastmail Sent before retrying. Draft ID: ${record.draftId}`);
   }
-  return {
-    content: [{
-      type: "text",
-      text: `Email prepared as a Fastmail draft. Nothing will be sent until you approve it.\n\nReview and approve: ${url}\nDraft ID: ${record.draftId}\nApproval expires: ${record.expiresAt}`,
-    }],
-  };
+  return text(
+    `Email prepared as a Fastmail draft. Nothing will be sent until you approve it.\n\nReview and approve: ${url}\nDraft ID: ${record.draftId}\nApproval expires: ${record.expiresAt}`,
+  );
+}
+
+/**
+ * Send tool results outside the approval flow. The send review card (MCP
+ * Apps) renders these as a saved draft, a completed send or an error instead
+ * of reporting a missing approval.
+ */
+function draftResult(text: string, draftId: string): ToolResult {
+  return { content: [{ type: "text", text }], structuredContent: { draftId, status: "draft" } };
+}
+
+function sentResult(text: string): ToolResult {
+  return { content: [{ type: "text", text }], structuredContent: { status: "sent" } };
+}
+
+function sendToolError(text: string): ToolResult {
+  return { content: [{ type: "text", text }], isError: true };
 }
 
 async function requestModernApproval(
@@ -258,8 +308,9 @@ async function resumeSendApproval(
   toolName: SendApprovalRecord["toolName"],
 ): Promise<any | null> {
   if (!ctx.modernMcp || !extra?.mcpReq?.requestState) return null;
-  const state = extra.mcpReq.requestState() as SendApprovalRequestState | undefined;
-  if (!state) return null;
+  const state = extra.mcpReq.requestState() as ModernRequestState | undefined;
+  // Bulk confirmation state belongs to the bulk gate, not to send approval.
+  if (!state || ("kind" in state && state.kind === "bulk_confirm")) return null;
   const currentUser = ctx.getCurrentUser();
   if (!currentUser || state.userLogin.toLowerCase() !== currentUser.toLowerCase() || state.toolName !== toolName) {
     return { content: [{ type: "text", text: "Email not sent. Approval state does not match this request." }], isError: true };
@@ -499,67 +550,140 @@ function forwardedAttachments(original: any) {
     }));
 }
 
+export interface RegisterToolsOptions {
+  /**
+   * Register MCP Apps resources and `ui_*` tools, and forward tool `_meta`.
+   * Only the SDK v2 `/mcp` server sets this; Code Mode (`/mcp/code`) passes
+   * nothing and stays app-free.
+   */
+  apps?: boolean;
+}
+
+/**
+ * The registrar every tool registration goes through: the SDK v1 `McpServer`
+ * surface (`tool`, `registerTool`, `resource`) plus `appsEnabled`.
+ *
+ * - `tool(name, description, shape, [annotations], handler)` is the original
+ *   call shape; annotations fall back to `TOOL_ANNOTATIONS[name]`.
+ * - `registerTool(name, { description, inputSchema, annotations?, _meta? }, handler)`
+ *   is the same registration plus `_meta` (MCP Apps: `{ ui: { resourceUri } }`
+ *   or `APP_ONLY`). `inputSchema` is a raw Zod shape, as with `tool()`.
+ *   `_meta` is forwarded only when `appsEnabled`, so app-free surfaces never
+ *   advertise a `ui://` resource they do not serve.
+ * - `resource(name, uri, metadata, read)` registers through the underlying
+ *   server's `registerResource`, and only when `appsEnabled`; otherwise it is
+ *   a no-op.
+ *
+ * Every handler is wrapped in the per-user permission check and every input
+ * goes through `strictShape`.
+ */
+export interface ToolRegistrar {
+  readonly appsEnabled: boolean;
+  tool: McpServer["tool"];
+  registerTool: McpServer["registerTool"];
+  /** Four-argument form only: `metadata` is required. */
+  resource(name: string, uri: string, metadata: ResourceMetadata, read: ReadResourceCallback): void;
+}
+
+export function createToolRegistrar(
+  rawServer: McpServer,
+  ctx: ToolContext,
+  options: RegisterToolsOptions = {},
+): ToolRegistrar {
+  const appsEnabled =
+    options.apps === true && typeof (rawServer as any).registerResource === "function";
+
+  const register = (
+    name: string,
+    description: string | undefined,
+    schema: any,
+    annotations: any,
+    handler: any,
+    meta: Record<string, unknown> | undefined,
+  ) => {
+    // Registration-time visibility is only an advertisement optimization. Wrap
+    // every handler so stale visibility or an unfiltered caller can never bypass
+    // the current per-user permission policy at execution time.
+    const wrappedHandler = async (...args: any[]) => {
+      const denied = await ctx.checkToolPermission(name, args[0] as Record<string, unknown> | undefined);
+      if (denied) return denied;
+      return handler(...args);
+    };
+    const explicitAnnotations = annotations;
+    annotations = annotations ?? TOOL_ANNOTATIONS[name];
+    const _meta = appsEnabled ? meta : undefined;
+
+    // Reject unknown parameters instead of silently dropping them.
+    //
+    // z.object(shape) is NOT strict, so a caller that passes a misspelled
+    // filter gets it stripped with no error and the tool runs unfiltered --
+    // which looks exactly like a filter that matched everything. On
+    // 2026-09-06 `advanced_search({ inMailbox })` (the real parameter is
+    // `mailboxId`; `inMailbox` is the JMAP-level name it maps onto) searched
+    // the entire account instead of one mailbox, and the caller moved 200
+    // emails out of folders they were never in. `list_emails({ offset })`
+    // failed the same way -- there is no offset parameter, so paging silently
+    // re-returned the first page.
+    //
+    // .strict() makes both cases a loud parse error naming the bad key, and
+    // adds additionalProperties:false to the advertised JSON Schema so
+    // clients can catch it before the call. Registration goes through
+    // registerTool because the legacy tool() overload only accepts a raw
+    // shape and throws on a ZodObject.
+    const canRegisterTool =
+      typeof (rawServer as any).registerTool === 'function';
+    if (canRegisterTool && schema && typeof schema === 'object') {
+      (rawServer as any).registerTool(
+        name,
+        { description, inputSchema: strictShape(schema), annotations, ...(_meta ? { _meta } : {}) },
+        wrappedHandler,
+      );
+      return;
+    }
+
+    // v1 tool() fallback for servers without registerTool: keep the caller's
+    // original arity.
+    if (explicitAnnotations) {
+      rawServer.tool(name, description ?? "", schema, explicitAnnotations, wrappedHandler);
+    } else {
+      rawServer.tool(name, description ?? "", schema, wrappedHandler);
+    }
+  };
+
+  return {
+    appsEnabled,
+    tool(name: string, description: string, schema: any, annotationsOrHandler: any, maybeHandler?: any) {
+      const handler = maybeHandler || annotationsOrHandler;
+      const annotations = maybeHandler ? annotationsOrHandler : undefined;
+      register(name, description, schema, annotations, handler, undefined);
+    },
+    registerTool(name: string, config: any, handler: any) {
+      register(name, config.description, config.inputSchema ?? {}, config.annotations, handler, config._meta);
+    },
+    resource(name: string, uri: string, metadata: any, read: any) {
+      if (!appsEnabled) return;
+      (rawServer as any).registerResource(name, uri, metadata, read);
+    },
+  } as unknown as ToolRegistrar;
+}
+
 /**
  * Register all Fastmail MCP tools on the given server.
  *
  * @param server - McpServer instance to register tools on
  * @param ctx - ToolContext providing env, clients, permissions, and response formatting
  * @param visibleTools - Optional set of tool names to register. If provided, tools not in the set are skipped.
+ * @param options - `{ apps: true }` enables MCP Apps resources, `ui_*` tools and tool `_meta`.
  */
 export function registerAllTools(
-  server: McpServer,
+  rawServer: McpServer,
   ctx: ToolContext,
   visibleTools?: Set<string>,
+  options: RegisterToolsOptions = {},
 ): void {
-  // Registration-time visibility is only an advertisement optimization. Wrap
-  // every handler so stale visibility or an unfiltered caller can never bypass
-  // the current per-user permission policy at execution time.
-  const rawServer = server;
-  server = {
-    tool(name: string, description: string, schema: any, annotationsOrHandler: any, maybeHandler?: any) {
-      const handler = maybeHandler || annotationsOrHandler;
-      const wrappedHandler = async (...args: any[]) => {
-        const denied = await ctx.checkToolPermission(name, args[0] as Record<string, unknown> | undefined);
-        if (denied) return denied;
-        return handler(...args);
-      };
-      const annotations = maybeHandler ? annotationsOrHandler : undefined;
-
-      // Reject unknown parameters instead of silently dropping them.
-      //
-      // z.object(shape) is NOT strict, so a caller that passes a misspelled
-      // filter gets it stripped with no error and the tool runs unfiltered --
-      // which looks exactly like a filter that matched everything. On
-      // 2026-09-06 `advanced_search({ inMailbox })` (the real parameter is
-      // `mailboxId`; `inMailbox` is the JMAP-level name it maps onto) searched
-      // the entire account instead of one mailbox, and the caller moved 200
-      // emails out of folders they were never in. `list_emails({ offset })`
-      // failed the same way -- there is no offset parameter, so paging silently
-      // re-returned the first page.
-      //
-      // .strict() makes both cases a loud parse error naming the bad key, and
-      // adds additionalProperties:false to the advertised JSON Schema so
-      // clients can catch it before the call. Registration goes through
-      // registerTool because the legacy tool() overload only accepts a raw
-      // shape and throws on a ZodObject.
-      const canRegisterTool =
-        typeof (rawServer as any).registerTool === 'function';
-      if (canRegisterTool && schema && typeof schema === 'object') {
-        (rawServer as any).registerTool(
-          name,
-          { description, inputSchema: strictShape(schema), annotations },
-          wrappedHandler,
-        );
-        return;
-      }
-
-      if (maybeHandler) {
-        rawServer.tool(name, description, schema, annotationsOrHandler, wrappedHandler);
-      } else {
-        rawServer.tool(name, description, schema, wrappedHandler);
-      }
-    },
-  } as unknown as McpServer;
+  // MCP Apps registrations check `server.appsEnabled` before registering
+  // `ui_*` tools or `ui://` resources.
+  const server = createToolRegistrar(rawServer, ctx, options);
 
   /** Helper: skip tool if not in visibleTools set */
   const shouldRegister = (name: string) => !visibleTools || visibleTools.has(name);
@@ -607,15 +731,18 @@ export function registerAllTools(
   }
 
   if (shouldRegister("get_email")) {
-    server.tool(
+    server.registerTool(
       "get_email",
-      "Get a specific email by ID. Returns LLM-friendly markdown by default (converts HTML to clean markdown, strips tracking pixels and layout noise). Use format='html' to get the raw JMAP JSON when you need to inspect original HTML.",
       {
-        emailId: z.string().describe("ID of the email to retrieve"),
-        format: z
-          .enum(["markdown", "html"])
-          .default("markdown")
-          .describe("Output format: 'markdown' (default) returns clean readable text, 'html' returns raw JMAP JSON"),
+        description: "Get a specific email by ID. Returns LLM-friendly markdown by default (converts HTML to clean markdown, strips tracking pixels and layout noise). Use format='html' to get the raw JMAP JSON when you need to inspect original HTML.",
+        inputSchema: {
+          emailId: z.string().describe("ID of the email to retrieve"),
+          format: z
+            .enum(["markdown", "html"])
+            .default("markdown")
+            .describe("Output format: 'markdown' (default) returns clean readable text, 'html' returns raw JMAP JSON"),
+        },
+        _meta: EMAIL_READER_META,
       },
       async ({ emailId, format }) => {
         const client = ctx.getJmapClient();
@@ -633,41 +760,43 @@ export function registerAllTools(
   }
 
   if (shouldRegister("send_email")) {
-    server.tool(
+    server.registerTool(
       "send_email",
-      "Prepare and send a new email. In the default required-approval mode, this creates a Fastmail draft and returns an authenticated review URL; the email is submitted only after approval. Supports file attachments via base64-encoded content. For replies, use reply_to_email.",
       {
-        to: z.array(z.string()).describe("Recipient email addresses"),
-        cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
-        bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
-        from: z.string().optional().describe("Sender email address (optional, defaults to account primary email)"),
-        subject: z.string().describe("Email subject"),
-        textBody: z.string().optional().describe("Plain text body (optional)"),
-        htmlBody: z.string().optional().describe("HTML body (optional)"),
-        markdownBody: z
-          .string()
-          .optional()
-          .describe("Markdown body (optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
-        attachments: z
-          .array(
-            z.object({
-              filename: z.string().describe("Filename for the attachment (e.g., 'report.pdf')"),
-              mimeType: z.string().describe("MIME type (e.g., 'application/pdf', 'image/png')"),
-              content: z.string().describe("Base64-encoded file content"),
-            }),
-          )
-          .optional()
-          .describe("File attachments (optional). Each attachment needs filename, mimeType, and base64 content. Max 25MB per file."),
-        inReplyTo: z
-          .array(z.string())
-          .optional()
-          .describe("Advanced: Message-ID(s) this email is replying to. For true replies, prefer `reply_to_email` — it handles threading, recipients, subject, and quoted source. Only use this here for edge cases (forwards, cross-thread references) where you explicitly do not want auto-quoting."),
-        references: z
-          .array(z.string())
-          .optional()
-          .describe("Advanced: Message-ID chain for threading. For true replies, prefer `reply_to_email` — it computes this from the source email automatically."),
+        description: "Prepare and send a new email. In the default required-approval mode, this creates a Fastmail draft and returns an authenticated review URL; the email is submitted only after approval. Supports file attachments via base64-encoded content. For replies, use reply_to_email.",
+        inputSchema: {
+          to: z.array(z.string()).describe("Recipient email addresses"),
+          cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
+          bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
+          from: z.string().optional().describe("Sender email address (optional, defaults to account primary email)"),
+          subject: z.string().describe("Email subject"),
+          textBody: z.string().optional().describe("Plain text body (optional)"),
+          htmlBody: z.string().optional().describe("HTML body (optional)"),
+          markdownBody: z
+            .string()
+            .optional()
+            .describe("Markdown body (optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
+          attachments: z
+            .array(
+              z.object({
+                filename: z.string().describe("Filename for the attachment (e.g., 'report.pdf')"),
+                mimeType: z.string().describe("MIME type (e.g., 'application/pdf', 'image/png')"),
+                content: z.string().describe("Base64-encoded file content"),
+              }),
+            )
+            .optional()
+            .describe("File attachments (optional). Each attachment needs filename, mimeType, and base64 content. Max 25MB per file."),
+          inReplyTo: z
+            .array(z.string())
+            .optional()
+            .describe("Advanced: Message-ID(s) this email is replying to. For true replies, prefer `reply_to_email` — it handles threading, recipients, subject, and quoted source. Only use this here for edge cases (forwards, cross-thread references) where you explicitly do not want auto-quoting."),
+          references: z
+            .array(z.string())
+            .optional()
+            .describe("Advanced: Message-ID chain for threading. For true replies, prefer `reply_to_email` — it computes this from the source email automatically."),
+        },
+        _meta: SEND_REVIEW_META,
       },
-      SEND_TOOL_ANNOTATIONS,
       async ({ to, cc, bcc, from, subject, textBody, htmlBody, markdownBody, attachments, inReplyTo, references }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates even if the outer Hono check is bypassed
         const denied = await ctx.checkToolPermission('send_email');
@@ -677,9 +806,7 @@ export function registerAllTools(
         if (resumed) return resumed;
 
         if (!textBody && !htmlBody && !markdownBody) {
-          return {
-            content: [{ text: "Error: Either textBody, htmlBody, or markdownBody is required", type: "text" }],
-          };
+          return sendToolError("Error: Either textBody, htmlBody, or markdownBody is required");
         }
 
         try {
@@ -715,31 +842,29 @@ export function registerAllTools(
           const attachmentCount = attachments?.length || 0;
           const attachmentNote = attachmentCount > 0 ? ` with ${attachmentCount} attachment(s)` : "";
           const replyNote = inReplyTo ? " (reply)" : "";
-          return {
-            content: [{ text: `Email sent successfully${attachmentNote}${replyNote}. Submission ID: ${submissionId}`, type: "text" }],
-          };
+          return sentResult(`Email sent successfully${attachmentNote}${replyNote}. Submission ID: ${submissionId}`);
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ text: `Failed to send email: ${errorMessage}`, type: "text" }],
-          };
+          return sendToolError(`Failed to send email: ${errorMessage}`);
         }
       },
     );
   }
 
   if (shouldRegister("send_copy")) {
-    server.tool(
+    server.registerTool(
       "send_copy",
-      "Prepare and send a copy of an existing email to a new recipient (equivalent to Fastmail's 'Send a copy...' menu item). In required-approval mode, returns an authenticated review URL and submits only after approval. Preserves the original subject, body, and embedded images while changing the recipients.",
       {
-        emailId: z.string().describe("ID of the existing email to send a copy of"),
-        to: z.array(z.string()).describe("Recipient email addresses for the copy"),
-        cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
-        bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
-        from: z.string().optional().describe("Sender identity to use (optional, defaults to account primary). Must be a verified identity."),
+        description: "Prepare and send a copy of an existing email to a new recipient (equivalent to Fastmail's 'Send a copy...' menu item). In required-approval mode, returns an authenticated review URL and submits only after approval. Preserves the original subject, body, and embedded images while changing the recipients.",
+        inputSchema: {
+          emailId: z.string().describe("ID of the existing email to send a copy of"),
+          to: z.array(z.string()).describe("Recipient email addresses for the copy"),
+          cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
+          bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
+          from: z.string().optional().describe("Sender identity to use (optional, defaults to account primary). Must be a verified identity."),
+        },
+        _meta: SEND_REVIEW_META,
       },
-      SEND_TOOL_ANNOTATIONS,
       async ({ emailId, to, cc, bcc, from }, extra) => {
         const denied = await ctx.checkToolPermission('send_copy');
         if (denied) return denied;
@@ -754,14 +879,10 @@ export function registerAllTools(
             return await prepareSendApproval(ctx, extra, "send_copy", draftId);
           }
           const submissionId = await client.sendCopy({ emailId, to, cc, bcc, from });
-          return {
-            content: [{ text: `Copy sent successfully. Submission ID: ${submissionId}\nOriginal email: ${emailId}\nRecipients: ${[...to, ...(cc || []), ...(bcc || [])].join(", ")}`, type: "text" }],
-          };
+          return sentResult(`Copy sent successfully. Submission ID: ${submissionId}\nOriginal email: ${emailId}\nRecipients: ${[...to, ...(cc || []), ...(bcc || [])].join(", ")}`);
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ text: `Failed to send copy: ${errorMessage}`, type: "text" }],
-          };
+          return sendToolError(`Failed to send copy: ${errorMessage}`);
         }
       },
     );
@@ -842,28 +963,30 @@ export function registerAllTools(
   }
 
   if (shouldRegister("reply_to_email")) {
-    server.tool(
+    server.registerTool(
       "reply_to_email",
-      "Reply to an email with proper threading and quoting, just like Fastmail's reply button. Automatically handles recipients, subject, threading headers, and quotes the original message. This is the ONLY correct way to draft or send a reply. With sendImmediately=false (default), it creates a reply draft. With sendImmediately=true in required-approval mode, it returns an authenticated review URL and submits only after approval. Do NOT use create_draft for replies.",
       {
-        emailId: z.string().describe("ID of the email to reply to"),
-        body: z.string().describe("Your reply message (plain text)"),
-        htmlBody: z.string().optional().describe("Your reply message (HTML, optional). If not provided, plain text body is used."),
-        markdownBody: z
-          .string()
-          .optional()
-          .describe(
-            "Your reply message (Markdown, optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided.",
-          ),
-        from: z
-          .string()
-          .optional()
-          .describe("Sender email address (optional, defaults to account primary email). Use list_identities to see available aliases."),
-        replyAll: z.boolean().default(false).describe("If true, reply to all recipients (sender + CC). Default is reply to sender only."),
-        sendImmediately: z.boolean().default(false).describe("If true, send the reply immediately. If false (default), create a draft."),
-        excludeQuote: z.boolean().default(false).describe("If true, don't include quoted original message. Default includes quote."),
+        description: "Reply to an email with proper threading and quoting, just like Fastmail's reply button. Automatically handles recipients, subject, threading headers, and quotes the original message. This is the ONLY correct way to draft or send a reply. With sendImmediately=false (default), it creates a reply draft. With sendImmediately=true in required-approval mode, it returns an authenticated review URL and submits only after approval. Do NOT use create_draft for replies.",
+        inputSchema: {
+          emailId: z.string().describe("ID of the email to reply to"),
+          body: z.string().describe("Your reply message (plain text)"),
+          htmlBody: z.string().optional().describe("Your reply message (HTML, optional). If not provided, plain text body is used."),
+          markdownBody: z
+            .string()
+            .optional()
+            .describe(
+              "Your reply message (Markdown, optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided.",
+            ),
+          from: z
+            .string()
+            .optional()
+            .describe("Sender email address (optional, defaults to account primary email). Use list_identities to see available aliases."),
+          replyAll: z.boolean().default(false).describe("If true, reply to all recipients (sender + CC). Default is reply to sender only."),
+          sendImmediately: z.boolean().default(false).describe("If true, send the reply immediately. If false (default), create a draft."),
+          excludeQuote: z.boolean().default(false).describe("If true, don't include quoted original message. Default includes quote."),
+        },
+        _meta: SEND_REVIEW_META,
       },
-      SEND_TOOL_ANNOTATIONS,
       async ({ emailId, body, htmlBody, markdownBody, from, replyAll, sendImmediately, excludeQuote }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates from sending replies immediately
         if (sendImmediately) {
@@ -878,16 +1001,12 @@ export function registerAllTools(
           const original = await client.getEmailById(emailId);
 
           if (!original) {
-            return {
-              content: [{ text: `Error: Email with ID '${emailId}' not found`, type: "text" }],
-            };
+            return sendToolError(`Error: Email with ID '${emailId}' not found`);
           }
 
           const replyToAddrs = original.replyTo || original.from || [];
           if (replyToAddrs.length === 0) {
-            return {
-              content: [{ text: `Error: Cannot reply - email has no sender address`, type: "text" }],
-            };
+            return sendToolError(`Error: Cannot reply - email has no sender address`);
           }
           const toRecipients = replyToAddrs.map((addr: any) => addr.email);
           const toRecipientsLower = toRecipients.map((e: string) => e.toLowerCase());
@@ -948,14 +1067,9 @@ export function registerAllTools(
               inReplyTo,
               references,
             });
-            return {
-              content: [
-                {
-                  text: `Reply sent successfully. Submission ID: ${submissionId}\nTo: ${toRecipients.join(", ")}${ccRecipients.length > 0 ? `\nCC: ${ccRecipients.join(", ")}` : ""}`,
-                  type: "text",
-                },
-              ],
-            };
+            return sentResult(
+              `Reply sent successfully. Submission ID: ${submissionId}\nTo: ${toRecipients.join(", ")}${ccRecipients.length > 0 ? `\nCC: ${ccRecipients.join(", ")}` : ""}`,
+            );
           } else {
             const draftId = await client.createDraft({
               to: toRecipients,
@@ -967,48 +1081,44 @@ export function registerAllTools(
               inReplyTo,
               references,
             });
-            return {
-              content: [
-                {
-                  text: `Reply draft created successfully. Draft ID: ${draftId}\nTo: ${toRecipients.join(", ")}${ccRecipients.length > 0 ? `\nCC: ${ccRecipients.join(", ")}` : ""}\nSubject: ${subject}`,
-                  type: "text",
-                },
-              ],
-            };
+            return draftResult(
+              `Reply draft created successfully. Draft ID: ${draftId}\nTo: ${toRecipients.join(", ")}${ccRecipients.length > 0 ? `\nCC: ${ccRecipients.join(", ")}` : ""}\nSubject: ${subject}`,
+              draftId,
+            );
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          return {
-            content: [{ text: `Failed to create reply: ${errorMessage}`, type: "text" }],
-          };
+          return sendToolError(`Failed to create reply: ${errorMessage}`);
         }
       },
     );
   }
 
   if (shouldRegister("forward_email")) {
-    server.tool(
+    server.registerTool(
       "forward_email",
-      "Forward an existing email to new recipients, just like Fastmail's Forward button. Adds a 'Fwd:' subject, an optional note from you above a '---------- Forwarded message ----------' header (From, Date, Subject, To, Cc), the original message body exactly as received, and all original attachments (including inline images). This is the ONLY correct way to forward. Do NOT rebuild a forward by hand with send_email or create_draft: that loses the original formatting and attachments. With sendImmediately=false (default), it creates a draft. With sendImmediately=true in required-approval mode, it returns an authenticated review URL and submits only after approval. To send the original unchanged with no forward header, use send_copy instead.",
       {
-        emailId: z.string().describe("ID of the email to forward"),
-        to: z.array(z.string()).describe("Recipient email addresses"),
-        cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
-        bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
-        body: z.string().optional().describe("Your note above the forwarded message (plain text, optional). Do not paste the original email here; it is included automatically."),
-        htmlBody: z.string().optional().describe("Your note (HTML, optional). If not provided, plain text body is used."),
-        markdownBody: z
-          .string()
-          .optional()
-          .describe("Your note (Markdown, optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
-        from: z
-          .string()
-          .optional()
-          .describe("Sender email address (optional, defaults to account primary email). Use list_identities to see available aliases."),
-        includeAttachments: z.boolean().default(true).describe("If false, drop the original's attachments (inline images in the body are always kept). Default forwards them."),
-        sendImmediately: z.boolean().default(false).describe("If true, send the forward immediately. If false (default), create a draft."),
+        description: "Forward an existing email to new recipients, just like Fastmail's Forward button. Adds a 'Fwd:' subject, an optional note from you above a '---------- Forwarded message ----------' header (From, Date, Subject, To, Cc), the original message body exactly as received, and all original attachments (including inline images). This is the ONLY correct way to forward. Do NOT rebuild a forward by hand with send_email or create_draft: that loses the original formatting and attachments. With sendImmediately=false (default), it creates a draft. With sendImmediately=true in required-approval mode, it returns an authenticated review URL and submits only after approval. To send the original unchanged with no forward header, use send_copy instead.",
+        inputSchema: {
+          emailId: z.string().describe("ID of the email to forward"),
+          to: z.array(z.string()).describe("Recipient email addresses"),
+          cc: z.array(z.string()).optional().describe("CC email addresses (optional)"),
+          bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
+          body: z.string().optional().describe("Your note above the forwarded message (plain text, optional). Do not paste the original email here; it is included automatically."),
+          htmlBody: z.string().optional().describe("Your note (HTML, optional). If not provided, plain text body is used."),
+          markdownBody: z
+            .string()
+            .optional()
+            .describe("Your note (Markdown, optional). Converted to HTML automatically. Takes precedence over htmlBody if both provided."),
+          from: z
+            .string()
+            .optional()
+            .describe("Sender email address (optional, defaults to account primary email). Use list_identities to see available aliases."),
+          includeAttachments: z.boolean().default(true).describe("If false, drop the original's attachments (inline images in the body are always kept). Default forwards them."),
+          sendImmediately: z.boolean().default(false).describe("If true, send the forward immediately. If false (default), create a draft."),
+        },
+        _meta: SEND_REVIEW_META,
       },
-      SEND_TOOL_ANNOTATIONS,
       async ({ emailId, to, cc, bcc, body, htmlBody, markdownBody, from, includeAttachments, sendImmediately }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates from sending forwards immediately
         if (sendImmediately) {
@@ -1019,14 +1129,14 @@ export function registerAllTools(
         }
 
         if (to.length === 0) {
-          return { content: [{ text: "Error: At least one recipient is required to forward an email", type: "text" }] };
+          return sendToolError("Error: At least one recipient is required to forward an email");
         }
 
         try {
           const client = ctx.getJmapClient();
           const original = await client.getEmailById(emailId);
           if (!original) {
-            return { content: [{ text: `Error: Email with ID '${emailId}' not found`, type: "text" }] };
+            return sendToolError(`Error: Email with ID '${emailId}' not found`);
           }
 
           let subject = original.subject || "";
@@ -1072,14 +1182,109 @@ export function registerAllTools(
               return await prepareSendApproval(ctx, extra, "forward_email", draftId);
             }
             const submissionId = await client.sendEmail(message);
-            return { content: [{ text: `Forward sent successfully. Submission ID: ${submissionId}\n${summary}`, type: "text" }] };
+            return sentResult(`Forward sent successfully. Submission ID: ${submissionId}\n${summary}`);
           }
 
           const draftId = await client.createDraft(message);
-          return { content: [{ text: `Forward draft created successfully. Draft ID: ${draftId}\n${summary}`, type: "text" }] };
+          return draftResult(`Forward draft created successfully. Draft ID: ${draftId}\n${summary}`, draftId);
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          return { content: [{ text: `Failed to forward email: ${errorMessage}`, type: "text" }] };
+          return sendToolError(`Failed to forward email: ${errorMessage}`);
+        }
+      },
+    );
+  }
+
+  // MCP Apps: the send review card and its app-only data tool. Code Mode
+  // (`/mcp/code`) registers without apps, so neither exists there.
+  if (server.appsEnabled) {
+    server.resource(
+      "send-review",
+      SEND_REVIEW_URI,
+      {
+        title: "Email review",
+        description: "Preview of an email awaiting approval, with a link to the authenticated approval page.",
+        mimeType: UI_MIME_TYPE,
+        _meta: { ui: { prefersBorder: true } },
+      },
+      async () => ({
+        contents: [{ uri: SEND_REVIEW_URI, mimeType: UI_MIME_TYPE, text: renderSendReviewApp() }],
+      }),
+    );
+  }
+
+  if (server.appsEnabled && shouldRegister("ui_get_send_review")) {
+    server.registerTool(
+      "ui_get_send_review",
+      {
+        description: "Send review card data: recipients, subject, sanitized preview and approval status for one pending send. Called by the review card only; it cannot approve or send.",
+        inputSchema: {
+          approvalId: z.string().describe("Approval ID from a send tool's structuredContent"),
+        },
+        _meta: APP_ONLY,
+      },
+      async ({ approvalId }) => {
+        const view = await buildSendReviewView(ctx, approvalId);
+        if (!view) {
+          return { content: [{ type: "text" as const, text: "Approval not found." }], isError: true };
+        }
+        const guarded = ctx.guardResponse("ui_get_send_review", view);
+        // structuredContent is model-visible on hosts that ignore app-only
+        // visibility, so it carries the same datamarking as `content`.
+        const structuredContent = markToolResult(view, "ui_get_send_review") as Record<string, unknown>;
+        return { content: guarded.content, structuredContent };
+      },
+    );
+  }
+
+  // MCP Apps: the email reader shown next to get_email / get_thread, and its
+  // app-only data tool.
+  if (server.appsEnabled) {
+    server.resource(
+      "email-reader",
+      EMAIL_READER_URI,
+      {
+        title: "Email",
+        description: "Reader for one email or thread, with read, flag, archive and draft-reply actions.",
+        mimeType: UI_MIME_TYPE,
+        _meta: { ui: { prefersBorder: true } },
+      },
+      async () => ({
+        contents: [{ uri: EMAIL_READER_URI, mimeType: UI_MIME_TYPE, text: renderEmailReaderApp() }],
+      }),
+    );
+  }
+
+  if (server.appsEnabled && shouldRegister("ui_get_email_view")) {
+    server.registerTool(
+      "ui_get_email_view",
+      {
+        description: "Email reader data: headers, read/flag state and a sanitized preview for one email or every message in a thread, plus the archive mailbox. Called by the reader view only.",
+        inputSchema: {
+          emailId: z.string().optional().describe("ID of one email to show"),
+          threadId: z.string().optional().describe("ID of a thread to show"),
+        },
+        _meta: APP_ONLY,
+      },
+      async ({ emailId, threadId }) => {
+        const hasEmail = typeof emailId === "string" && emailId !== "";
+        const hasThread = typeof threadId === "string" && threadId !== "";
+        if (hasEmail === hasThread) {
+          return {
+            content: [{ type: "text" as const, text: "Provide exactly one of emailId or threadId." }],
+            isError: true,
+          };
+        }
+        try {
+          const view = await buildEmailReaderView(ctx, hasEmail ? { emailId: emailId! } : { threadId: threadId! });
+          const guarded = ctx.guardResponse("ui_get_email_view", view);
+          const structuredContent = markToolResult(view, "ui_get_email_view") as Record<string, unknown>;
+          return { content: guarded.content, structuredContent };
+        } catch (error) {
+          return {
+            content: [{ type: "text" as const, text: `Email view failed: ${error instanceof Error ? error.message : String(error)}` }],
+            isError: true,
+          };
         }
       },
     );
@@ -1428,15 +1633,18 @@ export function registerAllTools(
   }
 
   if (shouldRegister("get_thread")) {
-    server.tool(
+    server.registerTool(
       "get_thread",
-      "Get all emails in a conversation thread. Returns LLM-friendly markdown by default (converts HTML to clean markdown, strips tracking pixels and layout noise). Use format='html' to get the raw JMAP JSON when you need to inspect original HTML.",
       {
-        threadId: z.string().describe("ID of the thread/conversation"),
-        format: z
-          .enum(["markdown", "html"])
-          .default("markdown")
-          .describe("Output format: 'markdown' (default) returns clean readable text, 'html' returns raw JMAP JSON"),
+        description: "Get all emails in a conversation thread. Returns LLM-friendly markdown by default (converts HTML to clean markdown, strips tracking pixels and layout noise). Use format='html' to get the raw JMAP JSON when you need to inspect original HTML.",
+        inputSchema: {
+          threadId: z.string().describe("ID of the thread/conversation"),
+          format: z
+            .enum(["markdown", "html"])
+            .default("markdown")
+            .describe("Output format: 'markdown' (default) returns clean readable text, 'html' returns raw JMAP JSON"),
+        },
+        _meta: EMAIL_READER_META,
       },
       async ({ threadId, format }) => {
         const client = ctx.getJmapClient();
@@ -1614,7 +1822,9 @@ export function registerAllTools(
         emailIds: z.array(z.string()).describe("Array of email IDs to move"),
         targetMailboxId: z.string().describe("ID of target mailbox"),
       },
-      async ({ emailIds, targetMailboxId }) => {
+      async ({ emailIds, targetMailboxId }, extra) => {
+        const gated = await gateBulkOperation(ctx, extra, { toolName: "bulk_move", emailIds, targetMailboxId });
+        if (gated) return gated as any; // input_required passes through the v1-typed registrar
         const client = ctx.getJmapClient();
         await client.bulkMove(emailIds, targetMailboxId);
         return {
@@ -1631,7 +1841,9 @@ export function registerAllTools(
       {
         emailIds: z.array(z.string()).describe("Array of email IDs to delete"),
       },
-      async ({ emailIds }) => {
+      async ({ emailIds }, extra) => {
+        const gated = await gateBulkOperation(ctx, extra, { toolName: "bulk_delete", emailIds });
+        if (gated) return gated as any; // input_required passes through the v1-typed registrar
         const client = ctx.getJmapClient();
         await client.bulkDelete(emailIds);
         return {

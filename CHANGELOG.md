@@ -14,11 +14,31 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - MCP 2026-07-28 stateless URL elicitation with signed request state, plus
   authenticated URL results for Code Mode, CLI, OpenClaw, and older clients.
 - One-time Durable Object approval state and exact draft-content binding.
+- A single stateless MCP server on `/mcp` serves both 2025-era and 2026-07-28
+  clients. The `FastmailMCP` Durable Object is no longer routed; its removal
+  is pending a soak period.
+- Private cache hints on read responses.
+- Form elicitation to confirm `bulk_delete` and `bulk_move` on 25 or more
+  emails, for clients that support it.
+- MCP Apps: an in-chat send review card and an email reader view
+  (`ui_get_send_review`, `ui_get_email_view`, app-only tools) with read, flag,
+  archive and draft-reply actions.
+- Live client compatibility test (`test/mcp-compat.integration.test.ts`),
+  skipped unless `FASTMAIL_MCP_TEST_URL` and `FASTMAIL_MCP_TEST_TOKEN` are set.
 
 ### Changed
-- Outbound tools now advertise write/destructive, non-idempotent, open-world
-  annotations so supporting clients can apply native approval policies.
+- Every tool now carries MCP annotations (read-only, destructive, idempotent,
+  open-world). Outbound tools advertise write/destructive, non-idempotent,
+  open-world so supporting clients can apply native approval policies.
+- The CLI now uses `@modelcontextprotocol/client` 2.3.1 with automatic version
+  negotiation. It answers elicitation prompts only on an interactive TTY.
+- `/mcp` accepts browser `Origin` headers (such as claude.ai) on both protocol
+  eras. Every request is Bearer-validated, so the SDK Origin allowlist is off.
 - Cc and Bcc addresses are now included in direct-send SMTP envelopes.
+- `send_email`, `send_copy`, `reply_to_email` and `forward_email` failures now
+  set `isError`. Draft results carry `{ draftId, status: "draft" }` and direct
+  sends carry `{ status: "sent" }`, so the send review card shows a saved
+  draft, a completed send or the error instead of "No approval".
 - Client registration TTL now slides whenever a client proves it is in use — both
   token grants and any request that validates a bearer token — so a client keeps
   its registered `redirect_uris` enforced instead of silently falling back to

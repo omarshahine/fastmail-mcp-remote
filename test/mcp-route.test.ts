@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { durableFetch } = vi.hoisted(() => ({
 	durableFetch: vi.fn(async (request: Request) =>
@@ -52,6 +52,10 @@ vi.mock('../src/permissions', async (importOriginal) => {
 
 import app from '../src/index';
 import { validateAccessToken } from '../src/oauth-utils';
+import { getVisibleTools } from '../src/permissions';
+import { JmapClient } from '../src/jmap-client';
+import { SendApprovalStore } from '../src/send-approval';
+import { EMAIL_READER_URI, SEND_REVIEW_URI, UI_MIME_TYPE } from '../src/apps/constants';
 
 const env = {
 	ACTION_SIGNING_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
@@ -68,55 +72,46 @@ describe('/mcp transport routing', () => {
 		vi.mocked(validateAccessToken).mockClear();
 	});
 
-	it('rejects standalone GET without dispatching it to the session Durable Object', async () => {
-		const sessionId = 'held-stream-session';
-		const headers = {
-			Authorization: 'Bearer test-token',
-			'Mcp-Session-Id': sessionId,
-		};
-
-		// Start the same standalone GET the SDK opens after initialization. The
-		// response must settle at the Worker rather than occupying the session DO.
-		const getPromise = app.request(
-			new Request('https://worker.example/mcp', { method: 'GET', headers }),
+	it('rejects standalone GET with 405 and never touches the Durable Object', async () => {
+		const getResponse = await app.request(
+			new Request('https://worker.example/mcp', {
+				method: 'GET',
+				headers: { Authorization: 'Bearer test-token', 'Mcp-Session-Id': 'held-stream-session' },
+			}),
 			undefined,
 			env,
 			executionCtx,
 		);
-		const getResponse = await getPromise;
 
 		expect(getResponse.status).toBe(405);
 		expect(getResponse.headers.get('Allow')).toBe('POST');
 		expect(durableFetch).not.toHaveBeenCalled();
+	});
 
-		const startedAt = performance.now();
-		const postResponse = await Promise.race([
-			app.request(
-				new Request('https://worker.example/mcp', {
-					method: 'POST',
-					headers: { ...headers, 'Content-Type': 'application/json' },
-					body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
-				}),
-				undefined,
-				env,
-				executionCtx,
-			),
-			new Promise<never>((_, reject) =>
-				setTimeout(() => reject(new Error('tools/list POST exceeded 5 seconds')), 5_000),
-			),
-		]);
+	it('Bearer-validates POST /mcp before serving it statelessly', async () => {
+		const postResponse = await app.request(
+			new Request('https://worker.example/mcp', {
+				method: 'POST',
+				headers: {
+					Authorization: 'Bearer test-token',
+					'Content-Type': 'application/json',
+					Accept: 'application/json, text/event-stream',
+				},
+				body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+			}),
+			undefined,
+			env,
+			executionCtx,
+		);
 
 		expect(postResponse.status).toBe(200);
-		expect(performance.now() - startedAt).toBeLessThan(5_000);
-		expect(durableFetch).toHaveBeenCalledTimes(1);
 		expect(validateAccessToken).toHaveBeenCalledWith(
 			undefined,
 			'test-token',
 			'user@example.com',
 			expect.any(Function),
 		);
-		expect(durableFetch.mock.calls[0]?.[0].method).toBe('POST');
-		expect(durableFetch.mock.calls[0]?.[0].headers.get('Mcp-Session-Id')).toBe(sessionId);
+		expect(durableFetch).not.toHaveBeenCalled();
 	});
 
 	it('does not advertise or serve the removed legacy /sse transport', async () => {
@@ -166,6 +161,357 @@ describe('/mcp transport routing', () => {
 	});
 });
 
+
+const modernMeta = {
+	'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+	'io.modelcontextprotocol/clientInfo': { name: 'test-client', version: '1.0.0' },
+	'io.modelcontextprotocol/clientCapabilities': { elicitation: { url: {} } },
+};
+
+/** A 2026-07-28 client that also renders MCP Apps. */
+const modernAppsMeta = {
+	...modernMeta,
+	'io.modelcontextprotocol/clientCapabilities': {
+		elicitation: { url: {} },
+		extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: [UI_MIME_TYPE] } },
+	},
+};
+
+function mcpPost(body: unknown, headers: Record<string, string> = {}): Promise<Response> {
+	return app.request(
+		new Request('https://worker.example/mcp', {
+			method: 'POST',
+			headers: {
+				Authorization: 'Bearer test-token',
+				'Content-Type': 'application/json',
+				Accept: 'application/json, text/event-stream',
+				...headers,
+			},
+			body: JSON.stringify(body),
+		}),
+		undefined,
+		env,
+		executionCtx,
+	) as Promise<Response>;
+}
+
+/** Read a JSON-RPC message from either a JSON or a single-event SSE response. */
+async function readJsonRpc(response: Response): Promise<any> {
+	const text = await response.text();
+	if (!(response.headers.get('content-type') ?? '').includes('text/event-stream')) {
+		return JSON.parse(text);
+	}
+	const data = text.split('\n').find((line) => line.startsWith('data:'));
+	if (!data) throw new Error(`No SSE data line in: ${text}`);
+	return JSON.parse(data.slice('data:'.length).trim());
+}
+
+describe('/mcp single stateless v2 server', () => {
+	beforeEach(() => {
+		durableFetch.mockClear();
+	});
+
+	it.each(['2025-03-26', '2025-06-18', '2025-11-25'])(
+		'legacy initialize is served statelessly for %s',
+		async (protocolVersion) => {
+			const response = await mcpPost({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'initialize',
+				params: {
+					protocolVersion,
+					capabilities: {},
+					clientInfo: { name: 'legacy-client', version: '1.0.0' },
+				},
+			});
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get('Mcp-Session-Id')).toBeNull();
+			const body = await readJsonRpc(response);
+			expect(body.result.protocolVersion).toBe(protocolVersion);
+			expect(durableFetch).not.toHaveBeenCalled();
+		},
+	);
+
+	it('legacy tools/list with a stale Mcp-Session-Id still succeeds', async () => {
+		const response = await mcpPost(
+			{ jsonrpc: '2.0', id: 2, method: 'tools/list' },
+			{ 'Mcp-Session-Id': '0f0e0d0c0b0a09080706050403020100' },
+		);
+
+		expect(response.status).toBe(200);
+		const body = await readJsonRpc(response);
+		expect(body.result.tools.map((tool: any) => tool.name)).toContain('list_mailboxes');
+		expect(durableFetch).not.toHaveBeenCalled();
+	});
+
+	it('modern tools/list carries private cache hints and annotations', async () => {
+		const response = await mcpPost(
+			{ jsonrpc: '2.0', id: 6, method: 'tools/list', params: { _meta: modernMeta } },
+			{ 'Mcp-Method': 'tools/list', 'Mcp-Protocol-Version': '2026-07-28' },
+		);
+
+		expect(response.status).toBe(200);
+		const body = await readJsonRpc(response);
+		expect(body.result.ttlMs).toBe(60000);
+		expect(body.result.cacheScope).toBe('private');
+		const tool = body.result.tools.find((t: any) => t.name === 'list_mailboxes');
+		expect(tool.annotations.readOnlyHint).toBe(true);
+	});
+
+	it('legacy tools/list carries annotations', async () => {
+		const response = await mcpPost({ jsonrpc: '2.0', id: 7, method: 'tools/list' });
+
+		expect(response.status).toBe(200);
+		const body = await readJsonRpc(response);
+		const tool = body.result.tools.find((t: any) => t.name === 'list_mailboxes');
+		expect(tool.annotations.readOnlyHint).toBe(true);
+	});
+
+	it('server/discover advertises 2026-07-28', async () => {
+		const response = await mcpPost(
+			{ jsonrpc: '2.0', id: 4, method: 'server/discover', params: { _meta: modernMeta } },
+			{ 'Mcp-Method': 'server/discover', 'Mcp-Protocol-Version': '2026-07-28' },
+		);
+
+		expect(response.status).toBe(200);
+		const body = await readJsonRpc(response);
+		expect(body.result.supportedVersions).toContain('2026-07-28');
+	});
+
+	it('modern resources/read returns the send review app', async () => {
+		const response = await mcpPost(
+			{
+				jsonrpc: '2.0',
+				id: 8,
+				method: 'resources/read',
+				params: { uri: SEND_REVIEW_URI, _meta: modernAppsMeta },
+			},
+			{
+				'Mcp-Method': 'resources/read',
+				'Mcp-Name': SEND_REVIEW_URI,
+				'Mcp-Protocol-Version': '2026-07-28',
+			},
+		);
+
+		const body = await readJsonRpc(response);
+		expect(response.status, JSON.stringify(body)).toBe(200);
+		expect(body.result.contents[0].mimeType).toBe(UI_MIME_TYPE);
+		expect(body.result.contents[0].text).toContain('fastmailApp');
+	});
+
+	it('modern resources/read returns the email reader app', async () => {
+		const response = await mcpPost(
+			{
+				jsonrpc: '2.0',
+				id: 9,
+				method: 'resources/read',
+				params: { uri: EMAIL_READER_URI, _meta: modernAppsMeta },
+			},
+			{
+				'Mcp-Method': 'resources/read',
+				'Mcp-Name': EMAIL_READER_URI,
+				'Mcp-Protocol-Version': '2026-07-28',
+			},
+		);
+
+		const body = await readJsonRpc(response);
+		expect(response.status, JSON.stringify(body)).toBe(200);
+		expect(body.result.contents[0].mimeType).toBe(UI_MIME_TYPE);
+		expect(body.result.contents[0].text).toContain('ui_get_email_view');
+	});
+
+	it.each([
+		['legacy', {}, undefined],
+		['modern', { 'Mcp-Method': 'tools/list', 'Mcp-Protocol-Version': '2026-07-28' }, modernMeta],
+	] as const)('%s tools/list from a browser Origin (claude.ai) is not rejected', async (_era, headers, meta) => {
+		const response = await mcpPost(
+			{ jsonrpc: '2.0', id: 10, method: 'tools/list', ...(meta ? { params: { _meta: meta } } : {}) },
+			{ ...headers, Origin: 'https://claude.ai' },
+		);
+
+		const body = await readJsonRpc(response);
+		expect(response.status, JSON.stringify(body)).toBe(200);
+		expect(body.result.tools.map((tool: any) => tool.name)).toContain('list_mailboxes');
+	});
+
+	it('modern tools/call with mismatched Mcp-Name is rejected', async () => {
+		const response = await mcpPost(
+			{
+				jsonrpc: '2.0',
+				id: 5,
+				method: 'tools/call',
+				params: { name: 'list_mailboxes', arguments: {}, _meta: modernMeta },
+			},
+			{
+				'Mcp-Method': 'tools/call',
+				'Mcp-Name': 'get_email',
+				'Mcp-Protocol-Version': '2026-07-28',
+			},
+		);
+
+		expect(response.status).toBe(400);
+		const body = await readJsonRpc(response);
+		expect(body.error.code).toBe(-32020);
+	});
+});
+
+describe('/mcp MCP Apps gating by client capability', () => {
+	const appTools = ['list_mailboxes', 'get_email', 'ui_get_email_view', 'ui_get_send_review'];
+	beforeEach(() => {
+		vi.mocked(getVisibleTools).mockImplementation(() => new Set(appTools));
+	});
+	afterEach(() => {
+		vi.mocked(getVisibleTools).mockImplementation(() => new Set(['list_mailboxes']));
+	});
+
+	async function listTools(meta?: unknown) {
+		const response = await mcpPost(
+			{ jsonrpc: '2.0', id: 11, method: 'tools/list', ...(meta ? { params: { _meta: meta } } : {}) },
+			meta ? { 'Mcp-Method': 'tools/list', 'Mcp-Protocol-Version': '2026-07-28' } : {},
+		);
+		const body = await readJsonRpc(response);
+		expect(response.status, JSON.stringify(body)).toBe(200);
+		return body.result.tools as any[];
+	}
+
+	it('modern client without the ui extension sees no app tools or app _meta', async () => {
+		const tools = await listTools(modernMeta);
+		const names = tools.map((t) => t.name);
+		expect(names).toContain('get_email');
+		expect(names.filter((n) => n.startsWith('ui_'))).toEqual([]);
+		expect(tools.find((t) => t.name === 'get_email')._meta?.ui).toBeUndefined();
+	});
+
+	it('modern client advertising the ui extension sees app tools and app _meta', async () => {
+		const tools = await listTools(modernAppsMeta);
+		const names = tools.map((t) => t.name);
+		expect(names).toEqual(expect.arrayContaining(['ui_get_email_view', 'ui_get_send_review']));
+		expect(tools.find((t) => t.name === 'get_email')._meta.ui.resourceUri).toBe(EMAIL_READER_URI);
+	});
+
+	it('legacy client keeps app tools and app _meta', async () => {
+		const tools = await listTools();
+		const names = tools.map((t) => t.name);
+		expect(names).toEqual(expect.arrayContaining(['ui_get_email_view', 'ui_get_send_review']));
+		expect(tools.find((t) => t.name === 'get_email')._meta.ui.resourceUri).toBe(EMAIL_READER_URI);
+		expect(tools.find((t) => t.name === 'ui_get_email_view')._meta.ui.visibility).toEqual(['app']);
+	});
+});
+
+/** In-memory SEND_APPROVALS namespace backed by the real SendApprovalStore. */
+function memoryApprovalNamespace() {
+	const stores = new Map<string, SendApprovalStore>();
+	const memoryState = () => {
+		const values = new Map<string, unknown>();
+		let queue: Promise<unknown> = Promise.resolve();
+		return {
+			storage: {
+				get: async (key: string) => values.get(key),
+				put: async (key: string, value: unknown) => void values.set(key, structuredClone(value)),
+				setAlarm: async () => undefined,
+				deleteAll: async () => values.clear(),
+			},
+			blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T> {
+				const result = queue.then(callback);
+				queue = result.then(() => undefined, () => undefined);
+				return result;
+			},
+		};
+	};
+	return {
+		getByName(id: string) {
+			let store = stores.get(id);
+			if (!store) {
+				store = new SendApprovalStore(memoryState() as unknown as DurableObjectState, {} as Env);
+				stores.set(id, store);
+			}
+			return { fetch: (request: Request | string, init?: RequestInit) => store!.fetch(new Request(request, init)) };
+		},
+	};
+}
+
+/** Every JSON-RPC message in a JSON or SSE response body. */
+async function readAllJsonRpc(response: Response): Promise<any[]> {
+	const text = await response.text();
+	if (!(response.headers.get('content-type') ?? '').includes('text/event-stream')) {
+		return [JSON.parse(text)];
+	}
+	return text
+		.split('\n')
+		.filter((line) => line.startsWith('data:'))
+		.map((line) => JSON.parse(line.slice('data:'.length).trim()));
+}
+
+describe('/mcp legacy send approval', () => {
+	afterEach(() => {
+		vi.restoreAllMocks();
+		vi.mocked(getVisibleTools).mockImplementation(() => new Set(['list_mailboxes']));
+	});
+
+	it('2025-era send_email returns the approval URL in text, with no elicitation', async () => {
+		vi.mocked(getVisibleTools).mockImplementation(() => new Set(['list_mailboxes', 'send_email']));
+		const createDraft = vi.spyOn(JmapClient.prototype, 'createDraft').mockResolvedValue('draft-route');
+		vi.spyOn(JmapClient.prototype, 'getDraftApprovalSnapshot').mockResolvedValue({
+			blobId: 'raw-message-route',
+			from: 'user@example.com',
+			to: ['recipient@example.com'],
+			cc: [],
+			bcc: [],
+			subject: 'Route approval',
+			textBody: 'Hello',
+			htmlBody: '',
+			attachments: [],
+			inReplyTo: [],
+			references: [],
+			truncated: false,
+		} as any);
+		const sendEmail = vi.spyOn(JmapClient.prototype, 'sendEmail');
+		const sendEnv = {
+			...env,
+			SEND_APPROVAL_MODE: 'required',
+			WORKER_URL: 'https://mail.example.test',
+			SEND_APPROVALS: memoryApprovalNamespace(),
+		} as unknown as Env;
+
+		const response = await app.request(
+			new Request('https://worker.example/mcp', {
+				method: 'POST',
+				headers: {
+					Authorization: 'Bearer test-token',
+					'Content-Type': 'application/json',
+					Accept: 'application/json, text/event-stream',
+					'Mcp-Protocol-Version': '2025-06-18',
+				},
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 7,
+					method: 'tools/call',
+					params: {
+						name: 'send_email',
+						arguments: { to: ['recipient@example.com'], subject: 'Route approval', textBody: 'Hello' },
+					},
+				}),
+			}),
+			undefined,
+			sendEnv,
+			executionCtx,
+		);
+
+		expect(response.status).toBe(200);
+		const messages = await readAllJsonRpc(response);
+		// No server-to-client request (elicitation/create or otherwise) on the legacy lane.
+		expect(messages.filter((message) => 'method' in message)).toEqual([]);
+		const result = messages.find((message) => message.id === 7)?.result;
+		expect(result, JSON.stringify(messages)).toBeDefined();
+		expect(result.resultType).not.toBe('input_required');
+		expect(result.inputRequests).toBeUndefined();
+		expect(result.content[0].text).toContain('https://mail.example.test/approve/send/');
+		expect(createDraft).toHaveBeenCalledOnce();
+		expect(sendEmail).not.toHaveBeenCalled();
+		expect(durableFetch).not.toHaveBeenCalled();
+	});
+});
 
 describe('OAuth discovery routes', () => {
 	it.each([

@@ -102,6 +102,8 @@ fastmail bulk move <mailboxId> <id1> <id2>     # Move multiple
 fastmail bulk flag <id1> <id2>                 # Flag multiple
 ```
 
+Bulk delete or move of 25 or more emails asks for a yes/no confirmation on an interactive terminal (prompt on stderr). Sends may show an approval URL and ask `Open in browser? [y/N] (N declines)`; answering no declines the request (a declined send is cancelled). Non-interactive runs (pipes, agents, `FASTMAIL_NONINTERACTIVE=1`) never prompt.
+
 ### Mailboxes & Account
 
 ```bash

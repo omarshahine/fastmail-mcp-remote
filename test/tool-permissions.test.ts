@@ -9,9 +9,11 @@ describe("tool permission category completeness", () => {
       tool(name: string) {
         registered.push(name);
       },
+      // Enables MCP Apps so app-only `ui_*` tools are counted too.
+      registerResource() {},
     };
 
-    registerAllTools(server as never, {} as never);
+    registerAllTools(server as never, {} as never, undefined, { apps: true });
 
     expect(registered.sort()).toEqual(Object.keys(TOOL_CATEGORIES).sort());
   });

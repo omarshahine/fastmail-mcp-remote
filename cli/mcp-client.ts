@@ -6,9 +6,9 @@
  * a simple callTool() API that returns parsed results.
  */
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { updateTokenExpiry } from "./auth.js";
+import { createElicitationHandler, isInteractive, terminalIO } from "./elicitation.js";
 
 /**
  * Strip prompt-injection datamarking from MCP tool responses.
@@ -54,10 +54,22 @@ export class FastmailMcpClient {
     if (this.client) return this.client;
     if (this.connectionPromise) return this.connectionPromise;
 
-    const connectingClient = new Client({
-      name: "fastmail-cli",
-      version: "1.0.0",
-    });
+    // Only declare elicitation on an interactive terminal. Non-interactive
+    // callers (OpenClaw via execFile, pipes, CI) must never be asked anything.
+    const interactive = isInteractive();
+    const connectingClient = new Client(
+      { name: "fastmail-cli", version: "1.0.0" },
+      {
+        versionNegotiation: { mode: "auto" },
+        capabilities: interactive ? { elicitation: { form: {}, url: {} } } : {},
+      },
+    );
+    if (interactive) {
+      connectingClient.setRequestHandler(
+        "elicitation/create",
+        createElicitationHandler(terminalIO()),
+      );
+    }
 
     // Inject Bearer token into every request via custom fetch.
     // Also intercept the response to persist any server-issued X-Token-Expires-At
@@ -70,18 +82,10 @@ export class FastmailMcpClient {
 
       // Never open the standalone GET SSE stream.
       //
-      // /mcp is served by a Durable Object, which handles requests serially. A
-      // long-lived SSE GET occupies it, so every subsequent POST queues behind
-      // the stream and only completes when it terminates (~300s) — far past the
-      // SDK's 60s request timeout. The symptom is every tool call failing with
-      // "MCP error -32001: Request timed out" while the server is perfectly
-      // healthy on each request in isolation.
-      //
-      // The stream is optional in the MCP spec: a server that does not offer it
-      // returns 405, and the client proceeds using POST responses only, which is
-      // all this CLI needs (it makes requests and reads replies; it consumes no
-      // server-initiated notifications). Synthesize that 405 rather than issuing
-      // a GET that would wedge the Durable Object.
+      // The server is stateless and answers GET with 405 itself, so this shim
+      // only saves a round trip. The stream is optional in the MCP spec; the
+      // CLI makes requests and reads replies and consumes no server-initiated
+      // notifications.
       if ((init?.method ?? "GET").toUpperCase() === "GET") {
         return new Response(null, { status: 405, statusText: "Method Not Allowed" });
       }
