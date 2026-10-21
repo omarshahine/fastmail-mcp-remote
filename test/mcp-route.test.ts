@@ -312,6 +312,20 @@ describe('/mcp single stateless v2 server', () => {
 		expect(body.result.contents[0].text).toContain('ui_get_email_view');
 	});
 
+	it.each([
+		['legacy', {}, undefined],
+		['modern', { 'Mcp-Method': 'tools/list', 'Mcp-Protocol-Version': '2026-07-28' }, modernMeta],
+	] as const)('%s tools/list from a browser Origin (claude.ai) is not rejected', async (_era, headers, meta) => {
+		const response = await mcpPost(
+			{ jsonrpc: '2.0', id: 10, method: 'tools/list', ...(meta ? { params: { _meta: meta } } : {}) },
+			{ ...headers, Origin: 'https://claude.ai' },
+		);
+
+		const body = await readJsonRpc(response);
+		expect(response.status, JSON.stringify(body)).toBe(200);
+		expect(body.result.tools.map((tool: any) => tool.name)).toContain('list_mailboxes');
+	});
+
 	it('modern tools/call with mismatched Mcp-Name is rejected', async () => {
 		const response = await mcpPost(
 			{

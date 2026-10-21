@@ -300,7 +300,14 @@ async function handleMcp(c: Context<{ Bindings: Env }>): Promise<Response> {
     userLogin: tokenInfo.user_login,
     visibleTools,
     requestStateCodec,
-  }), { route: "/mcp", legacy: "stateless" });
+  }), {
+    route: "/mcp",
+    legacy: "stateless",
+    // Browser-hosted clients (claude.ai) send an Origin the agents default
+    // allowlist rejects with 403. Every request was Bearer-validated above,
+    // so an Origin check adds no protection here.
+    allowedOriginHostnames: "*",
+  });
   const response = await handler.fetch(c.req.raw, {
     authInfo: {
       token,

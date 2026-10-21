@@ -32,8 +32,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   open-world so supporting clients can apply native approval policies.
 - The CLI now uses `@modelcontextprotocol/client` 2.3.1 with automatic version
   negotiation. It answers elicitation prompts only on an interactive TTY.
-- Legacy-era requests now pass the SDK's Origin check: browser requests with a
-  non-localhost `Origin` header receive 403.
+- `/mcp` accepts browser `Origin` headers (such as claude.ai) on both protocol
+  eras. Every request is Bearer-validated, so the SDK Origin allowlist is off.
 - Cc and Bcc addresses are now included in direct-send SMTP envelopes.
 - Client registration TTL now slides whenever a client proves it is in use — both
   token grants and any request that validates a bearer token — so a client keeps
