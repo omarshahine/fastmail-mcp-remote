@@ -68,55 +68,46 @@ describe('/mcp transport routing', () => {
 		vi.mocked(validateAccessToken).mockClear();
 	});
 
-	it('rejects standalone GET without dispatching it to the session Durable Object', async () => {
-		const sessionId = 'held-stream-session';
-		const headers = {
-			Authorization: 'Bearer test-token',
-			'Mcp-Session-Id': sessionId,
-		};
-
-		// Start the same standalone GET the SDK opens after initialization. The
-		// response must settle at the Worker rather than occupying the session DO.
-		const getPromise = app.request(
-			new Request('https://worker.example/mcp', { method: 'GET', headers }),
+	it('rejects standalone GET with 405 and never touches the Durable Object', async () => {
+		const getResponse = await app.request(
+			new Request('https://worker.example/mcp', {
+				method: 'GET',
+				headers: { Authorization: 'Bearer test-token', 'Mcp-Session-Id': 'held-stream-session' },
+			}),
 			undefined,
 			env,
 			executionCtx,
 		);
-		const getResponse = await getPromise;
 
 		expect(getResponse.status).toBe(405);
 		expect(getResponse.headers.get('Allow')).toBe('POST');
 		expect(durableFetch).not.toHaveBeenCalled();
+	});
 
-		const startedAt = performance.now();
-		const postResponse = await Promise.race([
-			app.request(
-				new Request('https://worker.example/mcp', {
-					method: 'POST',
-					headers: { ...headers, 'Content-Type': 'application/json' },
-					body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
-				}),
-				undefined,
-				env,
-				executionCtx,
-			),
-			new Promise<never>((_, reject) =>
-				setTimeout(() => reject(new Error('tools/list POST exceeded 5 seconds')), 5_000),
-			),
-		]);
+	it('Bearer-validates POST /mcp before serving it statelessly', async () => {
+		const postResponse = await app.request(
+			new Request('https://worker.example/mcp', {
+				method: 'POST',
+				headers: {
+					Authorization: 'Bearer test-token',
+					'Content-Type': 'application/json',
+					Accept: 'application/json, text/event-stream',
+				},
+				body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
+			}),
+			undefined,
+			env,
+			executionCtx,
+		);
 
 		expect(postResponse.status).toBe(200);
-		expect(performance.now() - startedAt).toBeLessThan(5_000);
-		expect(durableFetch).toHaveBeenCalledTimes(1);
 		expect(validateAccessToken).toHaveBeenCalledWith(
 			undefined,
 			'test-token',
 			'user@example.com',
 			expect.any(Function),
 		);
-		expect(durableFetch.mock.calls[0]?.[0].method).toBe('POST');
-		expect(durableFetch.mock.calls[0]?.[0].headers.get('Mcp-Session-Id')).toBe(sessionId);
+		expect(durableFetch).not.toHaveBeenCalled();
 	});
 
 	it('does not advertise or serve the removed legacy /sse transport', async () => {
@@ -166,6 +157,112 @@ describe('/mcp transport routing', () => {
 	});
 });
 
+
+const modernMeta = {
+	'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+	'io.modelcontextprotocol/clientInfo': { name: 'test-client', version: '1.0.0' },
+	'io.modelcontextprotocol/clientCapabilities': { elicitation: { url: {} } },
+};
+
+function mcpPost(body: unknown, headers: Record<string, string> = {}): Promise<Response> {
+	return app.request(
+		new Request('https://worker.example/mcp', {
+			method: 'POST',
+			headers: {
+				Authorization: 'Bearer test-token',
+				'Content-Type': 'application/json',
+				Accept: 'application/json, text/event-stream',
+				...headers,
+			},
+			body: JSON.stringify(body),
+		}),
+		undefined,
+		env,
+		executionCtx,
+	) as Promise<Response>;
+}
+
+/** Read a JSON-RPC message from either a JSON or a single-event SSE response. */
+async function readJsonRpc(response: Response): Promise<any> {
+	const text = await response.text();
+	if (!(response.headers.get('content-type') ?? '').includes('text/event-stream')) {
+		return JSON.parse(text);
+	}
+	const data = text.split('\n').find((line) => line.startsWith('data:'));
+	if (!data) throw new Error(`No SSE data line in: ${text}`);
+	return JSON.parse(data.slice('data:'.length).trim());
+}
+
+describe('/mcp single stateless v2 server', () => {
+	beforeEach(() => {
+		durableFetch.mockClear();
+	});
+
+	it.each(['2025-03-26', '2025-06-18', '2025-11-25'])(
+		'legacy initialize is served statelessly for %s',
+		async (protocolVersion) => {
+			const response = await mcpPost({
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'initialize',
+				params: {
+					protocolVersion,
+					capabilities: {},
+					clientInfo: { name: 'legacy-client', version: '1.0.0' },
+				},
+			});
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get('Mcp-Session-Id')).toBeNull();
+			const body = await readJsonRpc(response);
+			expect(body.result.protocolVersion).toBe(protocolVersion);
+			expect(durableFetch).not.toHaveBeenCalled();
+		},
+	);
+
+	it('legacy tools/list with a stale Mcp-Session-Id still succeeds', async () => {
+		const response = await mcpPost(
+			{ jsonrpc: '2.0', id: 2, method: 'tools/list' },
+			{ 'Mcp-Session-Id': '0f0e0d0c0b0a09080706050403020100' },
+		);
+
+		expect(response.status).toBe(200);
+		const body = await readJsonRpc(response);
+		expect(body.result.tools.map((tool: any) => tool.name)).toContain('list_mailboxes');
+		expect(durableFetch).not.toHaveBeenCalled();
+	});
+
+	it('server/discover advertises 2026-07-28', async () => {
+		const response = await mcpPost(
+			{ jsonrpc: '2.0', id: 4, method: 'server/discover', params: { _meta: modernMeta } },
+			{ 'Mcp-Method': 'server/discover', 'Mcp-Protocol-Version': '2026-07-28' },
+		);
+
+		expect(response.status).toBe(200);
+		const body = await readJsonRpc(response);
+		expect(body.result.supportedVersions).toContain('2026-07-28');
+	});
+
+	it('modern tools/call with mismatched Mcp-Name is rejected', async () => {
+		const response = await mcpPost(
+			{
+				jsonrpc: '2.0',
+				id: 5,
+				method: 'tools/call',
+				params: { name: 'list_mailboxes', arguments: {}, _meta: modernMeta },
+			},
+			{
+				'Mcp-Method': 'tools/call',
+				'Mcp-Name': 'get_email',
+				'Mcp-Protocol-Version': '2026-07-28',
+			},
+		);
+
+		expect(response.status).toBe(400);
+		const body = await readJsonRpc(response);
+		expect(body.error.code).toBe(-32020);
+	});
+});
 
 describe('OAuth discovery routes', () => {
 	it.each([

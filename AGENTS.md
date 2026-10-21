@@ -24,7 +24,8 @@ npm run cli -- inbox         # Run CLI (or use alias: fastmail inbox)
 ```
 src/
 ├── index.ts              # Main entry point, FastmailMCP class, Hono routing, Code Mode endpoint
-├── tools.ts              # All MCP tool registrations (registerAllTools), shared by DO and Code Mode
+├── tools.ts              # All MCP tool registrations (registerAllTools), shared by /mcp and Code Mode
+├── mcp-server.ts         # createFastmailMcpServer: the single stateless v2 server factory for /mcp
 ├── jmap-client.ts        # JMAP protocol client for Fastmail API (email, memos)
 ├── contacts-calendar.ts  # Contacts and calendar functionality
 ├── html-to-markdown.ts   # HTML to Markdown conversion (Turndown + linkedom)
@@ -66,7 +67,7 @@ openclaw-plugin/                     # OpenClaw plugin: "fastmail-cli" on npm
 - **Entry Point**: `src/index.ts` exports Hono app with custom OAuth routing
 - **OAuth**: Cloudflare Access OAuth (supports GitHub + OTP via Zero Trust)
 - **API Communication**: JMAP protocol to Fastmail API (`src/jmap-client.ts`)
-- **State**: Cloudflare Durable Objects with SQLite for session management
+- **MCP transport**: Stateless v2 server for all eras on `/mcp` (`src/mcp-server.ts`, served by `createMcpHandler` with `legacy: "stateless"`). 2026-07-28 requests are served natively; 2025-era requests use the agents stateless legacy lane. The `FastmailMCP` session Durable Object is exported but unrouted; DO retired in Task 8
 - **Storage**: KV namespace (`OAUTH_KV`) for OAuth state and tokens; a per-code Durable Object atomically consumes authorization codes
 
 ## OAuth Flow
