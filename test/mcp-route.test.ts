@@ -235,6 +235,29 @@ describe('/mcp single stateless v2 server', () => {
 		expect(durableFetch).not.toHaveBeenCalled();
 	});
 
+	it('modern tools/list carries private cache hints and annotations', async () => {
+		const response = await mcpPost(
+			{ jsonrpc: '2.0', id: 6, method: 'tools/list', params: { _meta: modernMeta } },
+			{ 'Mcp-Method': 'tools/list', 'Mcp-Protocol-Version': '2026-07-28' },
+		);
+
+		expect(response.status).toBe(200);
+		const body = await readJsonRpc(response);
+		expect(body.result.ttlMs).toBe(60000);
+		expect(body.result.cacheScope).toBe('private');
+		const tool = body.result.tools.find((t: any) => t.name === 'list_mailboxes');
+		expect(tool.annotations.readOnlyHint).toBe(true);
+	});
+
+	it('legacy tools/list carries annotations', async () => {
+		const response = await mcpPost({ jsonrpc: '2.0', id: 7, method: 'tools/list' });
+
+		expect(response.status).toBe(200);
+		const body = await readJsonRpc(response);
+		const tool = body.result.tools.find((t: any) => t.name === 'list_mailboxes');
+		expect(tool.annotations.readOnlyHint).toBe(true);
+	});
+
 	it('server/discover advertises 2026-07-28', async () => {
 		const response = await mcpPost(
 			{ jsonrpc: '2.0', id: 4, method: 'server/discover', params: { _meta: modernMeta } },

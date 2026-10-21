@@ -49,6 +49,13 @@ export function createFastmailMcpServer(input: {
     {
       inputRequired: { legacyShim: false, maxRounds: 3 },
       requestState: { verify: requestStateCodec.verify },
+      // Tool and resource lists differ per user (permissions), so they are
+      // private; resource bodies change rarely.
+      cacheHints: {
+        "tools/list": { ttlMs: 60_000, cacheScope: "private" },
+        "resources/list": { ttlMs: 60_000, cacheScope: "private" },
+        "resources/read": { ttlMs: 300_000, cacheScope: "private" },
+      },
     },
   );
   const toolContext = buildToolContext(env, userLogin, {

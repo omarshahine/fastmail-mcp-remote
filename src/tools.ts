@@ -22,6 +22,7 @@ import { ContactsCalendarClient } from "./contacts-calendar";
 import { getPermissionsConfig, getUserConfig, getVisibleTools, isToolAllowed, TOOL_CATEGORIES } from "./permissions";
 import { markToolResult, markUntrustedText, isExternalDataTool, getDatamarkingPreamble } from "./prompt-guard";
 import { generateActionUrls } from "./action-urls";
+import { TOOL_ANNOTATIONS } from "./tool-annotations";
 import {
   approvalUrl,
   createSendApproval,
@@ -120,7 +121,7 @@ export function buildToolContext(
 export function legacyShapedModernServer(server: ModernMcpServer): McpServer {
   return {
     tool(name: string, description: string, schema: any, annotationsOrHandler: any, maybeHandler?: any) {
-      const annotations = maybeHandler ? annotationsOrHandler : undefined;
+      const annotations = (maybeHandler ? annotationsOrHandler : undefined) ?? TOOL_ANNOTATIONS[name];
       const handler = maybeHandler || annotationsOrHandler;
       server.registerTool(
         name,
@@ -194,14 +195,6 @@ export function guardResponse(
   const json = JSON.stringify(processedData);
   return { content: [{ text: json, type: "text" }] };
 }
-
-const SEND_TOOL_ANNOTATIONS = {
-  title: "Send email",
-  readOnlyHint: false,
-  destructiveHint: true,
-  idempotentHint: false,
-  openWorldHint: true,
-};
 
 function approvalResult(record: SendApprovalRecord, url: string): ToolResult {
   if (record.status === "sent") {
@@ -523,7 +516,7 @@ export function registerAllTools(
         if (denied) return denied;
         return handler(...args);
       };
-      const annotations = maybeHandler ? annotationsOrHandler : undefined;
+      const annotations = (maybeHandler ? annotationsOrHandler : undefined) ?? TOOL_ANNOTATIONS[name];
 
       // Reject unknown parameters instead of silently dropping them.
       //
@@ -667,7 +660,6 @@ export function registerAllTools(
           .optional()
           .describe("Advanced: Message-ID chain for threading. For true replies, prefer `reply_to_email` — it computes this from the source email automatically."),
       },
-      SEND_TOOL_ANNOTATIONS,
       async ({ to, cc, bcc, from, subject, textBody, htmlBody, markdownBody, attachments, inReplyTo, references }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates even if the outer Hono check is bypassed
         const denied = await ctx.checkToolPermission('send_email');
@@ -739,7 +731,6 @@ export function registerAllTools(
         bcc: z.array(z.string()).optional().describe("BCC email addresses (optional)"),
         from: z.string().optional().describe("Sender identity to use (optional, defaults to account primary). Must be a verified identity."),
       },
-      SEND_TOOL_ANNOTATIONS,
       async ({ emailId, to, cc, bcc, from }, extra) => {
         const denied = await ctx.checkToolPermission('send_copy');
         if (denied) return denied;
@@ -863,7 +854,6 @@ export function registerAllTools(
         sendImmediately: z.boolean().default(false).describe("If true, send the reply immediately. If false (default), create a draft."),
         excludeQuote: z.boolean().default(false).describe("If true, don't include quoted original message. Default includes quote."),
       },
-      SEND_TOOL_ANNOTATIONS,
       async ({ emailId, body, htmlBody, markdownBody, from, replyAll, sendImmediately, excludeQuote }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates from sending replies immediately
         if (sendImmediately) {
@@ -1008,7 +998,6 @@ export function registerAllTools(
         includeAttachments: z.boolean().default(true).describe("If false, drop the original's attachments (inline images in the body are always kept). Default forwards them."),
         sendImmediately: z.boolean().default(false).describe("If true, send the forward immediately. If false (default), create a draft."),
       },
-      SEND_TOOL_ANNOTATIONS,
       async ({ emailId, to, cc, bcc, body, htmlBody, markdownBody, from, includeAttachments, sendImmediately }, extra) => {
         // DEFENSE-IN-DEPTH: Block delegates from sending forwards immediately
         if (sendImmediately) {

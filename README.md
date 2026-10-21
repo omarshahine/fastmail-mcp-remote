@@ -374,7 +374,8 @@ The server gate stands on its own — it does not trust the client. These settin
 just add a native prompt in front of it, so a send is visible before the tool
 call even happens.
 
-`send_email`, `send_copy`, and `reply_to_email` are annotated
+Every tool carries MCP annotations (see `src/tool-annotations.ts`). The send
+tools (`send_email`, `send_copy`, `reply_to_email`, `forward_email`) are
 `readOnlyHint: false`, `destructiveHint: true`, `idempotentHint: false`,
 `openWorldHint: true`. Clients with native per-tool approval policies read those
 annotations. In Codex, opt in explicitly (`~/.codex/config.toml`):
