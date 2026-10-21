@@ -14,7 +14,7 @@ import {
 } from "../src/apps/constants";
 import { createToolRegistrar, legacyShapedModernServer, registerAllTools, type ToolContext, type ToolResult } from "../src/tools";
 import { TOOL_ANNOTATIONS } from "../src/tool-annotations";
-import { createFastmailMcpServer } from "../src/mcp-server";
+import { clientSupportsApps, createFastmailMcpServer } from "../src/mcp-server";
 
 type Listener = (event: { data: unknown; source?: unknown }) => void;
 
@@ -322,7 +322,21 @@ describe("MCP Apps registration plumbing", () => {
       env: { ACTION_SIGNING_KEY: "00".repeat(32) } as Env,
       userLogin: "user@example.com",
       requestStateCodec: codec,
+      apps: true,
     });
     expect(server.server.getCapabilities().extensions).toEqual({ [UI_EXTENSION_ID]: {} });
+  });
+
+  it("clientSupportsApps keeps Apps on legacy and requires the ui extension on modern", () => {
+    const withCaps = (caps: unknown) => ({
+      method: "tools/list",
+      params: { _meta: { "io.modelcontextprotocol/clientCapabilities": caps } },
+    });
+    expect(clientSupportsApps(undefined, true)).toBe(true);
+    expect(clientSupportsApps(withCaps({}), false)).toBe(false);
+    expect(clientSupportsApps({ method: "tools/list" }, false)).toBe(false);
+    expect(clientSupportsApps(undefined, false)).toBe(false);
+    expect(clientSupportsApps(withCaps({ extensions: { other: {} } }), false)).toBe(false);
+    expect(clientSupportsApps(withCaps({ extensions: { [UI_EXTENSION_ID]: {} } }), false)).toBe(true);
   });
 });

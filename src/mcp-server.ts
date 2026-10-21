@@ -39,13 +39,30 @@ export function createMcpRequestStateCodec(env: Env, userLogin: string): McpRequ
   });
 }
 
+/**
+ * Whether this request's client can render MCP Apps. 2025-era requests carry
+ * no per-request capabilities, so they keep Apps (claude.ai is on that lane).
+ * 2026-07-28 requests get Apps only when they advertise the ui extension.
+ */
+export function clientSupportsApps(parsedBody: unknown, isLegacy: boolean): boolean {
+  if (isLegacy) return true;
+  if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) return false;
+  const meta = (parsedBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta;
+  const capabilities = meta?.["io.modelcontextprotocol/clientCapabilities"] as
+    | { extensions?: Record<string, unknown> }
+    | undefined;
+  return capabilities?.extensions?.[UI_EXTENSION_ID] != null;
+}
+
 export function createFastmailMcpServer(input: {
   env: Env;
   userLogin: string;
   visibleTools?: Set<string>;
   requestStateCodec: McpRequestStateCodec;
+  /** Register MCP Apps resources, `ui_*` tools and tool `_meta.ui`. */
+  apps: boolean;
 }): McpServer {
-  const { env, userLogin, visibleTools, requestStateCodec } = input;
+  const { env, userLogin, visibleTools, requestStateCodec, apps } = input;
   const server = new McpServer(
     { name: "Fastmail MCP Remote", version: "1.0.0" },
     {
@@ -67,6 +84,6 @@ export function createFastmailMcpServer(input: {
     getClientCapabilities: () => server.server.getClientCapabilities(),
     mintRequestState: (state, context) => requestStateCodec.mint(state, context),
   });
-  registerAllTools(legacyShapedModernServer(server), toolContext, visibleTools, { apps: true });
+  registerAllTools(legacyShapedModernServer(server), toolContext, visibleTools, { apps });
   return server;
 }

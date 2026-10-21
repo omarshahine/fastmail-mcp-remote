@@ -21,7 +21,7 @@ import { verifyAction, nonceKey } from "./action-urls";
 import { FastmailAuth } from "./fastmail-auth";
 import { JmapClient } from "./jmap-client";
 import { registerAllTools, buildToolContext } from "./tools";
-import { createFastmailMcpServer, createMcpRequestStateCodec } from "./mcp-server";
+import { clientSupportsApps, createFastmailMcpServer, createMcpRequestStateCodec } from "./mcp-server";
 import {
   handleSendApprovalCallback,
   handleSendApprovalDecision,
@@ -279,9 +279,10 @@ async function handleMcp(c: Context<{ Bindings: Env }>): Promise<Response> {
   const userConfig = getUserConfig(config, tokenInfo.user_login);
   const visibleTools = getVisibleTools(userConfig);
 
-  // Era telemetry for the Durable Object retirement soak (Task 8). Reads
-  // clones so the handler below still gets the unread body. `method` is the
-  // JSON-RPC method when the body has one, else the HTTP method (DELETE).
+  // Era telemetry for the Durable Object retirement soak (Task 8), and the
+  // per-request MCP Apps decision. Reads a clone; the parse is reused below.
+  // `method` is the JSON-RPC method when the body has one, else the HTTP
+  // method (DELETE).
   const parsedBody: unknown = c.req.method === "POST"
     ? await c.req.raw.clone().json().catch(() => undefined)
     : undefined;
@@ -295,11 +296,13 @@ async function handleMcp(c: Context<{ Bindings: Env }>): Promise<Response> {
   }));
 
   const requestStateCodec = createMcpRequestStateCodec(c.env, tokenInfo.user_login);
+  const apps = clientSupportsApps(parsedBody, isLegacy);
   const handler = createMcpHandler(() => createFastmailMcpServer({
     env: c.env,
     userLogin: tokenInfo.user_login,
     visibleTools,
     requestStateCodec,
+    apps,
   }), {
     route: "/mcp",
     legacy: "stateless",
@@ -308,7 +311,9 @@ async function handleMcp(c: Context<{ Bindings: Env }>): Promise<Response> {
     // so an Origin check adds no protection here.
     allowedOriginHostnames: "*",
   });
+  // Hand the body parsed above to the SDK so it does not parse it again.
   const response = await handler.fetch(c.req.raw, {
+    parsedBody,
     authInfo: {
       token,
       clientId: tokenInfo.user_id,

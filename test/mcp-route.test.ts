@@ -168,6 +168,15 @@ const modernMeta = {
 	'io.modelcontextprotocol/clientCapabilities': { elicitation: { url: {} } },
 };
 
+/** A 2026-07-28 client that also renders MCP Apps. */
+const modernAppsMeta = {
+	...modernMeta,
+	'io.modelcontextprotocol/clientCapabilities': {
+		elicitation: { url: {} },
+		extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: [UI_MIME_TYPE] } },
+	},
+};
+
 function mcpPost(body: unknown, headers: Record<string, string> = {}): Promise<Response> {
 	return app.request(
 		new Request('https://worker.example/mcp', {
@@ -276,7 +285,7 @@ describe('/mcp single stateless v2 server', () => {
 				jsonrpc: '2.0',
 				id: 8,
 				method: 'resources/read',
-				params: { uri: SEND_REVIEW_URI, _meta: modernMeta },
+				params: { uri: SEND_REVIEW_URI, _meta: modernAppsMeta },
 			},
 			{
 				'Mcp-Method': 'resources/read',
@@ -297,7 +306,7 @@ describe('/mcp single stateless v2 server', () => {
 				jsonrpc: '2.0',
 				id: 9,
 				method: 'resources/read',
-				params: { uri: EMAIL_READER_URI, _meta: modernMeta },
+				params: { uri: EMAIL_READER_URI, _meta: modernAppsMeta },
 			},
 			{
 				'Mcp-Method': 'resources/read',
@@ -344,6 +353,49 @@ describe('/mcp single stateless v2 server', () => {
 		expect(response.status).toBe(400);
 		const body = await readJsonRpc(response);
 		expect(body.error.code).toBe(-32020);
+	});
+});
+
+describe('/mcp MCP Apps gating by client capability', () => {
+	const appTools = ['list_mailboxes', 'get_email', 'ui_get_email_view', 'ui_get_send_review'];
+	beforeEach(() => {
+		vi.mocked(getVisibleTools).mockImplementation(() => new Set(appTools));
+	});
+	afterEach(() => {
+		vi.mocked(getVisibleTools).mockImplementation(() => new Set(['list_mailboxes']));
+	});
+
+	async function listTools(meta?: unknown) {
+		const response = await mcpPost(
+			{ jsonrpc: '2.0', id: 11, method: 'tools/list', ...(meta ? { params: { _meta: meta } } : {}) },
+			meta ? { 'Mcp-Method': 'tools/list', 'Mcp-Protocol-Version': '2026-07-28' } : {},
+		);
+		const body = await readJsonRpc(response);
+		expect(response.status, JSON.stringify(body)).toBe(200);
+		return body.result.tools as any[];
+	}
+
+	it('modern client without the ui extension sees no app tools or app _meta', async () => {
+		const tools = await listTools(modernMeta);
+		const names = tools.map((t) => t.name);
+		expect(names).toContain('get_email');
+		expect(names.filter((n) => n.startsWith('ui_'))).toEqual([]);
+		expect(tools.find((t) => t.name === 'get_email')._meta?.ui).toBeUndefined();
+	});
+
+	it('modern client advertising the ui extension sees app tools and app _meta', async () => {
+		const tools = await listTools(modernAppsMeta);
+		const names = tools.map((t) => t.name);
+		expect(names).toEqual(expect.arrayContaining(['ui_get_email_view', 'ui_get_send_review']));
+		expect(tools.find((t) => t.name === 'get_email')._meta.ui.resourceUri).toBe(EMAIL_READER_URI);
+	});
+
+	it('legacy client keeps app tools and app _meta', async () => {
+		const tools = await listTools();
+		const names = tools.map((t) => t.name);
+		expect(names).toEqual(expect.arrayContaining(['ui_get_email_view', 'ui_get_send_review']));
+		expect(tools.find((t) => t.name === 'get_email')._meta.ui.resourceUri).toBe(EMAIL_READER_URI);
+		expect(tools.find((t) => t.name === 'ui_get_email_view')._meta.ui.visibility).toEqual(['app']);
 	});
 });
 
