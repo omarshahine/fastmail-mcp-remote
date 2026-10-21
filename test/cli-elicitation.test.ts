@@ -82,6 +82,7 @@ describe("elicitation handler", () => {
 
   it.each([
     ["y", "accept", 1],
+    [" YES ", "accept", 1],
     ["n", "decline", 0],
     [null, "cancel", 0],
   ] as const)("url elicitation opens only after yes (%s)", async (answer, action, opens) => {
@@ -91,13 +92,21 @@ describe("elicitation handler", () => {
     expect(openUrl).toHaveBeenCalledTimes(opens);
   });
 
+  it("url accept survives openUrl failure", async () => {
+    const { io, writes, openUrl } = fakeIO(["y"]);
+    openUrl.mockRejectedValue(new Error("no browser"));
+    const r = await createElicitationHandler(io)(urlReq);
+    expect(r.action).toBe("accept");
+    expect(writes.join("")).toContain("Could not open browser; open the URL above manually.");
+  });
+
   it("url prompt shows full URL and host", async () => {
     const { io, writes, questions } = fakeIO(["n"]);
     await createElicitationHandler(io)(urlReq);
     const out = writes.join("");
     expect(out).toContain(url);
     expect(out).toContain("host: mail.example.test");
-    expect(questions[0]).toBe("Open in browser? [y/N] ");
+    expect(questions[0]).toBe("Open in browser? [y/N] (N declines) ");
   });
 
   const form = (properties: Record<string, unknown>) =>

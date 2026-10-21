@@ -158,10 +158,15 @@ export function createElicitationHandler(
         // Show the raw URL below; the user can still decline.
       }
       io.write(`${params.message}\n${params.url}\nhost: ${host}\n`);
-      const answer = await io.ask("Open in browser? [y/N] ");
+      const answer = await io.ask("Open in browser? [y/N] (N declines) ");
       if (answer === null) return CANCEL;
-      if (answer.trim().toLowerCase() === "y") {
-        await io.openUrl(params.url);
+      const a = answer.trim().toLowerCase();
+      if (a === "y" || a === "yes") {
+        try {
+          await io.openUrl(params.url);
+        } catch {
+          io.write("Could not open browser; open the URL above manually.\n");
+        }
         return { action: "accept" };
       }
       return { action: "decline" };
