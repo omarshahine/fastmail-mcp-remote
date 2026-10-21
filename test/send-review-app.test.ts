@@ -342,6 +342,46 @@ describe("send review app", () => {
     expect(timers).toHaveLength(0);
     expect(calls.every(([name]) => name === "ui_get_send_review")).toBe(true);
   });
+
+  it("keeps polling through approved and sending and stops at sent", async () => {
+    const statuses = ["pending", "approved", "sending", "sent"];
+    const { document, result, timers, calls } = (() => {
+      const html = renderSendReviewApp();
+      const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+      const { document } = parseHTML(html);
+      const timers: Array<() => void> = [];
+      const calls: string[] = [];
+      let cb: (r: any) => void = () => {};
+      const view = (status: string) => ({
+        structuredContent: {
+          approvalId: "a-1", status, expiresAt: new Date(Date.now() + 1_000).toISOString(),
+          reviewUrl: "https://mail.example.test/approve/send/a-1", toolName: "send_email",
+          from: "s@example.com", to: ["r@example.com"], cc: [], bcc: [],
+          subject: "S", previewDocument: "<p>Hi</p>",
+        },
+      });
+      const app = {
+        onToolResult: (c: any) => { cb = c; },
+        callTool: vi.fn(async () => { calls.push("poll"); return view(statuses.shift() ?? "sent"); }),
+        openLink: vi.fn(),
+      };
+      new Function("window", "document", "setTimeout", "clearTimeout", scripts[1])(
+        { fastmailApp: app }, document, (fn: () => void) => { timers.push(fn); return timers.length; }, () => {});
+      return { document, result: (v: any) => cb(v), timers, calls };
+    })();
+    const status = () => document.getElementById("status")!.textContent;
+    result({ structuredContent: { approvalId: "a-1", status: "pending", expiresAt: new Date(Date.now() + 1_000).toISOString(), reviewUrl: "https://mail.example.test/approve/send/a-1" } });
+    await tick();
+    expect(status()).toBe("Awaiting approval");
+    for (const expected of ["Sending", "Sending", "Sent"]) {
+      expect(timers).toHaveLength(1);
+      timers.shift()!();
+      await tick();
+      expect(status()).toBe(expected);
+    }
+    expect(timers).toHaveLength(0);
+    expect(calls).toHaveLength(4);
+  });
 });
 
 describe("send review card outside the approval flow", () => {

@@ -117,10 +117,12 @@ const SCRIPT = `
 (function () {
   var app = window.fastmailApp;
   var POLL_MS = 5000;
+  var SENDING_GRACE_MS = 120000;
   var LABELS = { pending: "Awaiting approval", approved: "Sending", sending: "Sending", sent: "Sent", declined: "Declined", expired: "Expired" };
   var current = null;
   var timer = null;
   var rendered = false;
+  var sendingSince = 0;
   var $ = function (id) { return document.getElementById(id); };
 ${UNMARK_SCRIPT}
   var show = function (id, visible) { $(id).hidden = !visible; };
@@ -174,7 +176,14 @@ ${UNMARK_SCRIPT}
     setMessage(rendered ? "" : "The draft is no longer available to preview.");
     if (timer) clearTimeout(timer);
     timer = null;
-    if (status === "pending") timer = setTimeout(refresh, POLL_MS);
+    // Approved and sending become sent or fail later, so keep polling them
+    // for a bounded time (expiresAt may lapse mid-send). Stop on terminal states.
+    if (status === "approved" || status === "sending") {
+      if (!sendingSince) sendingSince = Date.now();
+      if (Date.now() - sendingSince < SENDING_GRACE_MS) timer = setTimeout(refresh, POLL_MS);
+    } else if (status === "pending") {
+      timer = setTimeout(refresh, POLL_MS);
+    }
   };
 
   var refresh = function () {
@@ -187,7 +196,8 @@ ${UNMARK_SCRIPT}
       apply(unmark(result.structuredContent));
     }, function () {
       // Transient bridge failure: keep the last view and try again.
-      if (current && current.status === "pending" && !expired(current)) {
+      var waiting = current && (current.status === "approved" || current.status === "sending");
+      if (current && ((current.status === "pending" && !expired(current)) || (waiting && Date.now() - sendingSince < SENDING_GRACE_MS))) {
         timer = setTimeout(refresh, POLL_MS);
       }
     });
