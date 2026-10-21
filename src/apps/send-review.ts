@@ -13,7 +13,7 @@
 import { approvalUrl, getSendApproval, type SendApprovalRecord } from "../send-approval";
 import { buildEmailPreviewDocument } from "../email-preview";
 import type { ToolContext } from "../tools";
-import { renderAppPage } from "./page";
+import { renderAppPage, UNMARK_SCRIPT } from "./page";
 
 export interface SendReviewView {
   approvalId: string;
@@ -122,7 +122,7 @@ const SCRIPT = `
   var timer = null;
   var rendered = false;
   var $ = function (id) { return document.getElementById(id); };
-
+${UNMARK_SCRIPT}
   var show = function (id, visible) { $(id).hidden = !visible; };
   var list = function (values) { return (values || []).join(", "); };
 
@@ -184,7 +184,7 @@ const SCRIPT = `
         setMessage("This approval could not be loaded.");
         return;
       }
-      apply(result.structuredContent);
+      apply(unmark(result.structuredContent));
     }, function () {
       // Transient bridge failure: keep the last view and try again.
       if (current && current.status === "pending" && !expired(current)) {

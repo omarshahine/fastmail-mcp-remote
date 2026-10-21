@@ -147,7 +147,7 @@ const UNTRUSTED_FIELDS: Record<string, string[]> = {
   // Contact fields
   contact: ["notes", "organization", "jobTitle", "prefix", "suffix", "nickname"],
   // Mail fields - highest risk since email is externally authored
-  mail: ["subject", "from", "sender", "body", "content", "snippet", "preview", "textBody", "htmlBody", "previewDocument"],
+  mail: ["subject", "from", "sender", "to", "cc", "bcc", "body", "content", "snippet", "preview", "textBody", "htmlBody", "previewDocument"],
   // Memos can contain quoted or copied third-party content.
   memo: ["text"],
 };
@@ -164,8 +164,14 @@ function markItem(item: Record<string, unknown>, domain: string): Record<string,
   const marked = { ...item };
 
   for (const field of fields) {
-    if (marked[field] && typeof marked[field] === "string") {
-      marked[field] = markUntrustedText(marked[field] as string, `${domain}.${field}`);
+    const value = marked[field];
+    if (value && typeof value === "string") {
+      marked[field] = markUntrustedText(value, `${domain}.${field}`);
+    } else if (Array.isArray(value)) {
+      // Formatted address lists (MCP Apps views) are plain strings.
+      marked[field] = value.map((entry) =>
+        typeof entry === "string" ? markUntrustedText(entry, `${domain}.${field}`) : entry,
+      );
     }
   }
 

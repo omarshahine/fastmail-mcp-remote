@@ -1237,7 +1237,10 @@ export function registerAllTools(
           return { content: [{ type: "text" as const, text: "Approval not found." }], isError: true };
         }
         const guarded = ctx.guardResponse("ui_get_send_review", view);
-        return { content: guarded.content, structuredContent: { ...view } };
+        // structuredContent is model-visible on hosts that ignore app-only
+        // visibility, so it carries the same datamarking as `content`.
+        const structuredContent = markToolResult(view, "ui_get_send_review") as Record<string, unknown>;
+        return { content: guarded.content, structuredContent };
       },
     );
   }
@@ -1283,7 +1286,8 @@ export function registerAllTools(
         try {
           const view = await buildEmailReaderView(ctx, hasEmail ? { emailId: emailId! } : { threadId: threadId! });
           const guarded = ctx.guardResponse("ui_get_email_view", view);
-          return { content: guarded.content, structuredContent: { ...view } };
+          const structuredContent = markToolResult(view, "ui_get_email_view") as Record<string, unknown>;
+          return { content: guarded.content, structuredContent };
         } catch (error) {
           return {
             content: [{ type: "text" as const, text: `Email view failed: ${error instanceof Error ? error.message : String(error)}` }],

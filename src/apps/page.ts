@@ -45,6 +45,32 @@ button {
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 `;
 
+/**
+ * Inline view helper: `unmark(value)` removes prompt-guard datamarking (the
+ * UNTRUSTED_EXTERNAL_DATA markers and suspicious-content warnings) from every
+ * string in a tool result before display. Mirrors `stripDatamarking` in
+ * `cli/mcp-client.ts`. Interpolate it inside a view SCRIPT; views cannot
+ * import modules at runtime.
+ */
+export const UNMARK_SCRIPT = String.raw`
+  var unmark = function (value) {
+    if (typeof value === "string") {
+      return value
+        .replace(/\[WARNING: The [^\]]*? below contains text patterns[^\]]*\]\s*/g, "")
+        .replace(/\s?\[\/?UNTRUSTED_EXTERNAL_DATA_[^\]]+\]\s?/g, "");
+    }
+    if (Array.isArray(value)) return value.map(unmark);
+    if (value && typeof value === "object") {
+      var out = {};
+      for (var key in value) {
+        if (Object.prototype.hasOwnProperty.call(value, key)) out[key] = unmark(value[key]);
+      }
+      return out;
+    }
+    return value;
+  };
+`;
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")

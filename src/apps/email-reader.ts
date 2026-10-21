@@ -14,7 +14,7 @@
 
 import { buildEmailPreviewDocument } from "../email-preview";
 import type { ToolContext } from "../tools";
-import { renderAppPage } from "./page";
+import { renderAppPage, UNMARK_SCRIPT } from "./page";
 
 export interface EmailReaderMessage {
   emailId: string;
@@ -118,7 +118,7 @@ const SCRIPT = `
   var app = window.fastmailApp;
   var loaded = false;
   var $ = function (id) { return document.getElementById(id); };
-
+${UNMARK_SCRIPT}
   var setMessage = function (text, isError) {
     var el = $("message");
     el.textContent = text;
@@ -266,7 +266,7 @@ const SCRIPT = `
         setMessage("This email could not be loaded.", true);
         return;
       }
-      render(result.structuredContent);
+      render(unmark(result.structuredContent));
     }, function () {
       loaded = false;
       setMessage("This email could not be loaded.", true);
