@@ -128,8 +128,8 @@ cli/
 - `get_memo` - Get the memo attached to an email
 - `delete_memo` - Delete a memo from an email
 - `generate_email_action_urls` - Generate HMAC-signed URLs for email archive/delete actions (24h expiry, single-use)
-- `ui_get_send_review` - App-only: data for the send review card (recipients, subject, sanitized preview, approval status). Hidden from the model and never registered on Code Mode
-- `ui_get_email_view` - App-only: data for the email reader (headers, read and flag state, sanitized previews for one email or a whole thread, archive mailbox). Hidden from the model and never registered on Code Mode
+- `ui_get_send_review` - App-only: data for the send review card (recipients, subject, sanitized preview, approval status). Hosts that honor MCP Apps visibility hide it from the model; other hosts may show it. Its results are datamarked either way. Never registered on Code Mode
+- `ui_get_email_view` - App-only: data for the email reader (headers, read and flag state, sanitized previews for one email or a whole thread, archive mailbox). Hosts that honor MCP Apps visibility hide it from the model; other hosts may show it. Its results are datamarked either way. Never registered on Code Mode
 
 ### Email Body Formats
 
@@ -374,7 +374,13 @@ The review URL works with regular MCP, Code Mode, the CLI, and OpenClaw. MCP 202
 
 On `/mcp`, the four send tools (`send_email`, `send_copy`, `reply_to_email`, `forward_email`) link to the `ui://fastmail/send-review.html` app. Hosts that support MCP Apps, such as claude.ai, render it next to the tool result. The card shows the approval status, From, To, Cc, Bcc, the subject, and a sanitized preview in a sandboxed iframe. It loads that data through the app-only `ui_get_send_review` tool, which returns the approval only to the user who created it, and refreshes every 5 seconds until the approval is sent, declined, or expired.
 
-The card cannot approve anything. Its **Review & approve** button only opens the authenticated `/approve/send/:id` page, which stays the one place a send is approved. Code Mode (`/mcp/code`) registers no apps.
+The card cannot approve anything. Its **Review & approve** button only opens the authenticated `/approve/send/:id` page, which stays the one place a send is approved. A reply or forward saved as a draft shows "Saved as draft. Nothing was sent.", a direct send (approval mode `off`) shows "Sent.", and a failed call shows its error.
+
+Which clients get the apps:
+
+- 2025-era clients (such as claude.ai today) get the `ui://` resources, the app-only tools and the tool `_meta.ui` links.
+- MCP 2026-07-28 clients get them only when their request advertises the `io.modelcontextprotocol/ui` extension in its client capabilities. Clients without it, such as Claude Code, see neither the app-only tools nor the links.
+- Code Mode (`/mcp/code`) registers no apps.
 
 #### Email reader (MCP Apps)
 
