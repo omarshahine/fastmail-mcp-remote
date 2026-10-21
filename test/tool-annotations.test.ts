@@ -20,6 +20,7 @@ function registeredTools() {
 		registerTool(name: string, config: unknown) {
 			configs.set(name, config);
 		},
+		registerResource() {},
 	} as unknown as McpServer;
 	const context: ToolContext = {
 		env: {} as Env,
@@ -29,7 +30,7 @@ function registeredTools() {
 		checkToolPermission: async () => null,
 		guardResponse: vi.fn() as any,
 	};
-	registerAllTools(server, context);
+	registerAllTools(server, context, undefined, { apps: true });
 	return configs;
 }
 

@@ -56,10 +56,9 @@ describe("tool parameters are strict", () => {
   });
 
   it("makes the legacy-shaped modern server strict too", () => {
-    // index.ts wires registerAllTools(legacyShapedModernServer(server), ...).
-    // That shim exposes only tool(), so the registerTool capability check in
-    // registerAllTools falls through -- the shim has to apply strictness
-    // itself or every tool served through it is silently exempt.
+    // mcp-server.ts wires registerAllTools(legacyShapedModernServer(server), ...).
+    // The shim is a separate route to the v2 registerTool, so it has to apply
+    // strictness itself or every tool served through it is silently exempt.
     const schemas = new Map<string, z.ZodTypeAny>();
     const modern = {
       registerTool(name: string, config: { inputSchema?: z.ZodTypeAny }) {

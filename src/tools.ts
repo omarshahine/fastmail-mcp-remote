@@ -123,26 +123,42 @@ export function buildToolContext(
   };
 }
 
-/** Adapt the SDK v2 registration API to the shared SDK v1-shaped registrar. */
+/**
+ * Adapt the SDK v2 registration API to the shared SDK v1-shaped registrar.
+ *
+ * `tool()` keeps the original call shape. `registerTool()` carries `_meta`
+ * and `registerResource()` is a straight passthrough; together they let
+ * `createToolRegistrar` forward MCP Apps metadata and `ui://` resources to the
+ * v2 server.
+ */
 export function legacyShapedModernServer(server: ModernMcpServer): McpServer {
+  const registerTool = (name: string, config: any, handler: any) => {
+    const annotations = config.annotations ?? TOOL_ANNOTATIONS[name];
+    server.registerTool(
+      name,
+      {
+        description: config.description,
+        // strictShape, not the raw shape: this path must reject unknown
+        // parameters for the same reason registerAllTools does. It is a
+        // separate registration route (mcp-server.ts wires it for the modern
+        // server), so leaving it non-strict would silently exempt every tool
+        // served through it from the check. strictShape leaves an already
+        // strict schema untouched.
+        inputSchema: strictShape(config.inputSchema),
+        ...(annotations ? { annotations } : {}),
+        ...(config._meta ? { _meta: config._meta } : {}),
+      },
+      handler,
+    );
+  };
   return {
     tool(name: string, description: string, schema: any, annotationsOrHandler: any, maybeHandler?: any) {
-      const annotations = (maybeHandler ? annotationsOrHandler : undefined) ?? TOOL_ANNOTATIONS[name];
-      const handler = maybeHandler || annotationsOrHandler;
-      server.registerTool(
-        name,
-        {
-          description,
-          // strictShape, not the raw shape: this path must reject unknown
-          // parameters for the same reason registerAllTools does. It is a
-          // separate registration route (index.ts wires it for the modern
-          // server), so leaving it non-strict would silently exempt every tool
-          // served through it from the check.
-          inputSchema: strictShape(schema),
-          ...(annotations ? { annotations } : {}),
-        },
-        handler,
-      );
+      const annotations = maybeHandler ? annotationsOrHandler : undefined;
+      registerTool(name, { description, inputSchema: schema, annotations }, maybeHandler || annotationsOrHandler);
+    },
+    registerTool,
+    registerResource(name: string, uri: string, config: any, read: any) {
+      server.registerResource(name, uri, config, read);
     },
   } as unknown as McpServer;
 }
@@ -499,67 +515,134 @@ function forwardedAttachments(original: any) {
     }));
 }
 
+export interface RegisterToolsOptions {
+  /**
+   * Register MCP Apps resources and `ui_*` tools, and forward tool `_meta`.
+   * Only the SDK v2 `/mcp` server sets this; Code Mode (`/mcp/code`) passes
+   * nothing and stays app-free.
+   */
+  apps?: boolean;
+}
+
+/**
+ * The registrar every tool registration goes through: the SDK v1 `McpServer`
+ * surface (`tool`, `registerTool`, `resource`) plus `appsEnabled`.
+ *
+ * - `tool(name, description, shape, [annotations], handler)` is the original
+ *   call shape; annotations fall back to `TOOL_ANNOTATIONS[name]`.
+ * - `registerTool(name, { description, inputSchema, annotations?, _meta? }, handler)`
+ *   is the same registration plus `_meta` (MCP Apps: `{ ui: { resourceUri } }`
+ *   or `APP_ONLY`). `inputSchema` is a raw Zod shape, as with `tool()`.
+ *   `_meta` is forwarded only when `appsEnabled`, so app-free surfaces never
+ *   advertise a `ui://` resource they do not serve.
+ * - `resource(name, uri, metadata, read)` registers through the underlying
+ *   server's `registerResource`, and only when `appsEnabled`; otherwise it is
+ *   a no-op.
+ *
+ * Every handler is wrapped in the per-user permission check and every input
+ * goes through `strictShape`.
+ */
+export type ToolRegistrar = McpServer & { readonly appsEnabled: boolean };
+
+export function createToolRegistrar(
+  rawServer: McpServer,
+  ctx: ToolContext,
+  options: RegisterToolsOptions = {},
+): ToolRegistrar {
+  const appsEnabled =
+    options.apps === true && typeof (rawServer as any).registerResource === "function";
+
+  const register = (
+    name: string,
+    description: string | undefined,
+    schema: any,
+    annotations: any,
+    handler: any,
+    meta: Record<string, unknown> | undefined,
+  ) => {
+    // Registration-time visibility is only an advertisement optimization. Wrap
+    // every handler so stale visibility or an unfiltered caller can never bypass
+    // the current per-user permission policy at execution time.
+    const wrappedHandler = async (...args: any[]) => {
+      const denied = await ctx.checkToolPermission(name, args[0] as Record<string, unknown> | undefined);
+      if (denied) return denied;
+      return handler(...args);
+    };
+    const explicitAnnotations = annotations;
+    annotations = annotations ?? TOOL_ANNOTATIONS[name];
+    const _meta = appsEnabled ? meta : undefined;
+
+    // Reject unknown parameters instead of silently dropping them.
+    //
+    // z.object(shape) is NOT strict, so a caller that passes a misspelled
+    // filter gets it stripped with no error and the tool runs unfiltered --
+    // which looks exactly like a filter that matched everything. On
+    // 2026-09-06 `advanced_search({ inMailbox })` (the real parameter is
+    // `mailboxId`; `inMailbox` is the JMAP-level name it maps onto) searched
+    // the entire account instead of one mailbox, and the caller moved 200
+    // emails out of folders they were never in. `list_emails({ offset })`
+    // failed the same way -- there is no offset parameter, so paging silently
+    // re-returned the first page.
+    //
+    // .strict() makes both cases a loud parse error naming the bad key, and
+    // adds additionalProperties:false to the advertised JSON Schema so
+    // clients can catch it before the call. Registration goes through
+    // registerTool because the legacy tool() overload only accepts a raw
+    // shape and throws on a ZodObject.
+    const canRegisterTool =
+      typeof (rawServer as any).registerTool === 'function';
+    if (canRegisterTool && schema && typeof schema === 'object') {
+      (rawServer as any).registerTool(
+        name,
+        { description, inputSchema: strictShape(schema), annotations, ...(_meta ? { _meta } : {}) },
+        wrappedHandler,
+      );
+      return;
+    }
+
+    // v1 tool() fallback for servers without registerTool: keep the caller's
+    // original arity.
+    if (explicitAnnotations) {
+      rawServer.tool(name, description ?? "", schema, explicitAnnotations, wrappedHandler);
+    } else {
+      rawServer.tool(name, description ?? "", schema, wrappedHandler);
+    }
+  };
+
+  return {
+    appsEnabled,
+    tool(name: string, description: string, schema: any, annotationsOrHandler: any, maybeHandler?: any) {
+      const handler = maybeHandler || annotationsOrHandler;
+      const annotations = maybeHandler ? annotationsOrHandler : undefined;
+      register(name, description, schema, annotations, handler, undefined);
+    },
+    registerTool(name: string, config: any, handler: any) {
+      register(name, config.description, config.inputSchema ?? {}, config.annotations, handler, config._meta);
+    },
+    resource(name: string, uri: string, metadata: any, read: any) {
+      if (!appsEnabled) return;
+      (rawServer as any).registerResource(name, uri, metadata, read);
+    },
+  } as unknown as ToolRegistrar;
+}
+
 /**
  * Register all Fastmail MCP tools on the given server.
  *
  * @param server - McpServer instance to register tools on
  * @param ctx - ToolContext providing env, clients, permissions, and response formatting
  * @param visibleTools - Optional set of tool names to register. If provided, tools not in the set are skipped.
+ * @param options - `{ apps: true }` enables MCP Apps resources, `ui_*` tools and tool `_meta`.
  */
 export function registerAllTools(
-  server: McpServer,
+  rawServer: McpServer,
   ctx: ToolContext,
   visibleTools?: Set<string>,
+  options: RegisterToolsOptions = {},
 ): void {
-  // Registration-time visibility is only an advertisement optimization. Wrap
-  // every handler so stale visibility or an unfiltered caller can never bypass
-  // the current per-user permission policy at execution time.
-  const rawServer = server;
-  server = {
-    tool(name: string, description: string, schema: any, annotationsOrHandler: any, maybeHandler?: any) {
-      const handler = maybeHandler || annotationsOrHandler;
-      const wrappedHandler = async (...args: any[]) => {
-        const denied = await ctx.checkToolPermission(name, args[0] as Record<string, unknown> | undefined);
-        if (denied) return denied;
-        return handler(...args);
-      };
-      const annotations = (maybeHandler ? annotationsOrHandler : undefined) ?? TOOL_ANNOTATIONS[name];
-
-      // Reject unknown parameters instead of silently dropping them.
-      //
-      // z.object(shape) is NOT strict, so a caller that passes a misspelled
-      // filter gets it stripped with no error and the tool runs unfiltered --
-      // which looks exactly like a filter that matched everything. On
-      // 2026-09-06 `advanced_search({ inMailbox })` (the real parameter is
-      // `mailboxId`; `inMailbox` is the JMAP-level name it maps onto) searched
-      // the entire account instead of one mailbox, and the caller moved 200
-      // emails out of folders they were never in. `list_emails({ offset })`
-      // failed the same way -- there is no offset parameter, so paging silently
-      // re-returned the first page.
-      //
-      // .strict() makes both cases a loud parse error naming the bad key, and
-      // adds additionalProperties:false to the advertised JSON Schema so
-      // clients can catch it before the call. Registration goes through
-      // registerTool because the legacy tool() overload only accepts a raw
-      // shape and throws on a ZodObject.
-      const canRegisterTool =
-        typeof (rawServer as any).registerTool === 'function';
-      if (canRegisterTool && schema && typeof schema === 'object') {
-        (rawServer as any).registerTool(
-          name,
-          { description, inputSchema: strictShape(schema), annotations },
-          wrappedHandler,
-        );
-        return;
-      }
-
-      if (maybeHandler) {
-        rawServer.tool(name, description, schema, annotationsOrHandler, wrappedHandler);
-      } else {
-        rawServer.tool(name, description, schema, wrappedHandler);
-      }
-    },
-  } as unknown as McpServer;
+  // MCP Apps registrations check `server.appsEnabled` before registering
+  // `ui_*` tools or `ui://` resources.
+  const server = createToolRegistrar(rawServer, ctx, options);
 
   /** Helper: skip tool if not in visibleTools set */
   const shouldRegister = (name: string) => !visibleTools || visibleTools.has(name);

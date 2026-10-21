@@ -16,6 +16,7 @@ import {
 import { registerAllTools, buildToolContext, legacyShapedModernServer } from "./tools";
 import type { SendApprovalRequestState } from "./send-approval";
 import type { BulkConfirmRequestState } from "./bulk-confirm";
+import { UI_EXTENSION_ID } from "./apps/constants";
 
 /** Opaque state carried across input-required rounds. */
 export type ModernRequestState = SendApprovalRequestState | BulkConfirmRequestState;
@@ -48,6 +49,9 @@ export function createFastmailMcpServer(input: {
   const server = new McpServer(
     { name: "Fastmail MCP Remote", version: "1.0.0" },
     {
+      // MCP Apps: hosts that support the extension render `ui://` resources
+      // linked from tool `_meta.ui.resourceUri`.
+      capabilities: { extensions: { [UI_EXTENSION_ID]: {} } },
       inputRequired: { legacyShim: false, maxRounds: 3 },
       requestState: { verify: requestStateCodec.verify },
       // Tool and resource lists differ per user (permissions), so they are
@@ -63,6 +67,6 @@ export function createFastmailMcpServer(input: {
     getClientCapabilities: () => server.server.getClientCapabilities(),
     mintRequestState: (state, context) => requestStateCodec.mint(state, context),
   });
-  registerAllTools(legacyShapedModernServer(server), toolContext, visibleTools);
+  registerAllTools(legacyShapedModernServer(server), toolContext, visibleTools, { apps: true });
   return server;
 }
