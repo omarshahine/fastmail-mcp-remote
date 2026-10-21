@@ -206,6 +206,18 @@ describe("bulk operation form-elicitation gate", () => {
     expect(accepted.content[0].text).toContain("26 emails moved");
   });
 
+  it("bulk_move still asks when the mailbox lookup fails, naming the mailbox id", async () => {
+    const client = {
+      bulkMove: vi.fn().mockResolvedValue(undefined),
+      getMailboxes: vi.fn().mockRejectedValue(new Error("JMAP unavailable")),
+    };
+    const h = harness({ client });
+    const result = await h.handlers.get("bulk_move")!({ emailIds: ids(25), targetMailboxId: "mb-x" }, await h.extra());
+    expect(result.resultType).toBe("input_required");
+    expect(result.inputRequests.confirm.params.message).toBe('Move 25 emails to "mb-x"?');
+    expect(client.bulkMove).not.toHaveBeenCalled();
+  });
+
   it("bulk_move rejects a changed target mailbox", async () => {
     const h = harness();
     const emailIds = ids(25);

@@ -87,8 +87,14 @@ export async function gateBulkOperation(
     message = `Move ${n} emails to Trash?`;
     verb = "delete";
   } else {
-    const mailboxes = await ctx.getJmapClient().getMailboxes();
-    const mailboxName = mailboxes.find((m: any) => m.id === op.targetMailboxId)?.name || op.targetMailboxId;
+    // The name is cosmetic; a failed lookup must not block the confirmation.
+    let mailboxName = op.targetMailboxId;
+    try {
+      const mailboxes = await ctx.getJmapClient().getMailboxes();
+      mailboxName = mailboxes.find((m: any) => m.id === op.targetMailboxId)?.name || op.targetMailboxId;
+    } catch {
+      // Fall back to the mailbox id.
+    }
     message = `Move ${n} emails to "${mailboxName}"?`;
     verb = "move";
   }
