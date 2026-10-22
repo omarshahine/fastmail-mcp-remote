@@ -124,7 +124,7 @@ export function buildToolContext(
       const userConfig = getUserConfig(config, userLogin);
       const result = isToolAllowed(userConfig, toolName, args);
       if (!result.allowed) {
-        return { content: [{ text: `Error: ${result.error}`, type: "text" }] };
+        return { content: [{ text: `Error: ${result.error}`, type: "text" }], isError: true };
       }
       return null;
     },

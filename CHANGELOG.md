@@ -47,6 +47,14 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   expire on the original bound; an actively used one now has no ceiling, so
   `ttl_refreshed_at` on each record makes forgotten clients auditable.
 
+### Fixed
+- The CLI now strips the prompt-guard warning that precedes suspicious fields.
+  Its pattern never matched the server's wording, so the warning leaked into
+  terminal and OpenClaw output.
+- CLI tool errors no longer print as `Error: Error: ...`.
+- Permission-denied tool results are now flagged `isError`, so the CLI exits
+  non-zero instead of printing the denial as ordinary output.
+
 ## [1.12.0] - 2026-04-18
 
 ### Added
