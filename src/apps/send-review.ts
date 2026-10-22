@@ -78,7 +78,9 @@ export async function buildSendReviewView(
     view.subject = snapshot.subject;
     view.previewDocument = buildEmailPreviewDocument(snapshot.htmlBody, snapshot.textBody);
   } catch {
-    // Status-only view.
+    // Status-only view. Without a loaded preview the user has seen nothing
+    // to approve, so inline Send stays off; the browser review remains.
+    view.canApproveInline = false;
   }
   return view;
 }
@@ -201,8 +203,9 @@ ${UNMARK_SCRIPT}
     // The store marks a lapsed approval expired on its next read; show it now.
     if (status === "pending" && expired(view)) status = "expired";
     setStatus(status);
-    setInline(status === "pending" && view.canApproveInline === true);
-    if (status !== "pending") sendNote = "";
+    setInline(status === "pending" && view.canApproveInline === true && rendered);
+    // Keep a refusal or uncertain-send warning while the outcome is unresolved.
+    if (status !== "pending" && status !== "approved" && status !== "sending") sendNote = "";
     setMessage(rendered ? sendNote : "The draft is no longer available to preview.");
     if (timer) clearTimeout(timer);
     timer = null;

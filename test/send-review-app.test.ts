@@ -740,6 +740,16 @@ describe("ui_approve_send", () => {
     const after = await h.handlers.get("ui_get_send_review")!({ approvalId: reply.approvalId }, {});
     expect(after.structuredContent.canApproveInline).toBe(false);
   });
+
+  it("ui_get_send_review does not offer inline Send when the snapshot read fails", async () => {
+    const h = approveHarness({ client: replyClient() });
+    const reply = await prepareReply(h);
+    h.client.getDraftApprovalSnapshot.mockRejectedValueOnce(new Error("JMAP down"));
+    const view = await h.handlers.get("ui_get_send_review")!({ approvalId: reply.approvalId }, {});
+    expect(view.structuredContent.status).toBe("pending");
+    expect(view.structuredContent.previewDocument).toBe("");
+    expect(view.structuredContent.canApproveInline).toBe(false);
+  });
 });
 
 describe("inline Send button on the review card", () => {
@@ -775,6 +785,34 @@ describe("inline Send button on the review card", () => {
     sent.result(prepared());
     await tick();
     expect(sent.document.getElementById("send")!.hidden).toBe(true);
+  });
+
+  it("shows no Send button without a loaded preview", async () => {
+    const empty = (inline: boolean) => ({ structuredContent: { ...reviewView("pending", inline).structuredContent, from: "", to: [], subject: "", previewDocument: "" } });
+    for (const inline of [false, true]) {
+      const { document, result } = runReviewView({ callTool: vi.fn(async () => empty(inline)) });
+      result(prepared());
+      await tick();
+      expect(document.getElementById("send")!.hidden).toBe(true);
+    }
+  });
+
+  it("keeps the uncertain-send warning visible while the approval is still sending", async () => {
+    const warning = "Send status uncertain: network lost. Check Fastmail Sent before retrying.";
+    const callTool = vi.fn(async (name: string) => name === "ui_approve_send"
+      ? { isError: true, content: [{ type: "text", text: warning }], structuredContent: { approvalId: "a-1", status: "sending" } }
+      : reviewView(callTool_sending ? "sending" : "pending", true));
+    let callTool_sending = false;
+    const { document, result } = runReviewView({ callTool });
+    result(prepared());
+    await tick();
+    callTool_sending = true;
+    click(document, "send");
+    await tick();
+    await tick();
+    expect(document.getElementById("status")!.textContent).toBe("Sending");
+    expect(document.getElementById("message")!.textContent).toBe(warning);
+    expect(document.getElementById("message")!.hidden).toBe(false);
   });
 
   it("Send calls ui_approve_send once and renders the sent state", async () => {
