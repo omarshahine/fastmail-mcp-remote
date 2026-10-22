@@ -8,38 +8,7 @@ import {
   type SendApprovalSnapshot,
 } from "../src/send-approval";
 import { registerAllTools, type ToolContext } from "../src/tools";
-
-class MemoryStorage {
-  private values = new Map<string, unknown>();
-  alarm?: number;
-
-  async get<T>(key: string): Promise<T | undefined> {
-    return this.values.get(key) as T | undefined;
-  }
-
-  async put(key: string, value: unknown): Promise<void> {
-    this.values.set(key, structuredClone(value));
-  }
-
-  async setAlarm(time: number): Promise<void> {
-    this.alarm = time;
-  }
-
-  async deleteAll(): Promise<void> {
-    this.values.clear();
-  }
-}
-
-class MemoryState {
-  readonly storage = new MemoryStorage();
-  private queue: Promise<unknown> = Promise.resolve();
-
-  blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T> {
-    const result = this.queue.then(callback);
-    this.queue = result.then(() => undefined, () => undefined);
-    return result;
-  }
-}
+import { MemoryState, approvalNamespace } from "./helpers/approval-store";
 
 function snapshot(subject = "Approval test"): SendApprovalSnapshot {
   return {
@@ -202,20 +171,6 @@ describe("SendApprovalStore", () => {
     expect(claim.record.status).toBe("declined");
   });
 });
-
-function approvalNamespace() {
-  const stores = new Map<string, SendApprovalStore>();
-  return {
-    getByName(id: string) {
-      let store = stores.get(id);
-      if (!store) {
-        store = new SendApprovalStore(new MemoryState() as unknown as DurableObjectState, {} as Env);
-        stores.set(id, store);
-      }
-      return { fetch: (request: Request | string, init?: RequestInit) => store!.fetch(new Request(request, init)) };
-    },
-  };
-}
 
 function registeredSendTools(
   client: Record<string, any>,

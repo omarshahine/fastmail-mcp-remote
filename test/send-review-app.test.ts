@@ -1,48 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { parseHTML } from "linkedom";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { SendApprovalStore, type SendApprovalSnapshot } from "../src/send-approval";
+import { type SendApprovalSnapshot } from "../src/send-approval";
 import { guardResponse, registerAllTools, type ToolContext } from "../src/tools";
 import { APP_ONLY, SEND_REVIEW_URI, UI_MIME_TYPE } from "../src/apps/constants";
 import { renderSendReviewApp } from "../src/apps/send-review";
-
-class MemoryStorage {
-  private values = new Map<string, unknown>();
-  async get<T>(key: string): Promise<T | undefined> {
-    return this.values.get(key) as T | undefined;
-  }
-  async put(key: string, value: unknown): Promise<void> {
-    this.values.set(key, structuredClone(value));
-  }
-  async setAlarm(): Promise<void> {}
-  async deleteAll(): Promise<void> {
-    this.values.clear();
-  }
-}
-
-class MemoryState {
-  readonly storage = new MemoryStorage();
-  private queue: Promise<unknown> = Promise.resolve();
-  blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T> {
-    const result = this.queue.then(callback);
-    this.queue = result.then(() => undefined, () => undefined);
-    return result;
-  }
-}
-
-function approvalNamespace() {
-  const stores = new Map<string, SendApprovalStore>();
-  return {
-    getByName(id: string) {
-      let store = stores.get(id);
-      if (!store) {
-        store = new SendApprovalStore(new MemoryState() as unknown as DurableObjectState, {} as Env);
-        stores.set(id, store);
-      }
-      return { fetch: (request: Request | string, init?: RequestInit) => store!.fetch(new Request(request, init)) };
-    },
-  };
-}
+import { approvalNamespace } from "./helpers/approval-store";
 
 /** Drop prompt-guard markers so value assertions read the underlying data. */
 function strip(value: any): any {
