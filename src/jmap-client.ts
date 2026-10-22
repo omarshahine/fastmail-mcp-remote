@@ -575,6 +575,64 @@ export class JmapClient {
     return response.methodResponses[0][1].list;
   }
 
+  /**
+   * Which of `addresses` appear as an exact (case-insensitive) To/CC/BCC
+   * recipient of a message in the Sent mailbox. JMAP address filters match
+   * substrings, so each candidate message is fetched and re-checked.
+   */
+  async findPreviouslySentRecipients(addresses: string[]): Promise<Set<string>> {
+    const wanted = [...new Set(addresses.map((a) => a.trim().toLowerCase()).filter(Boolean))];
+    const found = new Set<string>();
+    if (wanted.length === 0) return found;
+
+    const mailboxes = await this.getMailboxes();
+    const sent = mailboxes.find((m: any) => m.role === 'sent');
+    if (!sent) return found;
+
+    const session = await this.getSession();
+    const methodCalls: JmapRequest['methodCalls'] = [];
+    wanted.forEach((address, i) => {
+      methodCalls.push(['Email/query', {
+        accountId: session.accountId,
+        filter: {
+          operator: 'AND',
+          conditions: [
+            { inMailbox: sent.id },
+            { operator: 'OR', conditions: [{ to: address }, { cc: address }, { bcc: address }] },
+          ],
+        },
+        limit: 20,
+      }, `q${i}`]);
+      methodCalls.push(['Email/get', {
+        accountId: session.accountId,
+        '#ids': { resultOf: `q${i}`, name: 'Email/query', path: '/ids' },
+        properties: ['to', 'cc', 'bcc'],
+      }, `g${i}`]);
+    });
+
+    const response = await this.makeRequest({
+      using: ['urn:ietf:params:jmap:core', 'urn:ietf:params:jmap:mail'],
+      methodCalls,
+    });
+
+    wanted.forEach((address, i) => {
+      const get = response.methodResponses.find((r: any) => r[2] === `g${i}`);
+      if (!get || get[0] === 'error') {
+        throw new Error(`Sent-mailbox recipient lookup failed for one address`);
+      }
+      for (const email of get[1].list ?? []) {
+        for (const field of ['to', 'cc', 'bcc']) {
+          for (const entry of email[field] ?? []) {
+            if (typeof entry?.email === 'string' && entry.email.trim().toLowerCase() === address) {
+              found.add(address);
+            }
+          }
+        }
+      }
+    });
+    return found;
+  }
+
   async getDefaultIdentity(): Promise<any> {
     const identities = await this.getIdentities();
     return identities.find((id: any) => id.mayDelete === false) || identities[0];
