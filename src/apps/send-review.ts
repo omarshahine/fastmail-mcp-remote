@@ -28,6 +28,8 @@ export interface SendReviewView {
   subject: string;
   /** Sanitized, script-free preview document for a sandboxed iframe; "" when the draft is gone. */
   previewDocument: string;
+  /** True for a pending approval the server marked eligible for inline approval at creation. */
+  canApproveInline: boolean;
 }
 
 /**
@@ -55,6 +57,7 @@ export async function buildSendReviewView(
     bcc: [],
     subject: "",
     previewDocument: "",
+    canApproveInline: record.inlineApproval === true && record.status === "pending",
   };
 
   // Once sent (or deleted) the email is no longer a draft and the snapshot

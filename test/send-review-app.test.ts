@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { _resetCache } from "../src/permissions";
 import { parseHTML } from "linkedom";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { type SendApprovalSnapshot } from "../src/send-approval";
+import { getSendApproval, type SendApprovalSnapshot } from "../src/send-approval";
 import { guardResponse, registerAllTools, type ToolContext } from "../src/tools";
 import { APP_ONLY, SEND_REVIEW_URI, UI_MIME_TYPE } from "../src/apps/constants";
 import { renderSendReviewApp } from "../src/apps/send-review";
@@ -457,5 +458,219 @@ describe("send review card outside the approval flow", () => {
     result({ content: [{ type: "text", text: "?" }] });
     await tick();
     expect(document.getElementById("status")!.textContent).toBe("No approval");
+  });
+});
+
+describe("ui_approve_send", () => {
+  beforeEach(() => _resetCache());
+
+  // executeApprovedSend re-reads the stored permission policy before sending.
+  function approveEnv(): Env {
+    const config = {
+      users: { "sender@example.com": { role: "admin", disabled_categories: [] } },
+      default_role: "delegate",
+      default_disabled_categories: [],
+    };
+    return { ...testEnv(), OAUTH_KV: { get: vi.fn(async () => config) } } as unknown as Env;
+  }
+
+  function approveHarness(options: Parameters<typeof harness>[0] = {}) {
+    const h = harness({ env: approveEnv(), ...options });
+    return { ...h, client: h.client as ReturnType<typeof replyClient> };
+  }
+
+  function replySnapshot(): SendApprovalSnapshot {
+    return { ...snapshot(), to: ["alex@example.com"], cc: [], bcc: [], subject: "Re: Trip plans" };
+  }
+
+  function replyClient(overrides: Record<string, any> = {}) {
+    return {
+      getEmailById: vi.fn().mockResolvedValue({
+        id: "source-1",
+        subject: "Trip plans",
+        from: [{ name: "Alex", email: "alex@example.com" }],
+        to: [{ email: "sender@example.com" }],
+        receivedAt: "2026-09-16T21:17:00Z",
+        messageId: ["orig@example.com"],
+        references: [],
+        textBody: [{ partId: "1", type: "text/plain" }],
+        htmlBody: [],
+        bodyValues: { "1": { value: "Hi" } },
+        attachments: [],
+      }),
+      getUserEmail: vi.fn().mockResolvedValue("sender@example.com"),
+      createDraft: vi.fn().mockResolvedValue("draft-reply"),
+      getDraftApprovalSnapshot: vi.fn().mockResolvedValue(replySnapshot()),
+      getIdentities: vi.fn().mockResolvedValue([{ email: "sender@example.com" }]),
+      findPreviouslySentRecipients: vi.fn().mockImplementation(async (addresses: string[]) => new Set(addresses)),
+      submitDraft: vi.fn().mockResolvedValue("submission-1"),
+      sendEmail: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  async function prepareReply(h: ReturnType<typeof harness>) {
+    const result = await h.handlers.get("reply_to_email")!({
+      emailId: "source-1", body: "Sounds good", replyAll: false, sendImmediately: true, excludeQuote: false,
+    }, {});
+    return result.structuredContent as { approvalId: string; inlineApproval: boolean; reviewUrl: string };
+  }
+
+  const approve = (h: { handlers: Map<string, (...args: any[]) => Promise<any>> }, approvalId: string) =>
+    h.handlers.get("ui_approve_send")!({ approvalId }, {});
+
+  it("ui_approve_send is app-only and absent without apps", () => {
+    const h = approveHarness({ client: replyClient() });
+    expect(h.configs.get("ui_approve_send")._meta).toEqual(APP_ONLY);
+    expect(approveHarness({ client: replyClient(), apps: false }).handlers.has("ui_approve_send")).toBe(false);
+  });
+
+  it("sends an eligible reply once", async () => {
+    const h = approveHarness({ client: replyClient() });
+    const prepared = await prepareReply(h);
+    expect(prepared.inlineApproval).toBe(true);
+    const result = await approve(h, prepared.approvalId);
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({ approvalId: prepared.approvalId, status: "sent" });
+    expect(result.content[0].text).toBe("Email sent. Submission ID: submission-1");
+    expect(h.client.submitDraft).toHaveBeenCalledTimes(1);
+    expect((await getSendApproval(h.env, prepared.approvalId))?.status).toBe("sent");
+  });
+
+  it("refuses a send_email approval and leaves it pending", async () => {
+    const h = approveHarness({ client: replyClient({ createDraft: vi.fn().mockResolvedValue("draft-new") }) });
+    const prepared = await prepareSend(h);
+    const approvalId = prepared.structuredContent.approvalId;
+    const result = await approve(h, approvalId);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("This email must be approved on the review page.");
+    expect(result.structuredContent).toEqual({
+      approvalId, status: "pending", reviewUrl: prepared.structuredContent.reviewUrl,
+    });
+    expect((await getSendApproval(h.env, approvalId))?.status).toBe("pending");
+    expect(h.client.submitDraft).not.toHaveBeenCalled();
+  });
+
+  it("refuses a reply that was not marked eligible and leaves it pending", async () => {
+    // A recipient the user has never emailed keeps the reply page-only.
+    const h = approveHarness({ client: replyClient({ findPreviouslySentRecipients: vi.fn().mockResolvedValue(new Set()) }) });
+    const prepared = await prepareReply(h);
+    expect(prepared.inlineApproval).toBe(false);
+    const result = await approve(h, prepared.approvalId);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("This email must be approved on the review page.");
+    expect(result.structuredContent.status).toBe("pending");
+    expect((await getSendApproval(h.env, prepared.approvalId))?.status).toBe("pending");
+    expect(h.client.submitDraft).not.toHaveBeenCalled();
+  });
+
+  it("refuses another user's approval", async () => {
+    const owner = approveHarness({ client: replyClient() });
+    const prepared = await prepareReply(owner);
+    const other = harness({ env: owner.env, client: owner.client, user: "intruder@example.com" });
+    const result = await approve(other, prepared.approvalId);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Approval not found.");
+    expect(result.structuredContent).toBeUndefined();
+    expect((await getSendApproval(owner.env, prepared.approvalId))?.status).toBe("pending");
+    expect(owner.client.submitDraft).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown approval", async () => {
+    const h = approveHarness({ client: replyClient() });
+    const result = await approve(h, "missing");
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Approval not found.");
+  });
+
+  it("returns a permission denial as is", async () => {
+    const h = approveHarness({ client: replyClient() });
+    const prepared = await prepareReply(h);
+    const denial = { content: [{ type: "text", text: "Permission denied" }], isError: true };
+    // Register with a context that denies the reply send permission.
+    const handlers = new Map<string, any>();
+    const server = {
+      tool: (...args: any[]) => handlers.set(args[0], args[args.length - 1]),
+      registerTool: (name: string, _config: any, handler: any) => handlers.set(name, handler),
+      registerResource: () => {},
+    } as unknown as McpServer;
+    const checks: Array<[string, any]> = [];
+    registerAllTools(server, {
+      env: h.env,
+      getCurrentUser: () => "sender@example.com",
+      getJmapClient: () => h.client as any,
+      getContactsCalendarClient: vi.fn() as any,
+      checkToolPermission: async (name, args) => {
+        checks.push([name, args]);
+        return name === "reply_to_email" ? (denial as any) : null;
+      },
+      guardResponse: (toolName, data, guardOptions) => guardResponse(toolName, data, guardOptions),
+    }, undefined, { apps: true });
+    const result = await handlers.get("ui_approve_send")({ approvalId: prepared.approvalId }, {});
+    expect(result).toBe(denial);
+    expect(checks).toContainEqual(["reply_to_email", { sendImmediately: true }]);
+    expect((await getSendApproval(h.env, prepared.approvalId))?.status).toBe("pending");
+    expect(h.client.submitDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not send when the draft changed after preparation", async () => {
+    const h = approveHarness({ client: replyClient() });
+    const prepared = await prepareReply(h);
+    h.client.getDraftApprovalSnapshot.mockResolvedValue({ ...replySnapshot(), textBody: "Edited" });
+    const result = await approve(h, prepared.approvalId);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("changed");
+    expect(result.structuredContent.status).toBe("declined");
+    expect((await getSendApproval(h.env, prepared.approvalId))?.status).toBe("declined");
+    expect(h.client.submitDraft).not.toHaveBeenCalled();
+  });
+
+  it("submits once under two concurrent calls", async () => {
+    const h = approveHarness({ client: replyClient() });
+    const prepared = await prepareReply(h);
+    const results = await Promise.all([approve(h, prepared.approvalId), approve(h, prepared.approvalId)]);
+    expect(h.client.submitDraft).toHaveBeenCalledTimes(1);
+    for (const result of results) {
+      expect(result.isError === true || result.structuredContent?.status === "sent").toBe(true);
+    }
+  });
+
+  it("reports an uncertain submission as sending", async () => {
+    const h = approveHarness({ client: replyClient({ submitDraft: vi.fn().mockRejectedValue(new Error("network lost")) }) });
+    const prepared = await prepareReply(h);
+    const result = await approve(h, prepared.approvalId);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text.endsWith("Check Fastmail Sent before retrying.")).toBe(true);
+    expect(result.structuredContent).toEqual({ approvalId: prepared.approvalId, status: "sending" });
+  });
+
+  it("refuses an expired approval", async () => {
+    const h = approveHarness({ client: replyClient() });
+    const prepared = await prepareReply(h);
+    const now = Date.now();
+    const spy = vi.spyOn(Date, "now").mockReturnValue(now + 11 * 60 * 1000);
+    try {
+      const result = await approve(h, prepared.approvalId);
+      expect(result.isError).toBe(true);
+      expect(h.client.submitDraft).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("ui_get_send_review reports canApproveInline", async () => {
+    const h = approveHarness({ client: replyClient() });
+    const reply = await prepareReply(h);
+    const replyView = await h.handlers.get("ui_get_send_review")!({ approvalId: reply.approvalId }, {});
+    expect(replyView.structuredContent.canApproveInline).toBe(true);
+
+    const send = approveHarness({ client: replyClient({ createDraft: vi.fn().mockResolvedValue("draft-new") }) });
+    const sent = await prepareSend(send);
+    const sendView = await send.handlers.get("ui_get_send_review")!({ approvalId: sent.structuredContent.approvalId }, {});
+    expect(sendView.structuredContent.canApproveInline).toBe(false);
+
+    await approve(h, reply.approvalId);
+    const after = await h.handlers.get("ui_get_send_review")!({ approvalId: reply.approvalId }, {});
+    expect(after.structuredContent.canApproveInline).toBe(false);
   });
 });

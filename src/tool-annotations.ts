@@ -64,5 +64,5 @@ export const TOOL_ANNOTATIONS: Record<string, ToolAnnotations> = Object.fromEntr
   ),
   // bulk_move is destructive: on 2026-09-06 a mis-scoped call moved 200 emails.
   ...entries(["delete_email", "delete_memo", "bulk_delete", "bulk_move"], DESTRUCTIVE),
-  ...entries(["send_email", "send_copy", "reply_to_email", "forward_email"], SEND),
+  ...entries(["send_email", "send_copy", "reply_to_email", "forward_email", "ui_approve_send"], SEND),
 ]);

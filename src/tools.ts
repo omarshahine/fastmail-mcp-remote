@@ -38,6 +38,7 @@ import {
   type SendApprovalRequestState,
 } from "./send-approval";
 import { inlineReplyApprovalEnabled, isInlineReplyEligible } from "./inline-approval";
+import { executeApprovedSend } from "./send-execution";
 import { gateBulkOperation } from "./bulk-confirm";
 import type { ModernRequestState } from "./mcp-server";
 import { APP_ONLY, EMAIL_READER_URI, SEND_REVIEW_URI, UI_MIME_TYPE } from "./apps/constants";
@@ -1248,6 +1249,59 @@ export function registerAllTools(
         // visibility, so it carries the same datamarking as `content`.
         const structuredContent = markToolResult(view, "ui_get_send_review") as Record<string, unknown>;
         return { content: guarded.content, structuredContent };
+      },
+    );
+  }
+
+  // MCP Apps: inline approval from the review card. Only approvals the server
+  // marked eligible at creation (low-risk replies) are accepted; everything
+  // else must go through the authenticated review page. The send itself runs
+  // the same guarded path as that page.
+  if (server.appsEnabled && shouldRegister("ui_approve_send")) {
+    server.registerTool(
+      "ui_approve_send",
+      {
+        description: "Approve and send one pending reply that the server marked eligible for inline approval. Called by the send review card only; any other approval must be approved on the review page.",
+        inputSchema: {
+          approvalId: z.string().describe("Approval ID from a send tool's structuredContent"),
+        },
+        _meta: APP_ONLY,
+      },
+      async ({ approvalId }) => {
+        const denied = await ctx.checkToolPermission("reply_to_email", { sendImmediately: true });
+        if (denied) return denied;
+
+        const currentUser = ctx.getCurrentUser();
+        const record = currentUser ? await getSendApproval(ctx.env, approvalId) : null;
+        if (!currentUser || !record || record.userLogin.toLowerCase() !== currentUser.toLowerCase()) {
+          return sendToolError("Approval not found.");
+        }
+        if (record.toolName !== "reply_to_email" || record.inlineApproval !== true) {
+          return {
+            content: [{ type: "text" as const, text: "This email must be approved on the review page." }],
+            structuredContent: { approvalId: record.id, status: record.status, reviewUrl: approvalUrl(ctx.env, record.id) },
+            isError: true,
+          };
+        }
+
+        const outcome = await executeApprovedSend(ctx.env, ctx.getJmapClient(), record, currentUser);
+        const failed = (text: string, status: SendApprovalRecord["status"]) => ({
+          content: [{ type: "text" as const, text }],
+          structuredContent: { approvalId: record.id, status },
+          isError: true,
+        });
+        switch (outcome.kind) {
+          case "sent":
+            return {
+              content: [{ type: "text" as const, text: `Email sent. Submission ID: ${outcome.record.submissionId || "unknown"}` }],
+              structuredContent: { approvalId: record.id, status: "sent" },
+            };
+          case "refused":
+          case "conflict":
+            return failed(outcome.message, outcome.record?.status ?? record.status);
+          case "uncertain":
+            return failed(`Send status uncertain: ${outcome.message}. Check Fastmail Sent before retrying.`, "sending");
+        }
       },
     );
   }
