@@ -12,6 +12,7 @@
 
 import { approvalUrl, getSendApproval, type SendApprovalRecord } from "../send-approval";
 import { buildEmailPreviewDocument } from "../email-preview";
+import { inlineReplyApprovalEnabled } from "../inline-approval";
 import type { ToolContext } from "../tools";
 import { renderAppPage, UNMARK_SCRIPT } from "./page";
 
@@ -28,7 +29,7 @@ export interface SendReviewView {
   subject: string;
   /** Sanitized, script-free preview document for a sandboxed iframe; "" when the draft is gone. */
   previewDocument: string;
-  /** True for a pending approval the server marked eligible for inline approval at creation. */
+  /** True for a pending approval marked inline-eligible at creation while INLINE_REPLY_APPROVAL is on. */
   canApproveInline: boolean;
 }
 
@@ -57,7 +58,8 @@ export async function buildSendReviewView(
     bcc: [],
     subject: "",
     previewDocument: "",
-    canApproveInline: record.inlineApproval === true && record.status === "pending",
+    canApproveInline:
+      record.inlineApproval === true && record.status === "pending" && inlineReplyApprovalEnabled(ctx.env),
   };
 
   // Once sent (or deleted) the email is no longer a draft and the snapshot

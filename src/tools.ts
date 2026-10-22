@@ -1276,7 +1276,9 @@ export function registerAllTools(
         if (!currentUser || !record || record.userLogin.toLowerCase() !== currentUser.toLowerCase()) {
           return sendToolError("Approval not found.");
         }
-        if (record.toolName !== "reply_to_email" || record.inlineApproval !== true) {
+        // Eligibility is fixed at creation, so the kill switch is re-checked here:
+        // turning INLINE_REPLY_APPROVAL off makes pending approvals page-only too.
+        if (record.toolName !== "reply_to_email" || record.inlineApproval !== true || !inlineReplyApprovalEnabled(ctx.env)) {
           return {
             content: [{ type: "text" as const, text: "This email must be approved on the review page." }],
             structuredContent: { approvalId: record.id, status: record.status, reviewUrl: approvalUrl(ctx.env, record.id) },

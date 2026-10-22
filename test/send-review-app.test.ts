@@ -658,6 +658,24 @@ describe("ui_approve_send", () => {
     }
   });
 
+  it("refuses an eligible reply once INLINE_REPLY_APPROVAL is turned off", async () => {
+    const h = approveHarness({ client: replyClient() });
+    const prepared = await prepareReply(h);
+    expect(prepared.inlineApproval).toBe(true);
+    // Same approval store, kill switch flipped after creation.
+    const off = approveHarness({ env: { ...h.env, INLINE_REPLY_APPROVAL: "off" } as unknown as Env, client: h.client });
+    const result = await approve(off, prepared.approvalId);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("This email must be approved on the review page.");
+    expect(result.structuredContent).toEqual({
+      approvalId: prepared.approvalId, status: "pending", reviewUrl: prepared.reviewUrl,
+    });
+    expect((await getSendApproval(h.env, prepared.approvalId))?.status).toBe("pending");
+    expect(h.client.submitDraft).not.toHaveBeenCalled();
+    const view = await off.handlers.get("ui_get_send_review")!({ approvalId: prepared.approvalId }, {});
+    expect(view.structuredContent.canApproveInline).toBe(false);
+  });
+
   it("ui_get_send_review reports canApproveInline", async () => {
     const h = approveHarness({ client: replyClient() });
     const reply = await prepareReply(h);
