@@ -92,7 +92,7 @@ async function post(body: unknown, headers: Record<string, string> = {}) {
 
 beforeEach(() => {
 	vi.mocked(getVisibleTools).mockImplementation(
-		() => new Set(['get_email', 'send_email', 'ui_get_email_view', 'ui_get_send_review', 'bulk_delete', 'list_mailboxes']),
+		() => new Set(['get_email', 'send_email', 'ui_get_email_view', 'ui_get_send_review', 'ui_approve_send', 'bulk_delete', 'list_mailboxes']),
 	);
 });
 afterEach(() => {
@@ -126,7 +126,7 @@ describe('legacy (2025-era) wire', () => {
 		expect(tools.find((t) => t.name === 'get_email')._meta.ui.resourceUri).toBe(EMAIL_READER_URI);
 		expect(tools.find((t) => t.name === 'send_email')._meta.ui.resourceUri).toBe(SEND_REVIEW_URI);
 		const appTools = tools.filter((t) => t.name.startsWith('ui_'));
-		expect(appTools.map((t) => t.name).sort()).toEqual(['ui_get_email_view', 'ui_get_send_review']);
+		expect(appTools.map((t) => t.name).sort()).toEqual(['ui_approve_send', 'ui_get_email_view', 'ui_get_send_review']);
 		for (const tool of appTools) expect(tool._meta.ui.visibility, tool.name).toEqual(['app']);
 	});
 
@@ -193,5 +193,30 @@ describe('modern (2026-07-28) bulk confirmation round trip', () => {
 		const declined = await call(3, { requestState, inputResponses: { confirm: { action: 'decline' } } });
 		expect(declined.content[0].text).toBe('Cancelled: no emails were deleted.');
 		expect(bulkDelete).not.toHaveBeenCalled();
+	});
+});
+
+describe('modern (2026-07-28) tools/list without the ui extension', () => {
+	it('omits the app-only inline approval tool', async () => {
+		const r = await post(
+			{
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/list',
+				params: {
+					_meta: {
+						'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+						'io.modelcontextprotocol/clientInfo': { name: 'wire-test', version: '1.0.0' },
+						'io.modelcontextprotocol/clientCapabilities': {},
+					},
+				},
+			},
+			{ 'Mcp-Method': 'tools/list', 'Mcp-Protocol-Version': '2026-07-28' },
+		);
+
+		expect(r.status, JSON.stringify(r.messages)).toBe(200);
+		const names = (r.messages[0].result.tools as any[]).map((t) => t.name);
+		expect(names).toContain('send_email');
+		expect(names).not.toContain('ui_approve_send');
 	});
 });

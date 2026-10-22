@@ -349,6 +349,7 @@ Add `ACCESS_TEAM_NAME` and `ALLOWED_USERS` as plaintext vars in your `wrangler.j
 - **ACCESS_TEAM_NAME**: Your Cloudflare Zero Trust team name (the subdomain before `.cloudflareaccess.com`). Required: sign-in fails until it is set. The CLI's `--team` flag no longer selects the team.
 - **ALLOWED_USERS**: Comma-separated list of email addresses allowed to access the server
 - **SEND_APPROVAL_MODE**: Outbound mail policy. `required` is the default and server-enforced. `client` relies on the MCP client's tool approval UI. `off` sends directly.
+- **INLINE_REPLY_APPROVAL**: Optional. `on` (default) lets the send review card approve eligible replies inline. `off` requires the authenticated review page for every send. See [Inline approval of low-risk replies](#inline-approval-of-low-risk-replies).
 
 Two optional vars tighten things further:
 
@@ -374,7 +375,15 @@ The review URL works with regular MCP, Code Mode, the CLI, and OpenClaw. MCP 202
 
 On `/mcp`, the four send tools (`send_email`, `send_copy`, `reply_to_email`, `forward_email`) link to the `ui://fastmail/send-review.html` app. Hosts that support MCP Apps, such as claude.ai, render it next to the tool result. The card shows the approval status, From, To, Cc, Bcc, the subject, and a sanitized preview in a sandboxed iframe. It loads that data through the app-only `ui_get_send_review` tool, which returns the approval only to the user who created it, and refreshes every 5 seconds until the approval is sent, declined, or expired.
 
-The card cannot approve anything. Its **Review & approve** button only opens the authenticated `/approve/send/:id` page, which stays the one place a send is approved. A reply or forward saved as a draft shows "Saved as draft. Nothing was sent.", a direct send (approval mode `off`) shows "Sent.", and a failed call shows its error.
+For most sends the card cannot approve anything. Its **Review & approve** button only opens the authenticated `/approve/send/:id` page, which stays the place a send is approved. The exception is an eligible reply, described below. A reply or forward saved as a draft shows "Saved as draft. Nothing was sent.", a direct send (approval mode `off`) shows "Sent.", and a failed call shows its error.
+
+#### Inline approval of low-risk replies
+
+A `reply_to_email` approval is marked eligible for inline approval when every To and Cc recipient is one of your identities or appears (exact match, case-insensitive) in the To, Cc or Bcc of a message in your Sent mailbox. It must also have no Bcc, no attachments and at most 10 recipients, and any lookup error means not eligible. Eligibility is only computed when MCP Apps are enabled for the client. For these replies the card shows a primary **Send** button and a secondary **Review in browser** link. **Send** calls the app-only `ui_approve_send` tool, which uses the same guarded path as the approval page: permission and draft-digest re-checks, single use, ten-minute expiry and duplicate-send protection. It refuses anything that is not eligible. `send_email`, `send_copy`, `forward_email` and replies to anyone outside that set keep the **Review & approve** page.
+
+Set `INLINE_REPLY_APPROVAL=off` to disable this. The flag is checked when the approval is created and again when it is approved, so turning it off also blocks approvals that already exist.
+
+Accepted risk: a compromised known contact, or prompt injection inside an existing thread, could get a reply sent to that contact without the review page. The recipient set is limited to people you have already emailed, but the body is not reviewed on the page.
 
 Which clients get the apps:
 
