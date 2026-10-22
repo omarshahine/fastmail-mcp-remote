@@ -692,3 +692,90 @@ describe("ui_approve_send", () => {
     expect(after.structuredContent.canApproveInline).toBe(false);
   });
 });
+
+describe("inline Send button on the review card", () => {
+  const reviewView = (status: string, canApproveInline: boolean) => ({
+    structuredContent: {
+      approvalId: "a-1", status, canApproveInline,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      reviewUrl: "https://mail.example.test/approve/send/a-1", toolName: "send_email",
+      from: "s@example.com", to: ["r@example.com"], cc: [], bcc: [],
+      subject: "S", previewDocument: "<p>Hi</p>",
+    },
+  });
+  const prepared = () => ({ structuredContent: { approvalId: "a-1", status: "pending", expiresAt: new Date(Date.now() + 60_000).toISOString(), reviewUrl: "https://mail.example.test/approve/send/a-1", draftId: "d" } });
+  const click = (document: any, id: string) => document.getElementById(id).dispatchEvent(new document.defaultView!.Event("click"));
+
+  it("shows Send only for inline-eligible pending approvals", async () => {
+    const eligible = runReviewView({ callTool: vi.fn(async () => reviewView("pending", true)) });
+    eligible.result(prepared());
+    await tick();
+    expect(eligible.document.getElementById("send")!.hidden).toBe(false);
+    expect(eligible.document.getElementById("send")!.textContent).toBe("Send");
+    expect(eligible.document.getElementById("approve")!.textContent).toBe("Review in browser");
+    expect(eligible.document.getElementById("approve")!.hidden).toBe(false);
+
+    const plain = runReviewView({ callTool: vi.fn(async () => reviewView("pending", false)) });
+    plain.result(prepared());
+    await tick();
+    expect(plain.document.getElementById("send")!.hidden).toBe(true);
+    expect(plain.document.getElementById("approve")!.textContent).toBe("Review & approve");
+    expect(plain.document.getElementById("approve")!.className).toBe("primary");
+
+    const sent = runReviewView({ callTool: vi.fn(async () => reviewView("sent", true)) });
+    sent.result(prepared());
+    await tick();
+    expect(sent.document.getElementById("send")!.hidden).toBe(true);
+  });
+
+  it("Send calls ui_approve_send once and renders the sent state", async () => {
+    const callTool = vi.fn(async (name: string) => name === "ui_approve_send"
+      ? { content: [{ type: "text", text: "Email sent. Submission ID: s-1" }], structuredContent: { approvalId: "a-1", status: "sent" } }
+      : reviewView("pending", true));
+    const { document, result } = runReviewView({ callTool });
+    result(prepared());
+    await tick();
+    click(document, "send");
+    click(document, "send");
+    expect(callTool.mock.calls.filter(([name]) => name === "ui_approve_send")).toHaveLength(1);
+    expect(callTool).toHaveBeenCalledWith("ui_approve_send", { approvalId: "a-1" });
+    expect((document.getElementById("send") as any).disabled).toBe(true);
+    await tick();
+    expect(document.getElementById("status")!.textContent).toBe("Sent");
+    expect(document.getElementById("send")!.hidden).toBe(true);
+    expect(document.getElementById("approve")!.hidden).toBe(true);
+  });
+
+  it("shows the server message when inline approval is refused", async () => {
+    const callTool = vi.fn(async (name: string) => name === "ui_approve_send"
+      ? { isError: true, content: [{ type: "text", text: "This reply needs review in the browser." }], structuredContent: { approvalId: "a-1", status: "pending" } }
+      : reviewView("pending", true));
+    const { document, result } = runReviewView({ callTool });
+    result(prepared());
+    await tick();
+    click(document, "send");
+    await tick();
+    await tick();
+    expect(document.getElementById("message")!.textContent).toBe("This reply needs review in the browser.");
+    expect((document.getElementById("send") as any).disabled).toBe(true);
+    expect(callTool.mock.calls.filter(([name]) => name === "ui_get_send_review").length).toBeGreaterThanOrEqual(2);
+    click(document, "send");
+    expect(callTool.mock.calls.filter(([name]) => name === "ui_approve_send")).toHaveLength(1);
+  });
+
+  it("re-enables Send after a bridge failure", async () => {
+    const callTool = vi.fn(async (name: string) => {
+      if (name === "ui_approve_send") throw new Error("bridge down");
+      return reviewView("pending", true);
+    });
+    const { document, result } = runReviewView({ callTool });
+    result(prepared());
+    await tick();
+    click(document, "send");
+    await tick();
+    expect((document.getElementById("send") as any).disabled).toBe(false);
+    expect(document.getElementById("message")!.textContent).toBe("Could not reach Fastmail. Try again.");
+    click(document, "send");
+    expect(callTool.mock.calls.filter(([name]) => name === "ui_approve_send")).toHaveLength(2);
+  });
+});

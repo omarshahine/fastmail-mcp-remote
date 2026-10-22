@@ -108,6 +108,7 @@ const BODY = `
   <p id="subject" class="subject" hidden></p>
   <iframe id="preview" sandbox="" title="Email preview" hidden></iframe>
   <div class="actions">
+    <button id="send" class="primary" type="button" hidden>Send</button>
     <button id="approve" class="primary" type="button" hidden>Review &amp; approve</button>
     <span id="hint" class="muted" hidden>Approval happens on the secure Fastmail review page.</span>
   </div>
@@ -128,6 +129,9 @@ const SCRIPT = `
   var timer = null;
   var rendered = false;
   var sendingSince = 0;
+  var sendInFlight = false;
+  var sendLocked = false;
+  var sendNote = "";
   var $ = function (id) { return document.getElementById(id); };
 ${UNMARK_SCRIPT}
   var show = function (id, visible) { $(id).hidden = !visible; };
@@ -140,7 +144,21 @@ ${UNMARK_SCRIPT}
     var pending = status === "pending";
     show("approve", pending);
     show("hint", pending);
-    if (!pending) show("link", false);
+    if (!pending) {
+      show("link", false);
+      show("send", false);
+    }
+  };
+
+  // Inline-eligible replies get a primary Send button; the browser review
+  // link drops to a secondary action. Everything else renders as before.
+  var setInline = function (inline) {
+    var approve = $("approve");
+    approve.textContent = inline ? "Review in browser" : "Review & approve";
+    approve.className = inline ? "" : "primary";
+    show("hint", !inline);
+    show("send", inline);
+    $("send").disabled = sendInFlight || sendLocked;
   };
 
   var setMessage = function (text) {
@@ -178,7 +196,9 @@ ${UNMARK_SCRIPT}
     // The store marks a lapsed approval expired on its next read; show it now.
     if (status === "pending" && expired(view)) status = "expired";
     setStatus(status);
-    setMessage(rendered ? "" : "The draft is no longer available to preview.");
+    setInline(status === "pending" && view.canApproveInline === true);
+    if (status !== "pending") sendNote = "";
+    setMessage(rendered ? sendNote : "The draft is no longer available to preview.");
     if (timer) clearTimeout(timer);
     timer = null;
     // Approved and sending become sent or fail later, so keep polling them
@@ -219,6 +239,35 @@ ${UNMARK_SCRIPT}
     });
   });
 
+  $("send").addEventListener("click", function () {
+    if (!current || sendInFlight || sendLocked) return;
+    sendInFlight = true;
+    sendNote = "";
+    $("send").disabled = true;
+    setMessage("");
+    app.callTool("ui_approve_send", { approvalId: current.approvalId }).then(function (result) {
+      sendInFlight = false;
+      var data = result && result.structuredContent;
+      if (result && !result.isError && data && data.status === "sent") {
+        sendLocked = true;
+        apply(Object.assign({}, current, { status: "sent", canApproveInline: false }));
+        return;
+      }
+      // Refused, conflicting or uncertain: show why, keep Send off, and ask
+      // the server where the approval stands.
+      sendLocked = true;
+      sendNote = resultText(result) || "The email could not be sent from here.";
+      setMessage(sendNote);
+      $("send").disabled = true;
+      refresh();
+    }, function () {
+      sendInFlight = false;
+      sendNote = "Could not reach Fastmail. Try again.";
+      setMessage(sendNote);
+      $("send").disabled = false;
+    });
+  });
+
   // A result that never needed approval: a saved draft, a direct send, or an error.
   var settle = function (status, label, text) {
     var badge = $("status");
@@ -227,6 +276,7 @@ ${UNMARK_SCRIPT}
     show("approve", false);
     show("hint", false);
     show("link", false);
+    show("send", false);
     setMessage(text);
   };
 
