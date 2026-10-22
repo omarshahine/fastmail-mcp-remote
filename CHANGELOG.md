@@ -13,8 +13,10 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `reply_to_email` approval whose recipients are all your identities or people
   in your Sent mailbox (no Bcc, no attachments, at most 10 recipients) shows a
   **Send** button backed by the app-only `ui_approve_send` tool. It uses the
-  same guarded path as the approval page. `INLINE_REPLY_APPROVAL=off` disables
-  it. Other sends still use the **Review & approve** page.
+  same guarded path as the approval page. Only messages you sent count (from
+  one of your identities, not a draft), and only 2026-07-28 clients that
+  declare MCP Apps support get the inline button. `INLINE_REPLY_APPROVAL=off`
+  disables it. Other sends still use the **Review & approve** page.
 - Server-enforced approval for all outbound email paths. Sends are prepared as
   Fastmail drafts and require a short-lived, authenticated browser approval.
 - MCP 2026-07-28 stateless URL elicitation with signed request state, plus
@@ -33,6 +35,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   skipped unless `FASTMAIL_MCP_TEST_URL` and `FASTMAIL_MCP_TEST_TOKEN` are set.
 
 ### Changed
+- `move_email`, `bulk_move` and archive action URLs refuse to move mail into
+  the Sent mailbox, so Sent only holds mail you sent.
 - Every tool now carries MCP annotations (read-only, destructive, idempotent,
   open-world). Outbound tools advertise write/destructive, non-idempotent,
   open-world so supporting clients can apply native approval policies.
