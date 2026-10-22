@@ -40,6 +40,8 @@ export interface SendReviewView {
 export async function buildSendReviewView(
   ctx: ToolContext,
   approvalId: string,
+  /** Whether this request's client has `ui_approve_send` registered. */
+  options: { inlineApprovalEnabled?: boolean } = {},
 ): Promise<SendReviewView | null> {
   const currentUser = ctx.getCurrentUser();
   if (!currentUser) return null;
@@ -59,7 +61,10 @@ export async function buildSendReviewView(
     subject: "",
     previewDocument: "",
     canApproveInline:
-      record.inlineApproval === true && record.status === "pending" && inlineReplyApprovalEnabled(ctx.env),
+      options.inlineApprovalEnabled === true &&
+      record.inlineApproval === true &&
+      record.status === "pending" &&
+      inlineReplyApprovalEnabled(ctx.env),
   };
 
   // Once sent (or deleted) the email is no longer a draft and the snapshot

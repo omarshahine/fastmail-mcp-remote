@@ -46,6 +46,20 @@ export function createMcpRequestStateCodec(env: Env, userLogin: string): McpRequ
  */
 export function clientSupportsApps(parsedBody: unknown, isLegacy: boolean): boolean {
   if (isLegacy) return true;
+  return declaresUiExtension(parsedBody);
+}
+
+/**
+ * Whether this request's client may approve eligible replies from the send
+ * review card. Only 2026-07-28 requests that declare the ui extension qualify:
+ * a 2025-era request says nothing about the client, so it is never assumed to
+ * render the card.
+ */
+export function clientSupportsInlineApproval(parsedBody: unknown, isLegacy: boolean): boolean {
+  return !isLegacy && declaresUiExtension(parsedBody);
+}
+
+function declaresUiExtension(parsedBody: unknown): boolean {
   if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) return false;
   const meta = (parsedBody as { params?: { _meta?: Record<string, unknown> } }).params?._meta;
   const capabilities = meta?.["io.modelcontextprotocol/clientCapabilities"] as
@@ -61,8 +75,10 @@ export function createFastmailMcpServer(input: {
   requestStateCodec: McpRequestStateCodec;
   /** Register MCP Apps resources, `ui_*` tools and tool `_meta.ui`. */
   apps: boolean;
+  /** Register `ui_approve_send` and mark low-risk replies for inline approval. */
+  inlineApproval?: boolean;
 }): McpServer {
-  const { env, userLogin, visibleTools, requestStateCodec, apps } = input;
+  const { env, userLogin, visibleTools, requestStateCodec, apps, inlineApproval = false } = input;
   const server = new McpServer(
     { name: "Fastmail MCP Remote", version: "1.0.0" },
     {
@@ -84,6 +100,6 @@ export function createFastmailMcpServer(input: {
     getClientCapabilities: () => server.server.getClientCapabilities(),
     mintRequestState: (state, context) => requestStateCodec.mint(state, context),
   });
-  registerAllTools(legacyShapedModernServer(server), toolContext, visibleTools, { apps });
+  registerAllTools(legacyShapedModernServer(server), toolContext, visibleTools, { apps, inlineApproval });
   return server;
 }

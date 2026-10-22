@@ -76,6 +76,8 @@ function harness(options: {
   user?: string;
   client?: Record<string, any>;
   apps?: boolean;
+  /** Defaults to true: the 2026-07-28 lane with the ui extension. */
+  inlineApproval?: boolean;
 } = {}) {
   const env = options.env ?? testEnv();
   const client = options.client ?? fakeClient();
@@ -102,7 +104,12 @@ function harness(options: {
     checkToolPermission: async () => null,
     guardResponse: (toolName, data, guardOptions) => guardResponse(toolName, data, guardOptions),
   };
-  registerAllTools(server, ctx, undefined, options.apps === false ? {} : { apps: true });
+  registerAllTools(
+    server,
+    ctx,
+    undefined,
+    options.apps === false ? {} : { apps: true, inlineApproval: options.inlineApproval ?? true },
+  );
   return { env, client, configs, handlers, resources };
 }
 
@@ -519,10 +526,26 @@ describe("ui_approve_send", () => {
   const approve = (h: { handlers: Map<string, (...args: any[]) => Promise<any>> }, approvalId: string) =>
     h.handlers.get("ui_approve_send")!({ approvalId }, {});
 
-  it("ui_approve_send is app-only and absent without apps", () => {
+  it("ui_approve_send is app-only and absent without apps or inline approval", () => {
     const h = approveHarness({ client: replyClient() });
     expect(h.configs.get("ui_approve_send")._meta).toEqual(APP_ONLY);
     expect(approveHarness({ client: replyClient(), apps: false }).handlers.has("ui_approve_send")).toBe(false);
+    // Legacy lane: apps on, inline approval off.
+    const legacy = approveHarness({ client: replyClient(), inlineApproval: false });
+    expect(legacy.handlers.has("ui_get_send_review")).toBe(true);
+    expect(legacy.handlers.has("ui_approve_send")).toBe(false);
+  });
+
+  it("a legacy-lane reply to a known recipient is not inline-eligible and gets no card copy", async () => {
+    const h = approveHarness({ client: replyClient(), inlineApproval: false });
+    const result = await h.handlers.get("reply_to_email")!({
+      emailId: "source-1", body: "Sounds good", replyAll: false, sendImmediately: true, excludeQuote: false,
+    }, {});
+    expect(result.structuredContent.inlineApproval).toBe(false);
+    expect(result.content[0].text).not.toContain("review card");
+    expect(result.content[0].text).toContain("Review and approve:");
+    expect((await getSendApproval(h.env, result.structuredContent.approvalId))?.inlineApproval).toBeUndefined();
+    expect(h.client.findPreviouslySentRecipients).not.toHaveBeenCalled();
   });
 
   it("sends an eligible reply once", async () => {
@@ -605,7 +628,7 @@ describe("ui_approve_send", () => {
         return name === "reply_to_email" ? (denial as any) : null;
       },
       guardResponse: (toolName, data, guardOptions) => guardResponse(toolName, data, guardOptions),
-    }, undefined, { apps: true });
+    }, undefined, { apps: true, inlineApproval: true });
     const result = await handlers.get("ui_approve_send")({ approvalId: prepared.approvalId }, {});
     expect(result).toBe(denial);
     expect(checks).toContainEqual(["reply_to_email", { sendImmediately: true }]);
@@ -641,7 +664,28 @@ describe("ui_approve_send", () => {
     const result = await approve(h, prepared.approvalId);
     expect(result.isError).toBe(true);
     expect(result.content[0].text.endsWith("Check Fastmail Sent before retrying.")).toBe(true);
+    expect(result.content[0].text).toBe("Send status uncertain: network lost. Check Fastmail Sent before retrying.");
     expect(result.structuredContent).toEqual({ approvalId: prepared.approvalId, status: "sending" });
+  });
+
+  it("does not double the period when the uncertain message already ends with one", async () => {
+    const h = approveHarness({ client: replyClient({ submitDraft: vi.fn().mockRejectedValue(new Error("Connection reset.")) }) });
+    const prepared = await prepareReply(h);
+    const result = await approve(h, prepared.approvalId);
+    expect(result.content[0].text).toBe("Send status uncertain: Connection reset. Check Fastmail Sent before retrying.");
+  });
+
+  it("reports an error before the claim with the record's real status, not sending", async () => {
+    const h = approveHarness({ client: replyClient() });
+    const prepared = await prepareReply(h);
+    // update_draft replaced the draft, so the approved draft id no longer exists.
+    h.client.getDraftApprovalSnapshot.mockRejectedValue(new Error("Draft not found"));
+    const result = await approve(h, prepared.approvalId);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe("Draft not found");
+    expect(result.structuredContent).toEqual({ approvalId: prepared.approvalId, status: "pending" });
+    expect((await getSendApproval(h.env, prepared.approvalId))?.status).toBe("pending");
+    expect(h.client.submitDraft).not.toHaveBeenCalled();
   });
 
   it("refuses an expired approval", async () => {
@@ -686,6 +730,11 @@ describe("ui_approve_send", () => {
     const sent = await prepareSend(send);
     const sendView = await send.handlers.get("ui_get_send_review")!({ approvalId: sent.structuredContent.approvalId }, {});
     expect(sendView.structuredContent.canApproveInline).toBe(false);
+
+    // The same eligible approval viewed from a legacy-lane request, which has no ui_approve_send.
+    const legacy = harness({ env: h.env, client: h.client, inlineApproval: false });
+    const legacyView = await legacy.handlers.get("ui_get_send_review")!({ approvalId: reply.approvalId }, {});
+    expect(legacyView.structuredContent.canApproveInline).toBe(false);
 
     await approve(h, reply.approvalId);
     const after = await h.handlers.get("ui_get_send_review")!({ approvalId: reply.approvalId }, {});

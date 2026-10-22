@@ -176,7 +176,7 @@ describe("SendApprovalStore", () => {
 function registeredSendTools(
   client: Record<string, any>,
   modernState?: { value?: any },
-  options: { apps?: boolean; env?: Record<string, unknown> } = {},
+  options: { apps?: boolean; inlineApproval?: boolean; env?: Record<string, unknown> } = {},
 ) {
   const handlers = new Map<string, (...args: any[]) => Promise<any>>();
   const server = {
@@ -211,7 +211,7 @@ function registeredSendTools(
       },
     } : {}),
   };
-  registerAllTools(server, context, new Set(["send_email", "send_copy", "reply_to_email"]), options.apps ? { apps: true } : {});
+  registerAllTools(server, context, new Set(["send_email", "send_copy", "reply_to_email"]), options.apps ? { apps: true, inlineApproval: options.inlineApproval ?? true } : {});
   return handlers;
 }
 
@@ -386,6 +386,15 @@ describe("outbound tool approval gate", () => {
       const handler = registeredSendTools(replyClient()).get("reply_to_email")!;
       const result = await handler(replyArgs, {});
       expect(result.structuredContent.inlineApproval).toBe(false);
+    });
+
+    it("does not mark a reply eligible on the legacy lane (apps without inline approval)", async () => {
+      const client = replyClient();
+      const handler = registeredSendTools(client, undefined, { apps: true, inlineApproval: false }).get("reply_to_email")!;
+      const result = await handler(replyArgs, {});
+      expect(result.structuredContent.inlineApproval).toBe(false);
+      expect(result.content[0].text).not.toContain("review card");
+      expect(client.findPreviouslySentRecipients).not.toHaveBeenCalled();
     });
 
     it("does not mark a reply eligible when INLINE_REPLY_APPROVAL is off", async () => {

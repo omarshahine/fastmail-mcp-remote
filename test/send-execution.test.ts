@@ -94,6 +94,19 @@ describe("executeApprovedSend", () => {
     expect(client.submitDraft).not.toHaveBeenCalled();
   });
 
+  it('returns kind "error" with the pending record when the draft lookup throws before the claim', async () => {
+    const { env, record, client } = await setup();
+    client.getDraftApprovalSnapshot.mockRejectedValue(new Error("Draft not found"));
+    const outcome = await executeApprovedSend(env, client as any, record, USER);
+    expect(outcome.kind).toBe("error");
+    if (outcome.kind === "error") {
+      expect(outcome.message).toBe("Draft not found");
+      expect(outcome.record?.status).toBe("pending");
+    }
+    expect((await getSendApproval(env, record.id))?.status).toBe("pending");
+    expect(client.submitDraft).not.toHaveBeenCalled();
+  });
+
   it("returns uncertain and leaves the record sending when submitDraft throws", async () => {
     const { env, record, client } = await setup();
     client.submitDraft.mockRejectedValue(new Error("network lost"));

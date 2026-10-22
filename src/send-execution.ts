@@ -5,6 +5,7 @@ import {
   completeSendApproval,
   decideSendApproval,
   digestSendSnapshot,
+  getSendApproval,
   type SendApprovalRecord,
 } from "./send-approval";
 
@@ -13,12 +14,16 @@ import {
  * - `refused`: the approval was declined in the store (permission revoked or draft changed).
  * - `conflict`: the store refused the decide or claim (already decided, expired, ...).
  *   `stage` says which decision was being made; `record` is the store's current record.
- * - `uncertain`: submission may have reached Fastmail; the approval stays `sending`.
+ * - `error`: something failed before the send was claimed, so nothing was sent.
+ *   `record` is the store's current record when it could be read.
+ * - `uncertain`: failed after the claim; submission may have reached Fastmail
+ *   and the approval stays `sending`.
  */
 export type SendExecutionOutcome =
   | { kind: "sent"; record: SendApprovalRecord }
   | { kind: "refused"; reason: "permission" | "changed"; message: string; record?: SendApprovalRecord }
   | { kind: "conflict"; message: string; record?: SendApprovalRecord; stage?: "decline" | "approve" }
+  | { kind: "error"; message: string; record?: SendApprovalRecord }
   | { kind: "uncertain"; message: string };
 
 /**
@@ -40,6 +45,9 @@ export async function executeApprovedSend(
     return { kind: "refused", reason, message, record: declined.record };
   }
 
+  // Set once the claim moves the approval to `sending`. Failures before that
+  // cannot have sent anything; failures after it might have.
+  let claimed = false;
   try {
     const permissions = await getPermissionsConfig(env.OAUTH_KV);
     const userConfig = getUserConfig(permissions, userLogin);
@@ -67,6 +75,7 @@ export async function executeApprovedSend(
       return { kind: "conflict", message: claim.error, record: claim.record, stage: "approve" };
     }
     if (claim.record.status === "sent") return { kind: "sent", record: claim.record };
+    claimed = true;
     const claimId = claim.record.claimId;
     if (!claimId) throw new Error("Approval claim did not return an identifier");
 
@@ -79,6 +88,9 @@ export async function executeApprovedSend(
     if (!complete.ok) throw new Error(complete.error);
     return { kind: "sent", record: complete.record };
   } catch (error) {
-    return { kind: "uncertain", message: error instanceof Error ? error.message : String(error) };
+    const message = error instanceof Error ? error.message : String(error);
+    if (claimed) return { kind: "uncertain", message };
+    const current = await getSendApproval(env, approvalId).catch(() => null);
+    return { kind: "error", message, ...(current ? { record: current } : {}) };
   }
 }

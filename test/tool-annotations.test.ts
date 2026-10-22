@@ -31,7 +31,7 @@ function registeredTools() {
 		checkToolPermission: async () => null,
 		guardResponse: vi.fn() as any,
 	};
-	registerAllTools(server, context, undefined, { apps: true });
+	registerAllTools(server, context, undefined, { apps: true, inlineApproval: true });
 	return configs;
 }
 

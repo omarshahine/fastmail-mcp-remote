@@ -21,7 +21,7 @@ import { verifyAction, nonceKey } from "./action-urls";
 import { FastmailAuth } from "./fastmail-auth";
 import { JmapClient } from "./jmap-client";
 import { registerAllTools, buildToolContext } from "./tools";
-import { clientSupportsApps, createFastmailMcpServer, createMcpRequestStateCodec } from "./mcp-server";
+import { clientSupportsApps, clientSupportsInlineApproval, createFastmailMcpServer, createMcpRequestStateCodec } from "./mcp-server";
 import {
   handleSendApprovalCallback,
   handleSendApprovalDecision,
@@ -297,12 +297,14 @@ async function handleMcp(c: Context<{ Bindings: Env }>): Promise<Response> {
 
   const requestStateCodec = createMcpRequestStateCodec(c.env, tokenInfo.user_login);
   const apps = clientSupportsApps(parsedBody, isLegacy);
+  const inlineApproval = clientSupportsInlineApproval(parsedBody, isLegacy);
   const handler = createMcpHandler(() => createFastmailMcpServer({
     env: c.env,
     userLogin: tokenInfo.user_login,
     visibleTools,
     requestStateCodec,
     apps,
+    inlineApproval,
   }), {
     route: "/mcp",
     legacy: "stateless",

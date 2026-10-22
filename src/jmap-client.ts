@@ -115,6 +115,18 @@ export interface JmapEmailObject {
  * Validates a filename for safety
  * @throws Error if filename is invalid or potentially dangerous
  */
+/**
+ * Address comparison key: trimmed, with only ASCII A-Z lowercased. A full
+ * Unicode fold would map lookalikes such as the Kelvin sign (U+212A) onto
+ * ASCII "k", letting a different mailbox match a known recipient.
+ */
+export function foldAddress(address: string): string {
+  return address.trim().replace(/[A-Z]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32));
+}
+
+/** Refusal for any move whose target is the Sent mailbox. */
+export const SENT_MOVE_REFUSED = 'Emails cannot be moved into Sent.';
+
 export function validateFilename(filename: string): void {
   if (!filename || typeof filename !== 'string') {
     throw new Error('Filename is required and must be a string');
@@ -576,14 +588,16 @@ export class JmapClient {
   }
 
   /**
-   * Which of `addresses` appear as an exact (case-insensitive) To/CC/BCC
-   * recipient of a message in the Sent mailbox. JMAP address filters match
-   * substrings, so each candidate message is fetched and re-checked.
+   * Which of `addresses` appear as an exact To/CC/BCC recipient of a message
+   * the user actually sent: in the Sent mailbox, without the `$draft` keyword,
+   * and from one of `identityEmails` (already folded with `foldAddress`). JMAP
+   * address filters match substrings, so each candidate is fetched and
+   * re-checked.
    */
-  async findPreviouslySentRecipients(addresses: string[]): Promise<Set<string>> {
-    const wanted = [...new Set(addresses.map((a) => a.trim().toLowerCase()).filter(Boolean))];
+  async findPreviouslySentRecipients(addresses: string[], identityEmails: Set<string>): Promise<Set<string>> {
+    const wanted = [...new Set(addresses.map(foldAddress).filter(Boolean))];
     const found = new Set<string>();
-    if (wanted.length === 0) return found;
+    if (wanted.length === 0 || identityEmails.size === 0) return found;
 
     const mailboxes = await this.getMailboxes();
     const sent = mailboxes.find((m: any) => m.role === 'sent');
@@ -598,6 +612,7 @@ export class JmapClient {
           operator: 'AND',
           conditions: [
             { inMailbox: sent.id },
+            { notKeyword: '$draft' },
             { operator: 'OR', conditions: [{ to: address }, { cc: address }, { bcc: address }] },
           ],
         },
@@ -606,7 +621,7 @@ export class JmapClient {
       methodCalls.push(['Email/get', {
         accountId: session.accountId,
         '#ids': { resultOf: `q${i}`, name: 'Email/query', path: '/ids' },
-        properties: ['to', 'cc', 'bcc'],
+        properties: ['from', 'to', 'cc', 'bcc', 'keywords'],
       }, `g${i}`]);
     });
 
@@ -615,22 +630,36 @@ export class JmapClient {
       methodCalls,
     });
 
+    const matches = (entries: any, set: (value: string) => boolean): boolean =>
+      Array.isArray(entries) &&
+      entries.some((entry: any) => typeof entry?.email === 'string' && set(foldAddress(entry.email)));
+
     wanted.forEach((address, i) => {
       const get = response.methodResponses.find((r: any) => r[2] === `g${i}`);
       if (!get || get[0] === 'error') {
         throw new Error(`Sent-mailbox recipient lookup failed for one address`);
       }
       for (const email of get[1].list ?? []) {
-        for (const field of ['to', 'cc', 'bcc']) {
-          for (const entry of email[field] ?? []) {
-            if (typeof entry?.email === 'string' && entry.email.trim().toLowerCase() === address) {
-              found.add(address);
-            }
-          }
+        // A draft or a received message in Sent is not evidence the user wrote to anyone.
+        if (email?.keywords?.$draft === true) continue;
+        if (!matches(email?.from, (from) => identityEmails.has(from))) continue;
+        if (['to', 'cc', 'bcc'].some((field) => matches(email[field], (to) => to === address))) {
+          found.add(address);
         }
       }
     });
     return found;
+  }
+
+  /**
+   * Throw when `mailboxId` is the Sent mailbox. Sent must only hold mail the
+   * user sent: inline reply approval treats its recipients as known contacts.
+   */
+  async assertNotSentMailbox(mailboxId: string): Promise<void> {
+    const mailboxes = await this.getMailboxes();
+    if (mailboxes.some((m: any) => m.id === mailboxId && m.role === 'sent')) {
+      throw new Error(SENT_MOVE_REFUSED);
+    }
   }
 
   async getDefaultIdentity(): Promise<any> {
@@ -1470,6 +1499,7 @@ export class JmapClient {
   }
 
   async moveEmail(emailId: string, targetMailboxId: string): Promise<void> {
+    await this.assertNotSentMailbox(targetMailboxId);
     const session = await this.getSession();
 
     const targetMailboxIds: Record<string, boolean> = {};
@@ -1911,6 +1941,7 @@ export class JmapClient {
   }
 
   async bulkMove(emailIds: string[], targetMailboxId: string): Promise<void> {
+    await this.assertNotSentMailbox(targetMailboxId);
     const session = await this.getSession();
 
     const targetMailboxIds: Record<string, boolean> = {};

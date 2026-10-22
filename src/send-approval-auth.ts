@@ -360,6 +360,7 @@ export async function handleSendApprovalDecision(env: Env, request: Request, app
       }
       return page("Approval failed", `<h1>Approval failed</h1><p>${escapeHtml(outcome.message)}</p>`, 409);
     }
+    case "error":
     case "uncertain":
       return page("Send status uncertain", `<h1>Send status needs checking</h1><p class="status">${escapeHtml(outcome.message)}</p><p>For safety, this approval cannot be retried. Check Fastmail Sent and Drafts before starting another send.</p>`, 502);
   }
