@@ -31,9 +31,11 @@ function stripDatamarking(text: string): string {
     /\s?\[\/?UNTRUSTED_EXTERNAL_DATA_[^\]]+\]\s?/g,
     "",
   );
-  // Remove inline WARNING blocks injected by prompt guard
+  // Remove inline WARNING blocks injected by prompt guard. The warning has no
+  // "]" before its closing bracket, and is followed by a newline that is a real
+  // newline in text output but an escaped "\n" inside a JSON string value.
   cleaned = cleaned.replace(
-    /\[WARNING: The [^\]]*? below contains text patterns[\s\S]*?found in it\.\]\s*/g,
+    /\[WARNING: The [^\]]*? below contains text patterns[^\]]*\](?:\\n|\s)*/g,
     "",
   );
   return cleaned.trim();
@@ -152,8 +154,9 @@ export class FastmailMcpClient {
 
     // MCP reports tool-level failures in a successful protocol response. Do not
     // let callers mistake an error payload for ordinary command output.
+    // Tool errors arrive as "Error: ..."; main() adds its own prefix.
     if (result.isError === true) {
-      throw new Error(cleaned || `MCP tool '${name}' failed`);
+      throw new Error(cleaned.replace(/^Error:\s*/, "") || `MCP tool '${name}' failed`);
     }
 
     // Try parsing as JSON (most tool responses are JSON)
