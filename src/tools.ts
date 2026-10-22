@@ -37,6 +37,7 @@ import {
   type SendApprovalRecord,
   type SendApprovalRequestState,
 } from "./send-approval";
+import { inlineReplyApprovalEnabled, isInlineReplyEligible } from "./inline-approval";
 import { gateBulkOperation } from "./bulk-confirm";
 import type { ModernRequestState } from "./mcp-server";
 import { APP_ONLY, EMAIL_READER_URI, SEND_REVIEW_URI, UI_MIME_TYPE } from "./apps/constants";
@@ -238,6 +239,7 @@ function approvalResult(record: SendApprovalRecord, url: string): ToolResult {
     expiresAt: record.expiresAt,
     reviewUrl: url,
     draftId: record.draftId,
+    inlineApproval: record.inlineApproval === true,
   };
   const text = (value: string): ToolResult => ({ content: [{ type: "text", text: value }], structuredContent });
   if (record.status === "sent") {
@@ -252,8 +254,9 @@ function approvalResult(record: SendApprovalRecord, url: string): ToolResult {
   if (record.status === "sending") {
     return text(`The email send is being processed. Check Fastmail Sent before retrying. Draft ID: ${record.draftId}`);
   }
+  const reviewLine = record.inlineApproval ? "Approve it in the review card, or review and approve" : "Review and approve";
   return text(
-    `Email prepared as a Fastmail draft. Nothing will be sent until you approve it.\n\nReview and approve: ${url}\nDraft ID: ${record.draftId}\nApproval expires: ${record.expiresAt}`,
+    `Email prepared as a Fastmail draft. Nothing will be sent until you approve it.\n\n${reviewLine}: ${url}\nDraft ID: ${record.draftId}\nApproval expires: ${record.expiresAt}`,
   );
 }
 
@@ -345,6 +348,7 @@ async function prepareSendApproval(
   extra: any,
   toolName: SendApprovalRecord["toolName"],
   draftId: string,
+  options: { appsEnabled?: boolean } = {},
 ): Promise<any> {
   const currentUser = ctx.getCurrentUser();
   if (!currentUser) throw new Error("Authenticated user is unavailable");
@@ -354,13 +358,22 @@ async function prepareSendApproval(
     throw new Error("Email body is too large to review safely; the prepared draft was not sent");
   }
   const payloadDigest = await digestSendSnapshot(snapshot);
+  const inlineApproval =
+    toolName === "reply_to_email" &&
+    options.appsEnabled === true &&
+    inlineReplyApprovalEnabled(ctx.env) &&
+    (await isInlineReplyEligible(client, snapshot));
   const record = await createSendApproval(ctx.env, {
     userLogin: currentUser,
     toolName,
     draftId,
     payloadDigest,
+    ...(inlineApproval ? { inlineApproval } : {}),
   });
   const url = approvalUrl(ctx.env, record.id);
+
+  // URL elicitation would block the card the user approves from.
+  if (record.inlineApproval) return approvalResult(record, url);
 
   const modern = await requestModernApproval(ctx, extra, record, url);
   if (modern) return modern;
@@ -1055,7 +1068,9 @@ export function registerAllTools(
                 inReplyTo,
                 references,
               });
-              return await prepareSendApproval(ctx, extra, "reply_to_email", draftId);
+              return await prepareSendApproval(ctx, extra, "reply_to_email", draftId, {
+                appsEnabled: server.appsEnabled,
+              });
             }
             const submissionId = await client.sendEmail({
               to: toRecipients,
