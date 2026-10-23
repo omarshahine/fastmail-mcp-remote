@@ -360,7 +360,19 @@ export async function handleSendApprovalDecision(env: Env, request: Request, app
       }
       return page("Approval failed", `<h1>Approval failed</h1><p>${escapeHtml(outcome.message)}</p>`, 409);
     }
-    case "error":
+    case "error": {
+      // Failed before the send was claimed, so nothing was sent. A terminal
+      // record (expired, or a claim that landed while the response was lost)
+      // gets its own page; otherwise the approval is still pending/approved
+      // and the review link starts a fresh, guarded attempt.
+      const final = outcome.record ? terminalPage(outcome.record) : null;
+      if (final) return final;
+      return page(
+        "Send not completed",
+        `<h1>Email not sent</h1><p class="status">${escapeHtml(outcome.message)}</p><p>Nothing was sent, so it is safe to try again. <a href="/approve/send/${encodeURIComponent(approvalId)}">Review and try again</a>.</p>`,
+        502,
+      );
+    }
     case "uncertain":
       return page("Send status uncertain", `<h1>Send status needs checking</h1><p class="status">${escapeHtml(outcome.message)}</p><p>For safety, this approval cannot be retried. Check Fastmail Sent and Drafts before starting another send.</p>`, 502);
   }
