@@ -163,6 +163,8 @@ describe("JmapClient.findPreviouslySentRecipients", () => {
     const call = makeRequest.mock.calls[0][0];
     expect(call.methodCalls[0][1].filter.conditions[0]).toEqual({ inMailbox: "sent-1" });
     expect(call.methodCalls[0][1].filter.conditions[1]).toEqual({ notKeyword: "$draft" });
+    // Newest first, so the 20-message cap keeps the most recent sends.
+    expect(call.methodCalls[0][1].sort).toEqual([{ property: "receivedAt", isAscending: false }]);
     expect(call.methodCalls[1][1].properties).toEqual(expect.arrayContaining(["from", "keywords", "to", "cc", "bcc"]));
   });
 

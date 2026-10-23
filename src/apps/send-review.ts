@@ -64,6 +64,7 @@ export async function buildSendReviewView(
       options.inlineApprovalEnabled === true &&
       record.inlineApproval === true &&
       record.status === "pending" &&
+      Date.parse(record.expiresAt) > Date.now() &&
       inlineReplyApprovalEnabled(ctx.env),
   };
 
@@ -139,6 +140,7 @@ const SCRIPT = `
   var sendInFlight = false;
   var sendLocked = false;
   var sendNote = "";
+  var bridgeNote = false;
   var $ = function (id) { return document.getElementById(id); };
 ${UNMARK_SCRIPT}
   var show = function (id, visible) { $(id).hidden = !visible; };
@@ -226,6 +228,8 @@ ${UNMARK_SCRIPT}
         setMessage("This approval could not be loaded.");
         return;
       }
+      // A bridge failure note is only true until the next successful round trip.
+      if (bridgeNote) { bridgeNote = false; sendNote = ""; }
       apply(unmark(result.structuredContent));
     }, function () {
       // Transient bridge failure: keep the last view and try again.
@@ -251,6 +255,7 @@ ${UNMARK_SCRIPT}
     if (!current || sendInFlight || sendLocked) return;
     sendInFlight = true;
     sendNote = "";
+    bridgeNote = false;
     $("send").disabled = true;
     setMessage("");
     app.callTool("ui_approve_send", { approvalId: current.approvalId }).then(function (result) {
@@ -261,16 +266,23 @@ ${UNMARK_SCRIPT}
         apply(Object.assign({}, current, { status: "sent", canApproveInline: false }));
         return;
       }
-      // Refused, conflicting or uncertain: show why, keep Send off, and ask
-      // the server where the approval stands.
-      sendLocked = true;
-      sendNote = resultText(result) || "The email could not be sent from here.";
+      // Refused, conflicting or uncertain: show why and ask the server where
+      // the approval stands. Send comes back only when the approval is still
+      // pending or approved, so nothing was sent and a retry is safe. The
+      // review-page redirect carries a reviewUrl, and an uncertain send is
+      // never retryable.
+      var text = resultText(result);
+      var retryable = !!data && (data.status === "pending" || data.status === "approved") &&
+        typeof data.reviewUrl !== "string" && text.indexOf("Send status uncertain") !== 0;
+      sendLocked = !retryable;
+      sendNote = text || "The email could not be sent from here.";
       setMessage(sendNote);
-      $("send").disabled = true;
+      $("send").disabled = sendLocked;
       refresh();
     }, function () {
       sendInFlight = false;
       sendNote = "Could not reach Fastmail. Try again.";
+      bridgeNote = true;
       setMessage(sendNote);
       $("send").disabled = false;
     });

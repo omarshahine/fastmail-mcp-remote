@@ -86,12 +86,25 @@ describe("executeApprovedSend", () => {
     expect((await getSendApproval(env, record.id))?.status).toBe("declined");
   });
 
-  it("returns conflict for an already declined approval", async () => {
+  it("returns an approve-stage conflict for an already declined approval", async () => {
     const { env, record, client } = await setup();
     await decideSendApproval(env, record.id, USER, "decline");
     const outcome = await executeApprovedSend(env, client as any, record, USER);
-    expect(outcome.kind).toBe("conflict");
+    expect(outcome).toMatchObject({ kind: "conflict", stage: "approve" });
+    if (outcome.kind === "conflict") expect(outcome.record?.status).toBe("declined");
     expect(client.submitDraft).not.toHaveBeenCalled();
+    expect((await getSendApproval(env, record.id))?.status).toBe("declined");
+  });
+
+  it("returns a decline-stage conflict when a refusal cannot decline an already approved record", async () => {
+    const { env, record, client } = await setup("delegate");
+    // Approved by an earlier attempt; the permission has since been revoked.
+    await decideSendApproval(env, record.id, USER, "approve");
+    const outcome = await executeApprovedSend(env, client as any, record, USER);
+    expect(outcome).toMatchObject({ kind: "conflict", stage: "decline" });
+    if (outcome.kind === "conflict") expect(outcome.record?.status).toBe("approved");
+    expect(client.submitDraft).not.toHaveBeenCalled();
+    expect((await getSendApproval(env, record.id))?.status).toBe("approved");
   });
 
   it('returns kind "error" with the pending record when the draft lookup throws before the claim', async () => {

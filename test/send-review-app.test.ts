@@ -33,7 +33,7 @@ function runReviewView(app: Record<string, any>) {
     (fn: () => void) => { timers.push(fn); return timers.length; },
     () => {},
   );
-  return { document, result: (value: any) => resultCallback(value) };
+  return { document, result: (value: any) => resultCallback(value), timers };
 }
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -472,9 +472,9 @@ describe("ui_approve_send", () => {
   beforeEach(() => _resetCache());
 
   // executeApprovedSend re-reads the stored permission policy before sending.
-  function approveEnv(): Env {
+  function approveEnv(role: "admin" | "delegate" = "admin"): Env {
     const config = {
-      users: { "sender@example.com": { role: "admin", disabled_categories: [] } },
+      users: { "sender@example.com": { role, disabled_categories: [] } },
       default_role: "delegate",
       default_disabled_categories: [],
     };
@@ -688,6 +688,40 @@ describe("ui_approve_send", () => {
     expect(h.client.submitDraft).not.toHaveBeenCalled();
   });
 
+  it("maps a revoked send permission to a refusal and declines the approval", async () => {
+    const h = approveHarness({ client: replyClient() });
+    const prepared = await prepareReply(h);
+    // Same approval store, but the stored policy now only allows a delegate.
+    const revoked = approveHarness({ env: { ...h.env, OAUTH_KV: (approveEnv("delegate") as any).OAUTH_KV } as unknown as Env, client: h.client });
+    _resetCache();
+    const result = await approve(revoked, prepared.approvalId);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/^Permission denied: 'reply_to_email' with sendImmediately:true is not available for delegate/);
+    expect(result.structuredContent).toEqual({ approvalId: prepared.approvalId, status: "declined" });
+    expect((await getSendApproval(h.env, prepared.approvalId))?.status).toBe("declined");
+    expect(h.client.submitDraft).not.toHaveBeenCalled();
+  });
+
+  it("a send_email approval never triggers the Sent-recipient lookup", async () => {
+    const h = approveHarness({ client: replyClient({ createDraft: vi.fn().mockResolvedValue("draft-new") }) });
+    const sent = await prepareSend(h);
+    expect(sent.structuredContent.inlineApproval).toBeFalsy();
+    expect(h.client.findPreviouslySentRecipients).not.toHaveBeenCalled();
+    expect(h.client.getIdentities).not.toHaveBeenCalled();
+  });
+
+  it("ui_get_send_review does not offer inline Send once the approval has expired", async () => {
+    const h = approveHarness({ client: replyClient() });
+    const reply = await prepareReply(h);
+    const spy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 11 * 60 * 1000);
+    try {
+      const view = await h.handlers.get("ui_get_send_review")!({ approvalId: reply.approvalId }, {});
+      expect(view.structuredContent.canApproveInline).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("refuses an expired approval", async () => {
     const h = approveHarness({ client: replyClient() });
     const prepared = await prepareReply(h);
@@ -696,6 +730,8 @@ describe("ui_approve_send", () => {
     try {
       const result = await approve(h, prepared.approvalId);
       expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe("Approval is already expired");
+      expect(result.structuredContent).toEqual({ approvalId: prepared.approvalId, status: "expired" });
       expect(h.client.submitDraft).not.toHaveBeenCalled();
     } finally {
       spy.mockRestore();
@@ -773,6 +809,7 @@ describe("inline Send button on the review card", () => {
     expect(eligible.document.getElementById("send")!.textContent).toBe("Send");
     expect(eligible.document.getElementById("approve")!.textContent).toBe("Review in browser");
     expect(eligible.document.getElementById("approve")!.hidden).toBe(false);
+    expect(eligible.document.getElementById("approve")!.className).toBe("");
 
     const plain = runReviewView({ callTool: vi.fn(async () => reviewView("pending", false)) });
     plain.result(prepared());
@@ -835,7 +872,7 @@ describe("inline Send button on the review card", () => {
 
   it("shows the server message when inline approval is refused", async () => {
     const callTool = vi.fn(async (name: string) => name === "ui_approve_send"
-      ? { isError: true, content: [{ type: "text", text: "This reply needs review in the browser." }], structuredContent: { approvalId: "a-1", status: "pending" } }
+      ? { isError: true, content: [{ type: "text", text: "This reply needs review in the browser." }], structuredContent: { approvalId: "a-1", status: "pending", reviewUrl: "https://mail.example.test/approve/send/a-1" } }
       : reviewView("pending", true));
     const { document, result } = runReviewView({ callTool });
     result(prepared());
@@ -864,5 +901,72 @@ describe("inline Send button on the review card", () => {
     expect(document.getElementById("message")!.textContent).toBe("Could not reach Fastmail. Try again.");
     click(document, "send");
     expect(callTool.mock.calls.filter(([name]) => name === "ui_approve_send")).toHaveLength(2);
+  });
+
+  const approveResult = (text: string, status: string, extra: Record<string, unknown> = {}) => ({
+    isError: true, content: [{ type: "text", text }], structuredContent: { approvalId: "a-1", status, ...extra },
+  });
+  const approveCalls = (callTool: any) => callTool.mock.calls.filter(([name]: any[]) => name === "ui_approve_send").length;
+
+  it("keeps Send available after a retryable error and lets the user try again", async () => {
+    for (const status of ["pending", "approved"]) {
+      const callTool = vi.fn(async (name: string) => name === "ui_approve_send"
+        ? approveResult("Draft not found", status)
+        : reviewView(status, true));
+      const { document, result } = runReviewView({ callTool });
+      result(prepared());
+      await tick();
+      click(document, "send");
+      await tick();
+      await tick();
+      expect(document.getElementById("message")!.textContent).toBe("Draft not found");
+      expect((document.getElementById("send") as any).disabled).toBe(false);
+      click(document, "send");
+      expect(approveCalls(callTool)).toBe(2);
+    }
+  });
+
+  it("keeps Send locked for errors that are not retryable", async () => {
+    const cases: Array<[string, any]> = [
+      ["uncertain", approveResult("Send status uncertain: network lost. Check Fastmail Sent before retrying.", "sending")],
+      ["uncertain text with a pending status", approveResult("Send status uncertain: network lost.", "pending")],
+      ["review page only", approveResult("This email must be approved on the review page.", "pending", { reviewUrl: "https://mail.example.test/approve/send/a-1" })],
+      ["declined", approveResult("The Fastmail draft changed after this approval was created.", "declined")],
+      ["expired", approveResult("Approval is expired", "expired")],
+      ["sent", approveResult("Approval is sent", "sent")],
+      ["no status", { isError: true, content: [{ type: "text", text: "Approval not found." }] }],
+    ];
+    for (const [label, response] of cases) {
+      const callTool = vi.fn(async (name: string) => name === "ui_approve_send" ? response : reviewView(response.structuredContent?.status ?? "pending", true));
+      const { document, result } = runReviewView({ callTool });
+      result(prepared());
+      await tick();
+      click(document, "send");
+      await tick();
+      await tick();
+      expect((document.getElementById("send") as any).disabled, label).toBe(true);
+      click(document, "send");
+      expect(approveCalls(callTool), label).toBe(1);
+    }
+  });
+
+  it("clears the bridge failure message on the next successful status refresh", async () => {
+    const callTool = vi.fn(async (name: string) => {
+      if (name === "ui_approve_send") throw new Error("bridge down");
+      return reviewView("pending", true);
+    });
+    const { document, result, timers } = runReviewView({ callTool });
+    result(prepared());
+    await tick();
+    click(document, "send");
+    await tick();
+    expect(document.getElementById("message")!.textContent).toBe("Could not reach Fastmail. Try again.");
+    // The next poll succeeds: the stale failure message goes away.
+    timers[timers.length - 1]();
+    await tick();
+    await tick();
+    expect(document.getElementById("message")!.textContent).toBe("");
+    expect(document.getElementById("message")!.hidden).toBe(true);
+    expect((document.getElementById("send") as any).disabled).toBe(false);
   });
 });
