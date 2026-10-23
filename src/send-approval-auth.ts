@@ -1,8 +1,6 @@
 import { FastmailAuth } from "./fastmail-auth";
 import { JmapClient } from "./jmap-client";
 import {
-  claimSendApproval,
-  completeSendApproval,
   decideSendApproval,
   digestSendSnapshot,
   getSendApproval,
@@ -16,7 +14,7 @@ import {
   isUserAllowed,
   verifyAccessIdToken,
 } from "./oauth-utils";
-import { getPermissionsConfig, getUserConfig, isToolAllowed } from "./permissions";
+import { executeApprovedSend } from "./send-execution";
 import { buildEmailPreviewDocument } from "./email-preview";
 
 const AUTH_STATE_TTL_SECONDS = 10 * 60;
@@ -341,64 +339,29 @@ export async function handleSendApprovalDecision(env: Env, request: Request, app
   }
 
   const client = new JmapClient(new FastmailAuth({ apiToken: env.FASTMAIL_API_TOKEN }));
-  try {
-    const permissions = await getPermissionsConfig(env.OAUTH_KV);
-    const userConfig = getUserConfig(permissions, tokenData.userLogin);
-    const allowed = isToolAllowed(
-      userConfig,
-      record.toolName,
-      record.toolName === "reply_to_email" || record.toolName === "forward_email" ? { sendImmediately: true } : undefined,
-    );
-    if (!allowed.allowed) {
-      const declined = await decideSendApproval(env, approvalId, tokenData.userLogin, "decline");
-      return declineOutcome(
-        declined,
-        "Permission denied",
-        `<h1>Email not sent</h1><p class="status">${escapeHtml(allowed.error || "Send permission was revoked.")}</p>`,
-        403,
-      );
-    }
-
-    const currentSnapshot = await client.getDraftApprovalSnapshot(record.draftId);
-    const currentDigest = await digestSendSnapshot(currentSnapshot);
-    if (currentSnapshot.truncated || currentDigest !== record.payloadDigest) {
-      const declined = await decideSendApproval(env, approvalId, tokenData.userLogin, "decline");
-      return declineOutcome(
-        declined,
+  const outcome = await executeApprovedSend(env, client, record, tokenData.userLogin);
+  switch (outcome.kind) {
+    case "sent":
+      return terminalPage(outcome.record)!;
+    case "refused":
+      if (outcome.reason === "permission") {
+        return page("Permission denied", `<h1>Email not sent</h1><p class="status">${escapeHtml(outcome.message)}</p>`, 403);
+      }
+      return page(
         "Draft changed",
         '<h1>Email not sent</h1><p class="status">The Fastmail draft changed after this approval was created. Start the send again to review the current version.</p>',
         409,
       );
+    case "conflict": {
+      const final = outcome.record ? terminalPage(outcome.record) : null;
+      if (final) return final;
+      if (outcome.stage === "decline") {
+        return page("Approval changed", `<h1>Email status changed</h1><p class="status">${escapeHtml(outcome.message)}</p>`, 409);
+      }
+      return page("Approval failed", `<h1>Approval failed</h1><p>${escapeHtml(outcome.message)}</p>`, 409);
     }
-
-    const decisionResult = await decideSendApproval(env, approvalId, tokenData.userLogin, "approve");
-    if (!decisionResult.ok && decisionResult.record?.status !== "approved") {
-      const final = decisionResult.record ? terminalPage(decisionResult.record) : null;
-      return final || page("Approval failed", `<h1>Approval failed</h1><p>${escapeHtml(decisionResult.error)}</p>`, 409);
-    }
-    const claim = await claimSendApproval(env, approvalId, tokenData.userLogin, currentDigest);
-    if (!claim.ok) {
-      const final = claim.record ? terminalPage(claim.record) : null;
-      return final || page("Approval failed", `<h1>Approval failed</h1><p>${escapeHtml(claim.error)}</p>`, 409);
-    }
-    if (claim.record.status === "sent") return terminalPage(claim.record)!;
-    const claimId = claim.record.claimId;
-    if (!claimId) throw new Error("Approval claim did not return an identifier");
-
-    try {
-      // Re-check the full payload digest inside submitDraft immediately before
-      // EmailSubmission/set. The digest includes the immutable raw-message blobId.
-      const submissionId = await client.submitDraft(record.draftId, record.payloadDigest);
-      const complete = await completeSendApproval(env, approvalId, claimId, submissionId);
-      if (!complete.ok) throw new Error(complete.error);
-      return terminalPage(complete.record)!;
-    } catch (error) {
-      // The JMAP request may have reached Fastmail even if its response was lost.
-      // Keep the approval in `sending` so a retry can never submit a duplicate.
-      throw error;
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return page("Send status uncertain", `<h1>Send status needs checking</h1><p class="status">${escapeHtml(message)}</p><p>For safety, this approval cannot be retried. Check Fastmail Sent and Drafts before starting another send.</p>`, 502);
+    case "error":
+    case "uncertain":
+      return page("Send status uncertain", `<h1>Send status needs checking</h1><p class="status">${escapeHtml(outcome.message)}</p><p>For safety, this approval cannot be retried. Check Fastmail Sent and Drafts before starting another send.</p>`, 502);
   }
 }

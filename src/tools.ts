@@ -21,7 +21,7 @@ import { z } from "zod";
 import { marked } from "marked";
 import { formatEmailAsMarkdown, htmlToMarkdown } from "./html-to-markdown";
 import { FastmailAuth } from "./fastmail-auth";
-import { JmapClient } from "./jmap-client";
+import { JmapClient, SENT_MOVE_REFUSED } from "./jmap-client";
 import { ContactsCalendarClient } from "./contacts-calendar";
 import { getPermissionsConfig, getUserConfig, getVisibleTools, isToolAllowed, TOOL_CATEGORIES } from "./permissions";
 import { markToolResult, markUntrustedText, isExternalDataTool, getDatamarkingPreamble } from "./prompt-guard";
@@ -37,6 +37,8 @@ import {
   type SendApprovalRecord,
   type SendApprovalRequestState,
 } from "./send-approval";
+import { inlineReplyApprovalEnabled, isInlineReplyEligible } from "./inline-approval";
+import { executeApprovedSend } from "./send-execution";
 import { gateBulkOperation } from "./bulk-confirm";
 import type { ModernRequestState } from "./mcp-server";
 import { APP_ONLY, EMAIL_READER_URI, SEND_REVIEW_URI, UI_MIME_TYPE } from "./apps/constants";
@@ -238,6 +240,7 @@ function approvalResult(record: SendApprovalRecord, url: string): ToolResult {
     expiresAt: record.expiresAt,
     reviewUrl: url,
     draftId: record.draftId,
+    inlineApproval: record.inlineApproval === true,
   };
   const text = (value: string): ToolResult => ({ content: [{ type: "text", text: value }], structuredContent });
   if (record.status === "sent") {
@@ -252,8 +255,9 @@ function approvalResult(record: SendApprovalRecord, url: string): ToolResult {
   if (record.status === "sending") {
     return text(`The email send is being processed. Check Fastmail Sent before retrying. Draft ID: ${record.draftId}`);
   }
+  const reviewLine = record.inlineApproval ? "Approve it in the review card, or review and approve" : "Review and approve";
   return text(
-    `Email prepared as a Fastmail draft. Nothing will be sent until you approve it.\n\nReview and approve: ${url}\nDraft ID: ${record.draftId}\nApproval expires: ${record.expiresAt}`,
+    `Email prepared as a Fastmail draft. Nothing will be sent until you approve it.\n\n${reviewLine}: ${url}\nDraft ID: ${record.draftId}\nApproval expires: ${record.expiresAt}`,
   );
 }
 
@@ -272,6 +276,27 @@ function sentResult(text: string): ToolResult {
 
 function sendToolError(text: string): ToolResult {
   return { content: [{ type: "text", text }], isError: true };
+}
+
+function withPeriod(message: string): string {
+  return /[.!?]$/.test(message.trim()) ? message.trim() : `${message.trim()}.`;
+}
+
+/**
+ * Refuse a move into the Sent mailbox: inline reply approval treats Sent
+ * recipients as known contacts, so the model must not be able to put mail
+ * there. A failed mailbox lookup is not a refusal here; `JmapClient.moveEmail`
+ * and `bulkMove` re-check and fail closed.
+ */
+async function refuseSentTarget(client: Pick<JmapClient, "getMailboxes">, targetMailboxId: string): Promise<ToolResult | null> {
+  let mailboxes: any[];
+  try {
+    mailboxes = await client.getMailboxes();
+  } catch {
+    return null;
+  }
+  const isSent = (mailboxes || []).some((m: any) => m?.id === targetMailboxId && m?.role === "sent");
+  return isSent ? { content: [{ type: "text", text: SENT_MOVE_REFUSED }], isError: true } : null;
 }
 
 async function requestModernApproval(
@@ -345,6 +370,7 @@ async function prepareSendApproval(
   extra: any,
   toolName: SendApprovalRecord["toolName"],
   draftId: string,
+  options: { inlineApprovalEnabled?: boolean } = {},
 ): Promise<any> {
   const currentUser = ctx.getCurrentUser();
   if (!currentUser) throw new Error("Authenticated user is unavailable");
@@ -354,13 +380,22 @@ async function prepareSendApproval(
     throw new Error("Email body is too large to review safely; the prepared draft was not sent");
   }
   const payloadDigest = await digestSendSnapshot(snapshot);
+  const inlineApproval =
+    toolName === "reply_to_email" &&
+    options.inlineApprovalEnabled === true &&
+    inlineReplyApprovalEnabled(ctx.env) &&
+    (await isInlineReplyEligible(client, snapshot));
   const record = await createSendApproval(ctx.env, {
     userLogin: currentUser,
     toolName,
     draftId,
     payloadDigest,
+    ...(inlineApproval ? { inlineApproval } : {}),
   });
   const url = approvalUrl(ctx.env, record.id);
+
+  // URL elicitation would block the card the user approves from.
+  if (record.inlineApproval) return approvalResult(record, url);
 
   const modern = await requestModernApproval(ctx, extra, record, url);
   if (modern) return modern;
@@ -557,11 +592,18 @@ export interface RegisterToolsOptions {
    * nothing and stays app-free.
    */
   apps?: boolean;
+  /**
+   * Register `ui_approve_send` and mark low-risk replies eligible for inline
+   * approval. Only 2026-07-28 requests whose client declared the MCP Apps ui
+   * extension set this; it has no effect unless `apps` is also set.
+   */
+  inlineApproval?: boolean;
 }
 
 /**
  * The registrar every tool registration goes through: the SDK v1 `McpServer`
- * surface (`tool`, `registerTool`, `resource`) plus `appsEnabled`.
+ * surface (`tool`, `registerTool`, `resource`) plus `appsEnabled` and
+ * `inlineApprovalEnabled`.
  *
  * - `tool(name, description, shape, [annotations], handler)` is the original
  *   call shape; annotations fall back to `TOOL_ANNOTATIONS[name]`.
@@ -579,6 +621,8 @@ export interface RegisterToolsOptions {
  */
 export interface ToolRegistrar {
   readonly appsEnabled: boolean;
+  /** `appsEnabled` and the client may approve eligible replies from the review card. */
+  readonly inlineApprovalEnabled: boolean;
   tool: McpServer["tool"];
   registerTool: McpServer["registerTool"];
   /** Four-argument form only: `metadata` is required. */
@@ -592,6 +636,7 @@ export function createToolRegistrar(
 ): ToolRegistrar {
   const appsEnabled =
     options.apps === true && typeof (rawServer as any).registerResource === "function";
+  const inlineApprovalEnabled = appsEnabled && options.inlineApproval === true;
 
   const register = (
     name: string,
@@ -652,6 +697,7 @@ export function createToolRegistrar(
 
   return {
     appsEnabled,
+    inlineApprovalEnabled,
     tool(name: string, description: string, schema: any, annotationsOrHandler: any, maybeHandler?: any) {
       const handler = maybeHandler || annotationsOrHandler;
       const annotations = maybeHandler ? annotationsOrHandler : undefined;
@@ -673,7 +719,8 @@ export function createToolRegistrar(
  * @param server - McpServer instance to register tools on
  * @param ctx - ToolContext providing env, clients, permissions, and response formatting
  * @param visibleTools - Optional set of tool names to register. If provided, tools not in the set are skipped.
- * @param options - `{ apps: true }` enables MCP Apps resources, `ui_*` tools and tool `_meta`.
+ * @param options - `{ apps: true }` enables MCP Apps resources, `ui_*` tools and tool `_meta`;
+ *   `inlineApproval: true` additionally enables inline reply approval.
  */
 export function registerAllTools(
   rawServer: McpServer,
@@ -1055,7 +1102,9 @@ export function registerAllTools(
                 inReplyTo,
                 references,
               });
-              return await prepareSendApproval(ctx, extra, "reply_to_email", draftId);
+              return await prepareSendApproval(ctx, extra, "reply_to_email", draftId, {
+                inlineApprovalEnabled: server.inlineApprovalEnabled,
+              });
             }
             const submissionId = await client.sendEmail({
               to: toRecipients,
@@ -1224,7 +1273,9 @@ export function registerAllTools(
         _meta: APP_ONLY,
       },
       async ({ approvalId }) => {
-        const view = await buildSendReviewView(ctx, approvalId);
+        const view = await buildSendReviewView(ctx, approvalId, {
+          inlineApprovalEnabled: server.inlineApprovalEnabled,
+        });
         if (!view) {
           return { content: [{ type: "text" as const, text: "Approval not found." }], isError: true };
         }
@@ -1233,6 +1284,62 @@ export function registerAllTools(
         // visibility, so it carries the same datamarking as `content`.
         const structuredContent = markToolResult(view, "ui_get_send_review") as Record<string, unknown>;
         return { content: guarded.content, structuredContent };
+      },
+    );
+  }
+
+  // MCP Apps: inline approval from the review card. Only approvals the server
+  // marked eligible at creation (low-risk replies) are accepted; everything
+  // else must go through the authenticated review page. The send itself runs
+  // the same guarded path as that page.
+  if (server.inlineApprovalEnabled && shouldRegister("ui_approve_send")) {
+    server.registerTool(
+      "ui_approve_send",
+      {
+        description: "Approve and send one pending reply that the server marked eligible for inline approval. Called by the send review card only; any other approval must be approved on the review page.",
+        inputSchema: {
+          approvalId: z.string().describe("Approval ID from a send tool's structuredContent"),
+        },
+        _meta: APP_ONLY,
+      },
+      async ({ approvalId }) => {
+        const denied = await ctx.checkToolPermission("reply_to_email", { sendImmediately: true });
+        if (denied) return denied;
+
+        const currentUser = ctx.getCurrentUser();
+        const record = currentUser ? await getSendApproval(ctx.env, approvalId) : null;
+        if (!currentUser || !record || record.userLogin.toLowerCase() !== currentUser.toLowerCase()) {
+          return sendToolError("Approval not found.");
+        }
+        // Eligibility is fixed at creation, so the kill switch is re-checked here:
+        // turning INLINE_REPLY_APPROVAL off makes pending approvals page-only too.
+        if (record.toolName !== "reply_to_email" || record.inlineApproval !== true || !inlineReplyApprovalEnabled(ctx.env)) {
+          return {
+            content: [{ type: "text" as const, text: "This email must be approved on the review page." }],
+            structuredContent: { approvalId: record.id, status: record.status, reviewUrl: approvalUrl(ctx.env, record.id) },
+            isError: true,
+          };
+        }
+
+        const outcome = await executeApprovedSend(ctx.env, ctx.getJmapClient(), record, currentUser);
+        const failed = (text: string, status: SendApprovalRecord["status"]) => ({
+          content: [{ type: "text" as const, text }],
+          structuredContent: { approvalId: record.id, status },
+          isError: true,
+        });
+        switch (outcome.kind) {
+          case "sent":
+            return {
+              content: [{ type: "text" as const, text: `Email sent. Submission ID: ${outcome.record.submissionId || "unknown"}` }],
+              structuredContent: { approvalId: record.id, status: "sent" },
+            };
+          case "refused":
+          case "conflict":
+          case "error": // failed before the claim: nothing was sent
+            return failed(outcome.message, outcome.record?.status ?? record.status);
+          case "uncertain":
+            return failed(`Send status uncertain: ${withPeriod(outcome.message)} Check Fastmail Sent before retrying.`, "sending");
+        }
       },
     );
   }
@@ -1503,6 +1610,8 @@ export function registerAllTools(
       },
       async ({ emailId, targetMailboxId }) => {
         const client = ctx.getJmapClient();
+        const refused = await refuseSentTarget(client, targetMailboxId);
+        if (refused) return refused;
         await client.moveEmail(emailId, targetMailboxId);
         return {
           content: [{ text: "Email moved successfully", type: "text" }],
@@ -1823,6 +1932,9 @@ export function registerAllTools(
         targetMailboxId: z.string().describe("ID of target mailbox"),
       },
       async ({ emailIds, targetMailboxId }, extra) => {
+        // Refuse before asking for confirmation; JmapClient.bulkMove enforces it again.
+        const refused = await refuseSentTarget(ctx.getJmapClient(), targetMailboxId);
+        if (refused) return refused;
         const gated = await gateBulkOperation(ctx, extra, { toolName: "bulk_move", emailIds, targetMailboxId });
         if (gated) return gated as any; // input_required passes through the v1-typed registrar
         const client = ctx.getJmapClient();

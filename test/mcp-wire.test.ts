@@ -51,7 +51,9 @@ vi.mock('../src/permissions', async (importOriginal) => {
 import app from '../src/index';
 import { getVisibleTools } from '../src/permissions';
 import { JmapClient } from '../src/jmap-client';
-import { EMAIL_READER_URI, SEND_REVIEW_URI, UI_MIME_TYPE } from '../src/apps/constants';
+import { getSendApproval } from '../src/send-approval';
+import { approvalNamespace } from './helpers/approval-store';
+import { EMAIL_READER_URI, SEND_REVIEW_URI, UI_EXTENSION_ID, UI_MIME_TYPE } from '../src/apps/constants';
 
 const env = {
 	ACTION_SIGNING_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
@@ -92,7 +94,7 @@ async function post(body: unknown, headers: Record<string, string> = {}) {
 
 beforeEach(() => {
 	vi.mocked(getVisibleTools).mockImplementation(
-		() => new Set(['get_email', 'send_email', 'ui_get_email_view', 'ui_get_send_review', 'bulk_delete', 'list_mailboxes']),
+		() => new Set(['get_email', 'send_email', 'reply_to_email', 'ui_get_email_view', 'ui_get_send_review', 'ui_approve_send', 'bulk_delete', 'list_mailboxes']),
 	);
 });
 afterEach(() => {
@@ -126,8 +128,76 @@ describe('legacy (2025-era) wire', () => {
 		expect(tools.find((t) => t.name === 'get_email')._meta.ui.resourceUri).toBe(EMAIL_READER_URI);
 		expect(tools.find((t) => t.name === 'send_email')._meta.ui.resourceUri).toBe(SEND_REVIEW_URI);
 		const appTools = tools.filter((t) => t.name.startsWith('ui_'));
+		// Inline approval is for 2026-07-28 clients that declare the ui extension only.
 		expect(appTools.map((t) => t.name).sort()).toEqual(['ui_get_email_view', 'ui_get_send_review']);
 		for (const tool of appTools) expect(tool._meta.ui.visibility, tool.name).toEqual(['app']);
+	});
+
+	it('a reply to a known recipient is not inline-eligible', async () => {
+		const sendEnv = { ...env, SEND_APPROVALS: approvalNamespace() } as unknown as Env;
+		vi.spyOn(JmapClient.prototype, 'getEmailById').mockResolvedValue({
+			id: 'source-1',
+			subject: 'Trip plans',
+			from: [{ email: 'alex@example.com' }],
+			messageId: ['orig@example.com'],
+			references: [],
+			receivedAt: '2026-09-16T21:17:00Z',
+			textBody: [],
+			htmlBody: [],
+			bodyValues: {},
+		} as never);
+		vi.spyOn(JmapClient.prototype, 'createDraft').mockResolvedValue('draft-reply');
+		vi.spyOn(JmapClient.prototype, 'getDraftApprovalSnapshot').mockResolvedValue({
+			blobId: 'blob-1',
+			from: 'user@example.com',
+			to: ['alex@example.com'],
+			cc: [],
+			bcc: [],
+			subject: 'Re: Trip plans',
+			textBody: 'Sounds good',
+			htmlBody: '',
+			attachments: [],
+			inReplyTo: [],
+			references: [],
+			truncated: false,
+		} as never);
+		const identities = vi.spyOn(JmapClient.prototype, 'getIdentities').mockResolvedValue([{ email: 'user@example.com' }]);
+		const lookup = vi.spyOn(JmapClient.prototype, 'findPreviouslySentRecipients').mockResolvedValue(new Set(['alex@example.com']));
+
+		const response = await app.request(
+			new Request('https://worker.example/mcp', {
+				method: 'POST',
+				headers: {
+					Authorization: 'Bearer test-token',
+					'Content-Type': 'application/json',
+					Accept: 'application/json, text/event-stream',
+					...LEGACY,
+				},
+				body: JSON.stringify({
+					jsonrpc: '2.0',
+					id: 4,
+					method: 'tools/call',
+					params: {
+						name: 'reply_to_email',
+						arguments: { emailId: 'source-1', body: 'Sounds good', sendImmediately: true },
+					},
+				}),
+			}),
+			undefined,
+			sendEnv,
+			executionCtx,
+		);
+		const text = await response.text();
+		const messages = (response.headers.get('content-type') ?? '').includes('event-stream')
+			? text.split('\n').filter((line) => line.startsWith('data:')).map((line) => JSON.parse(line.slice(5)))
+			: [JSON.parse(text)];
+		const result = messages.find((message) => message.id === 4)?.result;
+		expect(result, text).toBeDefined();
+		expect(result.structuredContent.inlineApproval).toBe(false);
+		expect(result.content[0].text).not.toContain('review card');
+		expect((await getSendApproval(sendEnv, result.structuredContent.approvalId))?.inlineApproval).toBeUndefined();
+		expect(identities).not.toHaveBeenCalled();
+		expect(lookup).not.toHaveBeenCalled();
 	});
 
 	it('resources/read of the send review URI returns the MCP App', async () => {
@@ -193,5 +263,40 @@ describe('modern (2026-07-28) bulk confirmation round trip', () => {
 		const declined = await call(3, { requestState, inputResponses: { confirm: { action: 'decline' } } });
 		expect(declined.content[0].text).toBe('Cancelled: no emails were deleted.');
 		expect(bulkDelete).not.toHaveBeenCalled();
+	});
+});
+
+describe('modern (2026-07-28) tools/list and the ui extension', () => {
+	async function listTools(clientCapabilities: Record<string, unknown>) {
+		const r = await post(
+			{
+				jsonrpc: '2.0',
+				id: 1,
+				method: 'tools/list',
+				params: {
+					_meta: {
+						'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+						'io.modelcontextprotocol/clientInfo': { name: 'wire-test', version: '1.0.0' },
+						'io.modelcontextprotocol/clientCapabilities': clientCapabilities,
+					},
+				},
+			},
+			{ 'Mcp-Method': 'tools/list', 'Mcp-Protocol-Version': '2026-07-28' },
+		);
+		expect(r.status, JSON.stringify(r.messages)).toBe(200);
+		return r.messages[0].result.tools as any[];
+	}
+
+	it('omits the app-only inline approval tool without the ui extension', async () => {
+		const names = (await listTools({})).map((t) => t.name);
+		expect(names).toContain('send_email');
+		expect(names).not.toContain('ui_approve_send');
+	});
+
+	it('includes the app-only inline approval tool with the ui extension', async () => {
+		const tools = await listTools({ extensions: { [UI_EXTENSION_ID]: {} } });
+		const approve = tools.find((t) => t.name === 'ui_approve_send');
+		expect(approve, JSON.stringify(tools.map((t) => t.name))).toBeDefined();
+		expect(approve._meta.ui.visibility).toEqual(['app']);
 	});
 });

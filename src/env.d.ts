@@ -13,6 +13,8 @@ interface WorkerBindings {
   SEND_APPROVAL_MODE?: "off" | "client" | "required";
   /** One Durable Object per short-lived outbound approval. */
   SEND_APPROVALS: DurableObjectNamespace;
+  /** Kill switch for inline approval of low-risk replies. Defaults to "on". */
+  INLINE_REPLY_APPROVAL?: "on" | "off";
   /** One Durable Object per short-lived OAuth authorization code. */
   AUTHORIZATION_CODES: DurableObjectNamespace;
   /**

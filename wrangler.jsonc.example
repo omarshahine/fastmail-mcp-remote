@@ -82,6 +82,9 @@
 		// approval page before submission. client: rely on client tool approval.
 		// off: direct sends without an approval gate.
 		"SEND_APPROVAL_MODE": "required",
+		// on (default): the MCP Apps send review card can approve eligible
+		// replies inline. off: every send needs the authenticated approval page.
+		"INLINE_REPLY_APPROVAL": "on",
 		// Optional. Extra hosts allowed as OAuth redirect_uri targets. This
 		// REPLACES the built-in default (claude.ai,claude.com,anthropic.com)
 		// rather than adding to it, so re-list those if you set it. Loopback

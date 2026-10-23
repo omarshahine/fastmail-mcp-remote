@@ -39,6 +39,8 @@ export interface SendApprovalRecord {
   status: SendApprovalStatus;
   createdAt: string;
   expiresAt: string;
+  /** Set once at creation: a low-risk reply the review card may approve inline. */
+  inlineApproval?: boolean;
   claimId?: string;
   cleanupAt?: string;
   submissionId?: string;

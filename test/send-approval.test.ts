@@ -4,42 +4,12 @@ import { JmapClient } from "../src/jmap-client";
 import {
   SendApprovalStore,
   digestSendSnapshot,
+  getSendApproval,
   type SendApprovalRecord,
   type SendApprovalSnapshot,
 } from "../src/send-approval";
 import { registerAllTools, type ToolContext } from "../src/tools";
-
-class MemoryStorage {
-  private values = new Map<string, unknown>();
-  alarm?: number;
-
-  async get<T>(key: string): Promise<T | undefined> {
-    return this.values.get(key) as T | undefined;
-  }
-
-  async put(key: string, value: unknown): Promise<void> {
-    this.values.set(key, structuredClone(value));
-  }
-
-  async setAlarm(time: number): Promise<void> {
-    this.alarm = time;
-  }
-
-  async deleteAll(): Promise<void> {
-    this.values.clear();
-  }
-}
-
-class MemoryState {
-  readonly storage = new MemoryStorage();
-  private queue: Promise<unknown> = Promise.resolve();
-
-  blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T> {
-    const result = this.queue.then(callback);
-    this.queue = result.then(() => undefined, () => undefined);
-    return result;
-  }
-}
+import { MemoryState, approvalNamespace } from "./helpers/approval-store";
 
 function snapshot(subject = "Approval test"): SendApprovalSnapshot {
   return {
@@ -203,34 +173,26 @@ describe("SendApprovalStore", () => {
   });
 });
 
-function approvalNamespace() {
-  const stores = new Map<string, SendApprovalStore>();
-  return {
-    getByName(id: string) {
-      let store = stores.get(id);
-      if (!store) {
-        store = new SendApprovalStore(new MemoryState() as unknown as DurableObjectState, {} as Env);
-        stores.set(id, store);
-      }
-      return { fetch: (request: Request | string, init?: RequestInit) => store!.fetch(new Request(request, init)) };
-    },
-  };
-}
-
 function registeredSendTools(
   client: Record<string, any>,
   modernState?: { value?: any },
+  options: { apps?: boolean; inlineApproval?: boolean; env?: Record<string, unknown> } = {},
 ) {
   const handlers = new Map<string, (...args: any[]) => Promise<any>>();
   const server = {
     tool(...args: any[]) {
       handlers.set(args[0], args[args.length - 1]);
     },
+    registerTool(name: string, _config: any, handler: any) {
+      handlers.set(name, handler);
+    },
+    registerResource: vi.fn(),
   } as unknown as McpServer;
   const env = {
     SEND_APPROVAL_MODE: "required",
     WORKER_URL: "https://mail.example.test",
     SEND_APPROVALS: approvalNamespace(),
+    ...options.env,
   } as unknown as Env;
   const context: ToolContext = {
     env,
@@ -249,7 +211,7 @@ function registeredSendTools(
       },
     } : {}),
   };
-  registerAllTools(server, context, new Set(["send_email", "send_copy", "reply_to_email"]));
+  registerAllTools(server, context, new Set(["send_email", "send_copy", "reply_to_email"]), options.apps ? { apps: true, inlineApproval: options.inlineApproval ?? true } : {});
   return handlers;
 }
 
@@ -376,5 +338,91 @@ describe("outbound tool approval gate", () => {
 
     expect(client.createDraft).toHaveBeenCalledOnce();
     expect(client.sendEmail).not.toHaveBeenCalled();
+  });
+  describe("inline reply approval marking", () => {
+    function replyClient(overrides: Record<string, any> = {}) {
+      return {
+        getEmailById: vi.fn().mockResolvedValue({
+          from: [{ email: "recipient@example.com" }],
+          subject: "Question",
+          messageId: ["message-1"],
+          references: [],
+          receivedAt: new Date().toISOString(),
+          textBody: [],
+          htmlBody: [],
+          bodyValues: {},
+        }),
+        createDraft: vi.fn().mockResolvedValue("draft-reply"),
+        getDraftApprovalSnapshot: vi.fn().mockResolvedValue(snapshot("Re: Question")),
+        getIdentities: vi.fn().mockResolvedValue([{ email: "sender@example.com" }]),
+        findPreviouslySentRecipients: vi.fn().mockImplementation(async (addresses: string[]) => new Set(addresses)),
+        sendEmail: vi.fn(),
+        ...overrides,
+      };
+    }
+    const replyArgs = {
+      emailId: "source-1", body: "Answer", replyAll: false, sendImmediately: true, excludeQuote: false,
+    };
+
+    it("marks a reply to a previously emailed sender as inline-eligible", async () => {
+      const env = { SEND_APPROVALS: approvalNamespace(), WORKER_URL: "https://mail.example.test" };
+      const handler = registeredSendTools(replyClient(), undefined, { apps: true, env }).get("reply_to_email")!;
+      const result = await handler(replyArgs, {});
+
+      expect(result.structuredContent.inlineApproval).toBe(true);
+      expect(result.content[0].text).toContain("Approve it in the review card, or review and approve:");
+      const stored = await getSendApproval(env as unknown as Env, result.structuredContent.approvalId);
+      expect(stored?.inlineApproval).toBe(true);
+    });
+
+    it("does not mark send_email inline-eligible even to a known recipient", async () => {
+      const client = replyClient({ createDraft: vi.fn().mockResolvedValue("draft-new") });
+      const handler = registeredSendTools(client, undefined, { apps: true }).get("send_email")!;
+      const result = await handler({ to: ["recipient@example.com"], subject: "Hi", textBody: "Hello" }, {});
+      expect(result.structuredContent.inlineApproval).toBe(false);
+    });
+
+    it("does not mark a reply eligible when apps are disabled", async () => {
+      const handler = registeredSendTools(replyClient()).get("reply_to_email")!;
+      const result = await handler(replyArgs, {});
+      expect(result.structuredContent.inlineApproval).toBe(false);
+    });
+
+    it("does not mark a reply eligible on the legacy lane (apps without inline approval)", async () => {
+      const client = replyClient();
+      const handler = registeredSendTools(client, undefined, { apps: true, inlineApproval: false }).get("reply_to_email")!;
+      const result = await handler(replyArgs, {});
+      expect(result.structuredContent.inlineApproval).toBe(false);
+      expect(result.content[0].text).not.toContain("review card");
+      expect(client.findPreviouslySentRecipients).not.toHaveBeenCalled();
+    });
+
+    it("does not mark a reply eligible when INLINE_REPLY_APPROVAL is off", async () => {
+      const env = { SEND_APPROVALS: approvalNamespace(), WORKER_URL: "https://mail.example.test", INLINE_REPLY_APPROVAL: "off" };
+      const handler = registeredSendTools(replyClient(), undefined, { apps: true, env }).get("reply_to_email")!;
+      const result = await handler(replyArgs, {});
+      expect(result.structuredContent.inlineApproval).toBe(false);
+      const stored = await getSendApproval(env as unknown as Env, result.structuredContent.approvalId);
+      expect(stored?.inlineApproval).toBeUndefined();
+    });
+
+    it("keeps a reply page-only when the Sent lookup throws", async () => {
+      const client = replyClient({ findPreviouslySentRecipients: vi.fn().mockRejectedValue(new Error("jmap down")) });
+      const handler = registeredSendTools(client, undefined, { apps: true }).get("reply_to_email")!;
+      const result = await handler(replyArgs, {});
+      expect(result.isError).toBeUndefined();
+      expect(result.structuredContent.inlineApproval).toBe(false);
+    });
+
+    it("skips URL elicitation for an eligible reply on a modern client", async () => {
+      const modernState: { value?: any } = {};
+      const handler = registeredSendTools(replyClient(), modernState, { apps: true }).get("reply_to_email")!;
+      const result = await handler(replyArgs, {
+        mcpReq: { requestState: () => undefined, inputResponses: undefined },
+      });
+      expect(result.resultType).not.toBe("input_required");
+      expect(result.structuredContent.inlineApproval).toBe(true);
+      expect(modernState.value).toBeUndefined();
+    });
   });
 });
