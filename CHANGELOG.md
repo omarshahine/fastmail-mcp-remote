@@ -8,6 +8,18 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Fixed
+- The approval page no longer says a send "cannot be retried" when it failed
+  before anything was claimed. It now says nothing was sent and links back to
+  the review page to try again. Uncertain sends still tell you to check Sent
+  first.
+- The send review card re-enables **Send** after an error only when the
+  approval is still pending or approved and the send was not uncertain. A
+  "could not reach Fastmail" message now clears on the next successful status
+  refresh. Inline **Send** is also hidden once the approval has expired.
+- The Sent-mailbox recipient lookup for inline approval now sorts newest first,
+  so its 20-message cap keeps the most recent sends.
+
 ### Added
 - Inline approval of low-risk replies in the MCP Apps send review card. A
   `reply_to_email` approval whose recipients are all your identities or people
