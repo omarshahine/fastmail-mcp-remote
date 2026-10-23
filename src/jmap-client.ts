@@ -616,6 +616,7 @@ export class JmapClient {
             { operator: 'OR', conditions: [{ to: address }, { cc: address }, { bcc: address }] },
           ],
         },
+        sort: [{ property: 'receivedAt', isAscending: false }],
         limit: 20,
       }, `q${i}`]);
       methodCalls.push(['Email/get', {
