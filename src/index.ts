@@ -1,7 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { isLegacyRequest } from "@modelcontextprotocol/server";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { McpAgent } from "agents/mcp";
 import { createMcpHandler } from "agents/mcp/server";
 import { DynamicWorkerExecutor } from "@cloudflare/codemode";
 import { buildCodeModeServer } from "./openapi-adapter";
@@ -31,53 +30,6 @@ import { SendApprovalStore } from "./send-approval";
 import { OAuthCodeStore } from "./oauth-code-store";
 
 export { OAuthCodeStore, SendApprovalStore };
-
-/**
- * Props passed into the Durable Object per session, set from the validated
- * Bearer token at the Hono layer (see handleMcp()). The agents
- * runtime persists these to DO storage on session init and hands them to
- * onStart(props) -> this.props before init() runs, so init() can register a
- * permission-filtered, user-scoped tool set. The session is bound to whoever
- * initialized it; every subsequent request on that session id is still Bearer-
- * validated at the edge before the runtime routes it here.
- */
-interface McpSessionProps extends Record<string, unknown> {
-  /** Authenticated user login (email) that owns this session. */
-  userLogin: string;
-  /** Tool names this user may see, precomputed from the permissions config. */
-  visibleTools: string[];
-}
-
-export class FastmailMCP extends McpAgent<Env, Record<string, never>, McpSessionProps> {
-  server = new McpServer({
-    name: "Fastmail MCP Remote",
-    version: "1.0.0",
-  });
-
-  /**
-   * Register the user-scoped, permission-filtered tool set for this session.
-   *
-   * Runs once per session, after the runtime has populated this.props from the
-   * session's persisted props (onStart -> updateProps -> init). Uses the SAME
-   * buildToolContext + registerAllTools path as the stateless /mcp/code handler,
-   * so the DO and stateless surfaces expose identical tools and identical inner
-   * permission checks — the only difference is the transport.
-   */
-  async init() {
-    const props = this.props;
-    if (!props?.userLogin) {
-      // No identity means the session was created without going through the
-      // Bearer-validating edge handler. Register nothing rather than exposing
-      // an unscoped tool set.
-      console.error("[mcp] init() with no props.userLogin — registering no tools");
-      return;
-    }
-
-    const ctx = buildToolContext(this.env, props.userLogin);
-    const visibleTools = props.visibleTools ? new Set(props.visibleTools) : undefined;
-    registerAllTools(this.server, ctx, visibleTools);
-  }
-}
 
 // Create Hono app for routing
 const app = new Hono<{ Bindings: Env }>();
@@ -251,9 +203,7 @@ app.post("/mcp/code", async (c) => {
 // 2025-era requests (any protocolVersion, with or without a leftover
 // Mcp-Session-Id) go through the agents stateless legacy lane, which blocks
 // server-to-client requests. Those clients advertise no URL elicitation, so
-// send approval falls back to the approval URL in the tool result text. The
-// FastmailMCP Durable Object above stays exported for its binding but is no
-// longer routed.
+// send approval falls back to the approval URL in the tool result text.
 
 /**
  * Validate the Bearer token, compute the user's visible tools, and serve the

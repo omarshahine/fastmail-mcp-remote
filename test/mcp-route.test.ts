@@ -1,19 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { durableFetch } = vi.hoisted(() => ({
-	durableFetch: vi.fn(async (request: Request) =>
-		Response.json({ jsonrpc: '2.0', id: 2, result: { tools: [] } }, { status: 200 }),
-	),
-}));
-
-vi.mock('agents/mcp', () => ({
-	McpAgent: class {
-		static serve() {
-			return { fetch: durableFetch };
-		}
-	},
-}));
-
 // Code Mode is unrelated to this route test and imports the Workers-only
 // `cloudflare:workers` module, which Node's Vitest environment cannot load.
 vi.mock('@cloudflare/codemode', () => ({
@@ -68,11 +54,10 @@ const executionCtx = {
 
 describe('/mcp transport routing', () => {
 	beforeEach(() => {
-		durableFetch.mockClear();
 		vi.mocked(validateAccessToken).mockClear();
 	});
 
-	it('rejects standalone GET with 405 and never touches the Durable Object', async () => {
+	it('rejects standalone GET with 405', async () => {
 		const getResponse = await app.request(
 			new Request('https://worker.example/mcp', {
 				method: 'GET',
@@ -85,7 +70,6 @@ describe('/mcp transport routing', () => {
 
 		expect(getResponse.status).toBe(405);
 		expect(getResponse.headers.get('Allow')).toBe('POST');
-		expect(durableFetch).not.toHaveBeenCalled();
 	});
 
 	it('Bearer-validates POST /mcp before serving it statelessly', async () => {
@@ -111,7 +95,6 @@ describe('/mcp transport routing', () => {
 			'user@example.com',
 			expect.any(Function),
 		);
-		expect(durableFetch).not.toHaveBeenCalled();
 	});
 
 	it('does not advertise or serve the removed legacy /sse transport', async () => {
@@ -157,7 +140,6 @@ describe('/mcp transport routing', () => {
 		expect(response.headers.get('content-type')).toContain('application/json');
 		const body = JSON.parse(responseText) as any;
 		expect(body.result.tools.map((tool: any) => tool.name)).toEqual(['list_mailboxes']);
-		expect(durableFetch).not.toHaveBeenCalled();
 	});
 });
 
@@ -208,7 +190,6 @@ async function readJsonRpc(response: Response): Promise<any> {
 
 describe('/mcp single stateless v2 server', () => {
 	beforeEach(() => {
-		durableFetch.mockClear();
 	});
 
 	it.each(['2025-03-26', '2025-06-18', '2025-11-25'])(
@@ -229,7 +210,6 @@ describe('/mcp single stateless v2 server', () => {
 			expect(response.headers.get('Mcp-Session-Id')).toBeNull();
 			const body = await readJsonRpc(response);
 			expect(body.result.protocolVersion).toBe(protocolVersion);
-			expect(durableFetch).not.toHaveBeenCalled();
 		},
 	);
 
@@ -242,7 +222,6 @@ describe('/mcp single stateless v2 server', () => {
 		expect(response.status).toBe(200);
 		const body = await readJsonRpc(response);
 		expect(body.result.tools.map((tool: any) => tool.name)).toContain('list_mailboxes');
-		expect(durableFetch).not.toHaveBeenCalled();
 	});
 
 	it('modern tools/list carries private cache hints and annotations', async () => {
@@ -509,7 +488,6 @@ describe('/mcp legacy send approval', () => {
 		expect(result.content[0].text).toContain('https://mail.example.test/approve/send/');
 		expect(createDraft).toHaveBeenCalledOnce();
 		expect(sendEmail).not.toHaveBeenCalled();
-		expect(durableFetch).not.toHaveBeenCalled();
 	});
 });
 
