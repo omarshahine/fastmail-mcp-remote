@@ -4,14 +4,6 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('agents/mcp', () => ({
-	McpAgent: class {
-		static serve() {
-			return { fetch: vi.fn() };
-		}
-	},
-}));
-
 // Code Mode imports the Workers-only `cloudflare:workers` module, which
 // Node's Vitest environment cannot load.
 vi.mock('@cloudflare/codemode', () => ({

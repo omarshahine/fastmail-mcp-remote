@@ -29,4 +29,26 @@ describe("Wrangler deployment preflight", () => {
       },
     }`)).not.toThrow();
   });
+
+  it("config deleting FastmailMCP validates", async () => {
+    const template = await readFile(resolve(process.cwd(), "wrangler.jsonc.example"), "utf8");
+    expect(template).toContain('"deleted_classes"');
+    expect(template).not.toContain("MCP_OBJECT");
+    expect(() => validateWranglerConfig(template)).not.toThrow();
+  });
+
+  it("binding to a deleted class fails validation", () => {
+    expect(() => validateWranglerConfig(`{
+      "migrations": [
+        { "new_sqlite_classes": ["OAuthCodeStore"], "tag": "v3" },
+        { "deleted_classes": ["FastmailMCP"], "tag": "v4" }
+      ],
+      "durable_objects": {
+        "bindings": [
+          { "name": "AUTHORIZATION_CODES", "class_name": "OAuthCodeStore" },
+          { "name": "MCP_OBJECT", "class_name": "FastmailMCP" }
+        ]
+      }
+    }`)).toThrow("FastmailMCP");
+  });
 });

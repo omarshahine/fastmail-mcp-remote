@@ -8,6 +8,17 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Removed
+- The `FastmailMCP` session Durable Object, its `MCP_OBJECT` binding and the
+  unused `filterToolsListResponse`, `filterSseToolsListResponse` and
+  `checkMcpPermissions` helpers. The stateless `/mcp` server has served every
+  protocol era since the 2026-07-28 upgrade, so nothing routed to them.
+  **Deploy note:** add a migration with a new tag and
+  `"deleted_classes": ["FastmailMCP"]` to your `wrangler.jsonc` and remove the
+  `MCP_OBJECT` entry from `durable_objects.bindings`, as in
+  `wrangler.jsonc.example`. The deploy preflight now rejects a binding to a
+  deleted class.
+
 ### Fixed
 - The approval page no longer says a send "cannot be retried" when it failed
   before anything was claimed. It now says nothing was sent and links back to

@@ -23,7 +23,7 @@ npm run cli -- inbox         # Run CLI (or use alias: fastmail inbox)
 
 ```
 src/
-├── index.ts              # Main entry point, FastmailMCP class, Hono routing, Code Mode endpoint
+├── index.ts              # Main entry point, Hono routing, Code Mode endpoint
 ├── tools.ts              # All MCP tool registrations (registerAllTools), shared by /mcp and Code Mode
 ├── mcp-server.ts         # createFastmailMcpServer: the single stateless v2 server factory for /mcp
 ├── jmap-client.ts        # JMAP protocol client for Fastmail API (email, memos)
@@ -67,7 +67,7 @@ openclaw-plugin/                     # OpenClaw plugin: "fastmail-cli" on npm
 - **Entry Point**: `src/index.ts` exports Hono app with custom OAuth routing
 - **OAuth**: Cloudflare Access OAuth (supports GitHub + OTP via Zero Trust)
 - **API Communication**: JMAP protocol to Fastmail API (`src/jmap-client.ts`)
-- **MCP transport**: Stateless v2 server for all eras on `/mcp` (`src/mcp-server.ts`, served by `createMcpHandler` with `legacy: "stateless"`). 2026-07-28 requests are served natively; 2025-era requests use the agents stateless legacy lane. The `FastmailMCP` session Durable Object is exported but unrouted; DO retired in Task 8
+- **MCP transport**: Stateless v2 server for all eras on `/mcp` (`src/mcp-server.ts`, served by `createMcpHandler` with `legacy: "stateless"`). 2026-07-28 requests are served natively; 2025-era requests use the agents stateless legacy lane. The `FastmailMCP` session Durable Object was retired: its class, the `MCP_OBJECT` binding and the dead response-filter code are gone, and migration `v4` deletes the class
 - **Storage**: KV namespace (`OAUTH_KV`) for OAuth state and tokens; a per-code Durable Object atomically consumes authorization codes
 
 ## OAuth Flow
@@ -534,10 +534,10 @@ Durable memory promoted from `~/.claude/projects/-Users-omarshahine-GitHub-fastm
 - The `@anthropic-ai/agents` SDK returns `text/event-stream` for ALL MCP responses, including `tools/list`
 - SSE format: `event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"tools":[...]}}\n\n`
 - Any response filtering (like permissions) must parse SSE `data:` lines, not just `response.json()`
-- Both `filterToolsListResponse` (JSON) and `filterSseToolsListResponse` (SSE) exist in `src/permissions.ts`
+- The old `filterToolsListResponse` and `filterSseToolsListResponse` helpers were removed with the Durable Object; tools are filtered at registration time via `getVisibleTools`
 
 ### Project Structure
-- MCP tools defined in `src/index.ts` within `FastmailMCP.init()`
+- MCP tools registered in `src/tools.ts` (`registerAllTools`)
 - JMAP client methods in `src/jmap-client.ts`
 - OAuth in `src/oauth-handler.ts` + `src/oauth-utils.ts`
 - Contacts/calendar in `src/contacts-calendar.ts`

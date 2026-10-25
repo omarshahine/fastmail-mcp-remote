@@ -41,14 +41,16 @@
 				"OAuthCodeStore"
 			],
 			"tag": "v3"
+		},
+		{
+			"deleted_classes": [
+				"FastmailMCP"
+			],
+			"tag": "v4"
 		}
 	],
 	"durable_objects": {
 		"bindings": [
-			{
-				"class_name": "FastmailMCP",
-				"name": "MCP_OBJECT"
-			},
 			{
 				"class_name": "SendApprovalStore",
 				"name": "SEND_APPROVALS"

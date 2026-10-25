@@ -2,8 +2,8 @@
  * Extracted tool registration for Fastmail MCP server.
  *
  * All 29+ MCP tools are registered via `registerAllTools()` on any McpServer instance.
- * This enables reuse: the Durable Object path (FastmailMCP.init()) and the Code Mode
- * endpoint (/mcp/code) both call this with different ToolContext implementations.
+ * This enables reuse: the stateless /mcp server and the Code Mode endpoint
+ * (/mcp/code) both call this with different ToolContext implementations.
  */
 
 import {
@@ -87,7 +87,7 @@ export interface GuardOptions {
 
 /**
  * Context required by tool handlers. Abstracts away whether tools run inside
- * a Durable Object (FastmailMCP) or a standalone McpServer (Code Mode).
+ * the stateless /mcp server or a standalone McpServer (Code Mode).
  */
 export interface ToolContext {
   env: Env;
@@ -198,7 +198,7 @@ export function strictShape(schema: any): any {
 }
 
 /**
- * Standalone guardResponse implementation (mirrors FastmailMCP.guardResponse).
+ * Standalone guardResponse implementation (the shared guard for every surface).
  * Wraps tool responses with prompt injection datamarking and optional compact formatting.
  */
 export function guardResponse(

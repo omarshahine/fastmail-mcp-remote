@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 type WranglerConfig = {
-  migrations?: Array<{ new_sqlite_classes?: string[] }>;
+  migrations?: Array<{ new_sqlite_classes?: string[]; deleted_classes?: string[]; tag?: string }>;
   durable_objects?: {
     bindings?: Array<{ name?: string; class_name?: string }>;
   };
@@ -84,6 +84,16 @@ export function validateWranglerConfig(source: string): void {
   const hasBinding = config.durable_objects?.bindings?.some((binding) =>
     binding.name === "AUTHORIZATION_CODES" && binding.class_name === "OAuthCodeStore",
   );
+
+  const deleted = new Set(config.migrations?.flatMap((migration) => migration.deleted_classes ?? []));
+  for (const binding of config.durable_objects?.bindings ?? []) {
+    if (binding.class_name && deleted.has(binding.class_name)) {
+      throw new Error(
+        `wrangler.jsonc binds ${binding.name ?? "a Durable Object"} to ${binding.class_name}, ` +
+        "which a deleted_classes migration removes. Delete that binding from durable_objects.bindings before deploying.",
+      );
+    }
+  }
 
   if (!hasMigration || !hasBinding) {
     throw new Error(
