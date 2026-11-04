@@ -58,6 +58,18 @@ async function rpc(response: Response) {
 function generatedRequest(body: unknown, path = '/tools/bulk_mark_read') {
   execute.mockImplementation(async (_code, bindings) => ({ result: await bindings[0].fns.request({ method: 'POST', path, body }) }));
 }
+function expectErrorHeaders(response: Response, variant: Variant) {
+  expect(response.headers.get('X-Token-Expires-At')).toBe('2099-01-01T00:00:00Z');
+  if (variant === 'code') {
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
+  } else {
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(response.headers.get('Access-Control-Allow-Headers')).toContain('Authorization');
+    expect(response.headers.get('Access-Control-Allow-Methods')).toContain('POST');
+    expect(response.headers.get('Access-Control-Expose-Headers')).toBe('mcp-session-id');
+    expect(response.headers.get('Access-Control-Max-Age')).toBe('86400');
+  }
+}
 afterEach(() => { vi.restoreAllMocks(); execute.mockReset(); });
 
 describe.each(variants)('%s input limits', (variant) => {
@@ -73,18 +85,23 @@ describe.each(variants)('%s input limits', (variant) => {
   });
 
   it('rejects declared oversized bodies before SDK validation', async () => {
-    expect((await post(variant, '{', { 'Content-Length': String(MAX_MCP_BODY_BYTES + 1) })).status).toBe(413);
+    const response = await post(variant, '{', { 'Content-Length': String(MAX_MCP_BODY_BYTES + 1) });
+    expect(response.status).toBe(413);
+    expectErrorHeaders(response, variant);
     expect(execute).not.toHaveBeenCalled();
   });
 
   it('rejects malformed JSON with a parse error', async () => {
     const response = await post(variant, '{');
     expect(response.status).toBe(400);
+    expectErrorHeaders(response, variant);
     expect((await rpc(response)).error.code).toBe(-32700);
   });
 
   it.each(['text/plain', 'application/json-evil', 'application/problem+json'])('preserves 415 for %s before parsing', async (type) => {
-    expect((await post(variant, '{', { 'Content-Type': type })).status).toBe(415);
+    const response = await post(variant, '{', { 'Content-Type': type });
+    expect(response.status).toBe(415);
+    expectErrorHeaders(response, variant);
   });
 
   it('bounds chunked bodies even when Content-Length understates their size', async () => {
@@ -95,7 +112,9 @@ describe.each(variants)('%s input limits', (variant) => {
       pull(controller) { emitted++; controller.enqueue(chunk); },
       cancel: cancelled,
     });
-    expect((await post(variant, body, { 'Content-Length': '1' })).status).toBe(413);
+    const response = await post(variant, body, { 'Content-Length': '1' });
+    expect(response.status).toBe(413);
+    expectErrorHeaders(response, variant);
     expect(cancelled).toHaveBeenCalledOnce();
     expect(emitted).toBeLessThanOrEqual(38);
     expect(execute).not.toHaveBeenCalled();

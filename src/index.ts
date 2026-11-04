@@ -127,6 +127,20 @@ function withTokenExpiresAt(response: Response, expiresAt: string): Response {
   });
 }
 
+/** Match createMcpHandler's default CORS policy on errors returned before it. */
+function withMcpInputErrorHeaders(response: Response, expiresAt: string): Response {
+  const result = withTokenExpiresAt(response, expiresAt);
+  const headers = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Accept, Authorization, mcp-session-id, MCP-Protocol-Version, Mcp-Method, Mcp-Name",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Expose-Headers": "mcp-session-id",
+    "Access-Control-Max-Age": "86400",
+  };
+  for (const [name, value] of Object.entries(headers)) result.headers.set(name, value);
+  return result;
+}
+
 // Helper to create 401 response with proper WWW-Authenticate header for MCP OAuth
 function unauthorizedResponse(c: { req: { url: string } }, error: string, description: string): Response {
   const url = new URL(c.req.url);
@@ -177,7 +191,7 @@ app.post("/mcp/code", async (c) => {
   }
 
   const body = await readMcpBody(c.req.raw);
-  if ("response" in body) return body.response;
+  if ("response" in body) return withTokenExpiresAt(body.response, tokenInfo.expiresAt);
 
   // Build a fresh McpServer with permission-filtered tools
   const config = await getPermissionsConfig(c.env.OAUTH_KV);
@@ -241,7 +255,7 @@ async function handleMcp(c: Context<{ Bindings: Env }>): Promise<Response> {
   // `method` is the JSON-RPC method when the body has one, else the HTTP
   // method (DELETE).
   const body = c.req.method === "POST" ? await readMcpBody(c.req.raw) : { parsedBody: undefined };
-  if ("response" in body) return body.response;
+  if ("response" in body) return withMcpInputErrorHeaders(body.response, tokenInfo.expiresAt);
   const { parsedBody } = body;
   const isLegacy = await isLegacyRequest(c.req.raw, parsedBody);
   const rpcMethod = parsedBody && typeof parsedBody === "object" && !Array.isArray(parsedBody)
