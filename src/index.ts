@@ -28,6 +28,7 @@ import {
 } from "./send-approval-auth";
 import { SendApprovalStore } from "./send-approval";
 import { OAuthCodeStore } from "./oauth-code-store";
+import { MAX_TOOL_INPUT_ELEMENTS, readMcpBody } from "./mcp-input";
 
 export { OAuthCodeStore, SendApprovalStore };
 
@@ -126,6 +127,20 @@ function withTokenExpiresAt(response: Response, expiresAt: string): Response {
   });
 }
 
+/** Match createMcpHandler's default CORS policy on errors returned before it. */
+function withMcpInputErrorHeaders(response: Response, expiresAt: string): Response {
+  const result = withTokenExpiresAt(response, expiresAt);
+  const headers = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Accept, Authorization, mcp-session-id, MCP-Protocol-Version, Mcp-Method, Mcp-Name",
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Expose-Headers": "mcp-session-id",
+    "Access-Control-Max-Age": "86400",
+  };
+  for (const [name, value] of Object.entries(headers)) result.headers.set(name, value);
+  return result;
+}
+
 // Helper to create 401 response with proper WWW-Authenticate header for MCP OAuth
 function unauthorizedResponse(c: { req: { url: string } }, error: string, description: string): Response {
   const url = new URL(c.req.url);
@@ -175,12 +190,18 @@ app.post("/mcp/code", async (c) => {
     return unauthorizedResponse(c, "invalid_token", "Invalid or expired access token");
   }
 
+  const body = await readMcpBody(c.req.raw);
+  if ("response" in body) return withTokenExpiresAt(body.response, tokenInfo.expiresAt);
+
   // Build a fresh McpServer with permission-filtered tools
   const config = await getPermissionsConfig(c.env.OAUTH_KV);
   const userConfig = getUserConfig(config, tokenInfo.user_login);
   const visibleTools = getVisibleTools(userConfig);
 
-  const upstreamServer = new McpServer({ name: "Fastmail MCP", version: "1.0.0" });
+  const upstreamServer = new McpServer(
+    { name: "Fastmail MCP", version: "1.0.0" },
+    { maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS },
+  );
   const ctx = buildToolContext(c.env, tokenInfo.user_login, undefined, true);
   registerAllTools(upstreamServer, ctx, visibleTools);
 
@@ -191,7 +212,7 @@ app.post("/mcp/code", async (c) => {
   // Serve via stateless WebStandard streamable HTTP transport
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await codeServer.connect(transport);
-  const response = await transport.handleRequest(c.req.raw);
+  const response = await transport.handleRequest(c.req.raw, { parsedBody: body.parsedBody });
   return withTokenExpiresAt(response, tokenInfo.expiresAt);
 });
 
@@ -229,14 +250,14 @@ async function handleMcp(c: Context<{ Bindings: Env }>): Promise<Response> {
   const userConfig = getUserConfig(config, tokenInfo.user_login);
   const visibleTools = getVisibleTools(userConfig);
 
-  // Era telemetry for the Durable Object retirement soak (Task 8), and the
-  // per-request MCP Apps decision. Reads a clone; the parse is reused below.
+  // Bound and consume the stream once before JSON parsing; reuse the parsed
+  // body for era telemetry, MCP Apps and both SDK protocol lanes.
   // `method` is the JSON-RPC method when the body has one, else the HTTP
   // method (DELETE).
-  const parsedBody: unknown = c.req.method === "POST"
-    ? await c.req.raw.clone().json().catch(() => undefined)
-    : undefined;
-  const isLegacy = await isLegacyRequest(c.req.raw.clone(), parsedBody);
+  const body = c.req.method === "POST" ? await readMcpBody(c.req.raw) : { parsedBody: undefined };
+  if ("response" in body) return withMcpInputErrorHeaders(body.response, tokenInfo.expiresAt);
+  const { parsedBody } = body;
+  const isLegacy = await isLegacyRequest(c.req.raw, parsedBody);
   const rpcMethod = parsedBody && typeof parsedBody === "object" && !Array.isArray(parsedBody)
     ? (parsedBody as { method?: unknown }).method
     : undefined;

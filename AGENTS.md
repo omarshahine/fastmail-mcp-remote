@@ -26,6 +26,7 @@ src/
 ├── index.ts              # Main entry point, Hono routing, Code Mode endpoint
 ├── tools.ts              # All MCP tool registrations (registerAllTools), shared by /mcp and Code Mode
 ├── mcp-server.ts         # createFastmailMcpServer: the single stateless v2 server factory for /mcp
+├── mcp-input.ts          # Shared 36 MiB streaming JSON budget and 10,000-element tool input budget
 ├── jmap-client.ts        # JMAP protocol client for Fastmail API (email, memos)
 ├── contacts-calendar.ts  # Contacts and calendar functionality
 ├── html-to-markdown.ts   # HTML to Markdown conversion (Turndown + linkedom)

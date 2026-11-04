@@ -131,6 +131,12 @@ cli/
 - `ui_get_send_review` - App-only: data for the send review card (recipients, subject, sanitized preview, approval status). Hosts that honor MCP Apps visibility hide it from the model; other hosts may show it. Its results are datamarked either way. Never registered on Code Mode
 - `ui_get_email_view` - App-only: data for the email reader (headers, read and flag state, sanitized previews for one email or a whole thread, archive mailbox). Hosts that honor MCP Apps visibility hide it from the model; other hosts may show it. Its results are datamarked either way. Never registered on Code Mode
 
+### MCP Request Limits
+
+Both `/mcp` protocol variants and `/mcp/code` accept at most **36 MiB of JSON per request**, counted from the incoming stream before parsing. This accommodates one supported 25 MiB attachment encoded as base64, with over 2 MiB left for the envelope and message. Multiple attachments share the aggregate request budget; split larger workloads across calls. Oversized requests return HTTP 413.
+
+Tool arguments may contain at most **10,000 array elements and object members in total**, including nested values. Strings count as one member regardless of length, so attachment data does not exhaust this element budget. The same limit applies to tool calls generated inside Code Mode, before tool schema validation. Split larger bulk operations across calls.
+
 ### Email Body Formats
 
 The `send_email`, `create_draft`, and `reply_to_email` tools support three body formats:
